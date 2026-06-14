@@ -101,7 +101,7 @@ function TreeItem({
   )
 }
 
-export function ClassesScreen() {
+export function ClassesScreen({ initialSelectedId }: { initialSelectedId?: string }) {
   const { currentProject, loading: projectLoading } = useProject()
   const [classes, setClasses] = useState<OntologyClass[]>([])
   const [loading, setLoading] = useState(true)
@@ -179,6 +179,12 @@ export function ClassesScreen() {
     setSelectedId(null)
     fetchClasses()
   }, [currentProject?.id, projectLoading])
+
+  useEffect(() => {
+    if (initialSelectedId && classes.length > 0) {
+      setSelectedId(initialSelectedId)
+    }
+  }, [initialSelectedId, classes.length])
 
   const fetchAllAttrs = useCallback(async (classId: string, parentClassId: string | null, projectId: string) => {
     setLoadingAttrs(true)

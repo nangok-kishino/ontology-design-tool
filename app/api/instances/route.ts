@@ -8,10 +8,10 @@ export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
     const classId = searchParams.get("classId")
+    const projectId = searchParams.get("projectId")
     const container = await getContainer(CONTAINER)
 
     if (classId === "unclassified") {
-      // classId が null または未定義のインスタンスを取得
       const { resources } = await container.items
         .query<OntologyInstance>({
           query: "SELECT * FROM c WHERE IS_NULL(c.classId) OR NOT IS_DEFINED(c.classId)",
@@ -25,6 +25,16 @@ export async function GET(request: NextRequest) {
         .query<OntologyInstance>({
           query: "SELECT * FROM c WHERE c.classId = @classId",
           parameters: [{ name: "@classId", value: classId }],
+        })
+        .fetchAll()
+      return NextResponse.json(resources)
+    }
+
+    if (projectId) {
+      const { resources } = await container.items
+        .query<OntologyInstance>({
+          query: "SELECT * FROM c WHERE c.projectId = @projectId",
+          parameters: [{ name: "@projectId", value: projectId }],
         })
         .fetchAll()
       return NextResponse.json(resources)

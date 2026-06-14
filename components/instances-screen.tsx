@@ -274,7 +274,7 @@ type AttrGroups = {
   parentName: string
 }
 
-export function InstancesScreen() {
+export function InstancesScreen({ initialSelectedClassId }: { initialSelectedClassId?: string }) {
   const { currentProject } = useProject()
 
   const [classes, setClasses] = useState<OntologyClass[]>([])
@@ -339,20 +339,61 @@ export function InstancesScreen() {
     }
   }, [])
 
-  // 全件数
-  const fetchAllCounts = useCallback(async (classList: OntologyClass[]) => {
+  // 全件数（未分類カウントは孤立インスタンスも含む）
+  const fetchAllCounts = useCallback(async (classList: OntologyClass[], projectId: string) => {
+    const [classResults, nullData, projectData] = await Promise.all([
+      Promise.all(
+        classList.map(async (cls) => {
+          try {
+            const data: OntologyInstance[] = await fetch(`/api/instances?classId=${cls.id}`).then((r) => r.json())
+            return { id: cls.id, count: data.length }
+          } catch {
+            return { id: cls.id, count: 0 }
+          }
+        }),
+      ),
+      fetch(`/api/instances?classId=${UNCLASSIFIED}`).then((r) => r.json()).catch(() => []),
+      fetch(`/api/instances?projectId=${projectId}`).then((r) => r.json()).catch(() => []),
+    ])
     const counts: Record<string, number> = {}
-    await Promise.all(
-      classList.map(async (cls) => {
-        try {
-          const data: OntologyInstance[] = await fetch(`/api/instances?classId=${cls.id}`).then((r) => r.json())
-          counts[cls.id] = data.length
-        } catch {
-          counts[cls.id] = 0
-        }
-      }),
+    classResults.forEach(({ id, count }) => { counts[id] = count })
+    const nullInstances: OntologyInstance[] = Array.isArray(nullData) ? nullData : []
+    const projectInstances: OntologyInstance[] = Array.isArray(projectData) ? projectData : []
+    const knownIds = new Set(classList.map((c) => c.id))
+    const nullIdSet = new Set(nullInstances.map((i) => i.id))
+    const orphaned = projectInstances.filter(
+      (i) => i.classId && !knownIds.has(i.classId) && !nullIdSet.has(i.id),
     )
+    counts[UNCLASSIFIED] = nullInstances.length + orphaned.length
     setInstanceCounts(counts)
+  }, [])
+
+  // 未分類インスタンスの一覧取得（nullのclassId + 孤立インスタンス）
+  const fetchUnclassifiedInstances = useCallback(async (
+    allClasses: OntologyClass[],
+    projectId: string,
+  ) => {
+    setLoadingInstances(true)
+    try {
+      const [nullData, projectData] = await Promise.all([
+        fetch(`/api/instances?classId=${UNCLASSIFIED}`).then((r) => r.json()),
+        fetch(`/api/instances?projectId=${projectId}`).then((r) => r.json()),
+      ])
+      const nullInstances: OntologyInstance[] = Array.isArray(nullData) ? nullData : []
+      const projectInstances: OntologyInstance[] = Array.isArray(projectData) ? projectData : []
+      const knownIds = new Set(allClasses.map((c) => c.id))
+      const nullIdSet = new Set(nullInstances.map((i) => i.id))
+      const orphaned = projectInstances.filter(
+        (i) => i.classId && !knownIds.has(i.classId) && !nullIdSet.has(i.id),
+      )
+      const combined = [...nullInstances, ...orphaned]
+      setInstances(combined)
+      setInstanceCounts((prev) => ({ ...prev, [UNCLASSIFIED]: combined.length }))
+    } catch (err) {
+      console.error(err)
+    } finally {
+      setLoadingInstances(false)
+    }
   }, [])
 
   // 属性（3種）。classes をクロージャではなく引数で受け取り stale reference を防ぐ
@@ -422,10 +463,22 @@ export function InstancesScreen() {
   }, [currentProject?.id])
 
   useEffect(() => { fetchClasses() }, [currentProject?.id])
-  useEffect(() => { if (classes.length > 0) fetchAllCounts(classes) }, [classes])
+  useEffect(() => {
+    if (classes.length > 0 && currentProject) fetchAllCounts(classes, currentProject.id)
+  }, [classes, currentProject?.id])
+  useEffect(() => {
+    if (initialSelectedClassId && classes.length > 0) {
+      const cls = classes.find((c) => c.id === initialSelectedClassId)
+      if (cls) {
+        setSelectedClass(cls)
+        setIsUnclassifiedSelected(false)
+        setAttrRefreshKey((k) => k + 1)
+      }
+    }
+  }, [initialSelectedClassId, classes.length])
   useEffect(() => {
     if (isUnclassifiedSelected && currentProject) {
-      fetchInstances(UNCLASSIFIED)
+      fetchUnclassifiedInstances(classes, currentProject.id)
       setAttrGroups({ project: [], inherited: [], own: [], parentName: "" })
     } else if (selectedClass && currentProject) {
       fetchInstances(selectedClass.id)
@@ -522,23 +575,16 @@ export function InstancesScreen() {
       if (!res.ok) throw new Error()
       setEditTarget(null)
 
-      // 現在表示中のクラスのインスタンス一覧＋カウントを更新
-      const currentId = selectedClass?.id ?? UNCLASSIFIED
-      await fetchInstances(currentId)
+      // 現在表示中のビューを更新
+      if (isUnclassifiedSelected && currentProject) {
+        await fetchUnclassifiedInstances(classes, currentProject.id)
+      } else {
+        await fetchInstances(selectedClass?.id ?? UNCLASSIFIED)
+      }
 
-      // クラスが変わった場合は移動元・移動先のカウントも個別に更新
-      if (editClassId !== prevClassId) {
-        const affected = new Set<string>()
-        affected.add(prevClassId ?? UNCLASSIFIED)
-        affected.add(editClassId ?? UNCLASSIFIED)
-        affected.delete(currentId) // fetchInstances で既に更新済み
-
-        await Promise.all([...affected].map(async (cid) => {
-          try {
-            const data: OntologyInstance[] = await fetch(`/api/instances?classId=${cid}`).then((r) => r.json())
-            setInstanceCounts((prev) => ({ ...prev, [cid]: data.length }))
-          } catch { /* ignore */ }
-        }))
+      // クラスが変わった場合は全カウントを再計算
+      if (editClassId !== prevClassId && currentProject) {
+        await fetchAllCounts(classes, currentProject.id)
       }
     } catch {
       alert("インスタンスの更新に失敗しました")
@@ -554,8 +600,11 @@ export function InstancesScreen() {
       const res = await fetch(`/api/instances/${deleteTarget.id}`, { method: "DELETE" })
       if (!res.ok) throw new Error()
       setDeleteTarget(null)
-      const currentId = selectedClass?.id ?? UNCLASSIFIED
-      await fetchInstances(currentId)
+      if (isUnclassifiedSelected && currentProject) {
+        await fetchUnclassifiedInstances(classes, currentProject.id)
+      } else {
+        await fetchInstances(selectedClass?.id ?? UNCLASSIFIED)
+      }
     } catch {
       alert("インスタンスの削除に失敗しました")
     } finally {

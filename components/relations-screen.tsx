@@ -38,7 +38,7 @@ import { useProject } from "@/app/project-context"
 
 type AttrSectionKey = "project" | "own"
 
-export function RelationsScreen() {
+export function RelationsScreen({ initialSelectedId }: { initialSelectedId?: string }) {
   const { currentProject, loading: projectLoading } = useProject()
   const [relations, setRelations] = useState<OntologyRelation[]>([])
   const [classes, setClasses] = useState<OntologyClass[]>([])
@@ -122,6 +122,12 @@ export function RelationsScreen() {
     setSelectedId(null)
     Promise.all([fetchRelations(), fetchClasses()])
   }, [currentProject?.id, projectLoading])
+
+  useEffect(() => {
+    if (initialSelectedId && relations.length > 0) {
+      setSelectedId(initialSelectedId)
+    }
+  }, [initialSelectedId, relations.length])
 
   const fetchAllAttrs = useCallback(async (relationId: string, projectId: string) => {
     setLoadingAttrs(true)

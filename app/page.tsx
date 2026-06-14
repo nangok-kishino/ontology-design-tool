@@ -14,20 +14,26 @@ import { useProject } from "@/app/project-context"
 function AppContent() {
   const { currentProject, loading } = useProject()
   const [screen, setScreen] = useState<ScreenId>("dashboard")
+  const [initialSelectId, setInitialSelectId] = useState<string | undefined>(undefined)
+
+  const navigate = (s: ScreenId, id?: string) => {
+    setInitialSelectId(id)
+    setScreen(s)
+  }
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
-      <Sidebar active={screen} onNavigate={setScreen} />
+      <Sidebar active={screen} onNavigate={(s) => navigate(s)} />
       <main className="flex-1 overflow-hidden">
         {!loading && !currentProject ? (
           <ProjectWelcomeScreen />
         ) : (
           <>
-            {screen === "dashboard" && <DashboardScreen />}
-            {screen === "classes" && <ClassesScreen />}
-            {screen === "relations" && <RelationsScreen />}
+            {screen === "dashboard" && <DashboardScreen onNavigate={navigate} />}
+            {screen === "classes" && <ClassesScreen initialSelectedId={initialSelectId} />}
+            {screen === "relations" && <RelationsScreen initialSelectedId={initialSelectId} />}
             {screen === "review" && <ReviewScreen />}
-            {screen === "instances" && <InstancesScreen />}
+            {screen === "instances" && <InstancesScreen initialSelectedClassId={initialSelectId} />}
           </>
         )}
       </main>
