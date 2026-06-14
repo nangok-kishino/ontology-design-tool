@@ -31,12 +31,13 @@ import {
 } from "@/components/ui/table"
 import { TopBar } from "@/components/top-bar"
 import { cn } from "@/lib/utils"
-import { sampleAttributes, relations } from "@/lib/ontology-data"
-import type { OntologyClass } from "@/lib/types"
-import { ChevronDown, ChevronRight, Plus, Pencil, Trash2, Loader2, X } from "lucide-react"
+import { relations } from "@/lib/ontology-data"
+import type { OntologyClass, OntologyAttribute, AttributeRequired } from "@/lib/types"
+import { ChevronDown, ChevronRight, Plus, Pencil, Trash2, Loader2, X, AlertTriangle } from "lucide-react"
 import { useProject } from "@/app/project-context"
 
 type TreeNode = OntologyClass & { children: TreeNode[] }
+type AttrSectionKey = "project" | "parent" | "own"
 
 function buildTree(items: OntologyClass[]): TreeNode[] {
   const map = new Map(items.map((c) => [c.id, { ...c, children: [] as TreeNode[] }]))
@@ -105,23 +106,52 @@ export function ClassesScreen() {
   const [loading, setLoading] = useState(true)
   const [selectedId, setSelectedId] = useState<string | null>(null)
 
-  // 追加ダイアログ
+  // クラス追加ダイアログ
   const [showAdd, setShowAdd] = useState(false)
   const [newName, setNewName] = useState("")
   const [newDesc, setNewDesc] = useState("")
   const [newParentId, setNewParentId] = useState<string | null>(null)
   const [adding, setAdding] = useState(false)
 
-  // 編集モード
+  // クラス編集モード
   const [isEditing, setIsEditing] = useState(false)
   const [editName, setEditName] = useState("")
   const [editDesc, setEditDesc] = useState("")
   const [editParentId, setEditParentId] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
 
-  // 削除確認ダイアログ
+  // クラス削除確認ダイアログ
   const [showDelete, setShowDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
+
+  // 属性 (3種)
+  const [projectAttrs, setProjectAttrs] = useState<OntologyAttribute[]>([])
+  const [inheritedAttrs, setInheritedAttrs] = useState<OntologyAttribute[]>([])
+  const [ownAttrs, setOwnAttrs] = useState<OntologyAttribute[]>([])
+  const [loadingAttrs, setLoadingAttrs] = useState(false)
+
+  // 属性追加ダイアログ
+  const [showAddAttr, setShowAddAttr] = useState(false)
+  const [addAttrSection, setAddAttrSection] = useState<AttrSectionKey>("own")
+  const [attrName, setAttrName] = useState("")
+  const [attrDataType, setAttrDataType] = useState("文字列")
+  const [attrRequired, setAttrRequired] = useState<AttributeRequired>("任意")
+  const [addingAttr, setAddingAttr] = useState(false)
+
+  // 属性編集ダイアログ
+  const [showEditAttr, setShowEditAttr] = useState(false)
+  const [editingAttr, setEditingAttr] = useState<OntologyAttribute | null>(null)
+  const [editAttrSection, setEditAttrSection] = useState<AttrSectionKey>("own")
+  const [editAttrName, setEditAttrName] = useState("")
+  const [editAttrDataType, setEditAttrDataType] = useState("文字列")
+  const [editAttrRequired, setEditAttrRequired] = useState<AttributeRequired>("任意")
+  const [savingAttr, setSavingAttr] = useState(false)
+
+  // スコープ警告（削除時の確認）
+  const [showScopeAlert, setShowScopeAlert] = useState(false)
+  const [scopeAlertMsg, setScopeAlertMsg] = useState("")
+  const [scopeAlertIsWarning, setScopeAlertIsWarning] = useState(false)
+  const [pendingAction, setPendingAction] = useState<{ fn: () => Promise<void> } | null>(null)
 
   const fetchClasses = useCallback(async () => {
     if (!currentProject) return
@@ -143,10 +173,35 @@ export function ClassesScreen() {
     fetchClasses()
   }, [currentProject?.id, projectLoading])
 
-  // クラス選択が変わったら編集モードを抜ける
+  const fetchAllAttrs = useCallback(async (classId: string, parentClassId: string | null, projectId: string) => {
+    setLoadingAttrs(true)
+    try {
+      const [projData, ownData] = await Promise.all([
+        fetch(`/api/attributes?targetId=${projectId}`).then((r) => r.json()),
+        fetch(`/api/attributes?targetId=${classId}`).then((r) => r.json()),
+      ])
+      setProjectAttrs(Array.isArray(projData) ? projData : [])
+      setOwnAttrs(Array.isArray(ownData) ? ownData : [])
+      if (parentClassId) {
+        const parentData = await fetch(`/api/attributes?targetId=${parentClassId}`).then((r) => r.json())
+        setInheritedAttrs(Array.isArray(parentData) ? parentData : [])
+      } else {
+        setInheritedAttrs([])
+      }
+    } finally {
+      setLoadingAttrs(false)
+    }
+  }, [])
+
   useEffect(() => {
     setIsEditing(false)
-  }, [selectedId])
+    if (!selectedId || !currentProject) {
+      setProjectAttrs([]); setInheritedAttrs([]); setOwnAttrs([])
+      return
+    }
+    const cls = classes.find((c) => c.id === selectedId)
+    fetchAllAttrs(selectedId, cls?.parentId ?? null, currentProject.id)
+  }, [selectedId, currentProject?.id])
 
   const handleAdd = async () => {
     if (!newName.trim() || !currentProject) return
@@ -229,10 +284,106 @@ export function ClassesScreen() {
     }
   }
 
+  // 属性追加ダイアログを開く
+  const openAddAttr = (section: AttrSectionKey) => {
+    setAddAttrSection(section)
+    setAttrName("")
+    setAttrDataType("文字列")
+    setAttrRequired("任意")
+    setShowAddAttr(true)
+  }
+
+  const handleAddAttr = async () => {
+    if (!attrName.trim() || !selected || !currentProject) return
+    setAddingAttr(true)
+    try {
+      let targetId: string
+      let targetType: "project" | "class"
+      let scope: "共通" | "固有"
+
+      if (addAttrSection === "project") {
+        targetId = currentProject.id; targetType = "project"; scope = "共通"
+      } else if (addAttrSection === "parent") {
+        targetId = selected.parentId!; targetType = "class"; scope = "固有"
+      } else {
+        targetId = selected.id; targetType = "class"; scope = "固有"
+      }
+
+      await fetch("/api/attributes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectId: currentProject.id,
+          name: attrName.trim(),
+          dataType: attrDataType,
+          required: attrRequired,
+          scope,
+          targetId,
+          targetType,
+        }),
+      })
+      await fetchAllAttrs(selected.id, selected.parentId, currentProject.id)
+      setShowAddAttr(false)
+      setAttrName(""); setAttrDataType("文字列"); setAttrRequired("任意")
+    } finally {
+      setAddingAttr(false)
+    }
+  }
+
+  // 属性編集ダイアログを開く
+  const openEditAttr = (attr: OntologyAttribute, section: AttrSectionKey) => {
+    setEditingAttr(attr)
+    setEditAttrSection(section)
+    setEditAttrName(attr.name)
+    setEditAttrDataType(attr.dataType)
+    setEditAttrRequired(attr.required)
+    setShowEditAttr(true)
+  }
+
+  const handleEditAttr = async () => {
+    if (!editingAttr || !editAttrName.trim() || !selected || !currentProject) return
+    setSavingAttr(true)
+    try {
+      await fetch(`/api/attributes/${editingAttr.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: editAttrName.trim(),
+          dataType: editAttrDataType,
+          required: editAttrRequired,
+        }),
+      })
+      await fetchAllAttrs(selected.id, selected.parentId, currentProject.id)
+      setShowEditAttr(false)
+      setEditingAttr(null)
+    } finally {
+      setSavingAttr(false)
+    }
+  }
+
+  // 削除: スコープ外なら確認ダイアログ経由
+  const handleDeleteAttr = (attr: OntologyAttribute, section: AttrSectionKey) => {
+    const doDelete = async () => {
+      await fetch(`/api/attributes/${attr.id}`, { method: "DELETE" })
+      if (selected && currentProject) {
+        await fetchAllAttrs(selected.id, selected.parentId, currentProject.id)
+      }
+    }
+
+    const isWarning = section !== "own"
+    const msg = section === "project"
+      ? `「${attr.name}」はプロジェクト全体の共通属性です。削除するとすべてのクラスから除去されます。`
+      : section === "parent"
+      ? `「${attr.name}」は「${parentName}」クラスの属性です。削除するとそのクラス全体に影響します。`
+      : `「${attr.name}」を削除します。この操作は取り消せません。`
+    setScopeAlertMsg(msg)
+    setScopeAlertIsWarning(isWarning)
+    setPendingAction({ fn: doDelete })
+    setShowScopeAlert(true)
+  }
+
   const openAddDialog = () => {
-    setNewName("")
-    setNewDesc("")
-    setNewParentId(null)
+    setNewName(""); setNewDesc(""); setNewParentId(null)
     setShowAdd(true)
   }
 
@@ -240,18 +391,80 @@ export function ClassesScreen() {
   const selected = classes.find((c) => c.id === selectedId)
   const childClasses = selected ? classes.filter((c) => c.parentId === selected.id) : []
   const hasChildren = childClasses.length > 0
-  const parentName = selected?.parentId
-    ? (classes.find((c) => c.id === selected.parentId)?.name ?? "なし")
-    : "なし"
+  const parentClass = selected?.parentId ? classes.find((c) => c.id === selected.parentId) : null
+  const parentName = parentClass?.name ?? "なし"
   const relatedRelations = selected
     ? relations.filter((r) => r.sourceClass === selected.name || r.targetClass === selected.name)
     : []
 
-  // 親クラス候補：なしのみ、自分自身を除く
-  const parentCandidates = classes.filter(
-    (c) => c.parentId === null && c.id !== selectedId
-  )
+  const parentCandidates = classes.filter((c) => c.parentId === null && c.id !== selectedId)
   const addParentCandidates = classes.filter((c) => c.parentId === null)
+
+  // 属性セクションのレンダリング
+  const renderAttrSection = (
+    title: string,
+    attrs: OntologyAttribute[],
+    section: AttrSectionKey,
+  ) => (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{title}</p>
+        <Button size="sm" variant="outline" className="h-7 gap-1 bg-transparent text-xs"
+          onClick={() => openAddAttr(section)}>
+          <Plus className="h-3 w-3" />追加
+        </Button>
+      </div>
+      {attrs.length === 0 ? (
+        <p className="rounded-lg border border-dashed border-border py-3 text-center text-xs text-muted-foreground">
+          なし
+        </p>
+      ) : (
+        <div className="rounded-lg border border-border">
+          <Table>
+            <TableHeader>
+              <TableRow className="bg-muted/50 hover:bg-muted/50">
+                <TableHead className="font-semibold text-foreground">属性名</TableHead>
+                <TableHead className="w-24 font-semibold text-foreground">データ型</TableHead>
+                <TableHead className="w-20 font-semibold text-foreground">必須/任意</TableHead>
+                <TableHead className="w-16" />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {attrs.map((a) => (
+                <TableRow key={a.id}>
+                  <TableCell className="font-medium text-foreground">{a.name}</TableCell>
+                  <TableCell className="text-muted-foreground">{a.dataType}</TableCell>
+                  <TableCell>
+                    <Badge variant={a.required === "必須" ? "default" : "secondary"} className="font-normal">
+                      {a.required}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex items-center justify-end gap-0.5">
+                      <Button variant="ghost" size="icon" className="h-7 w-7"
+                        onClick={() => openEditAttr(a, section)}>
+                        <Pencil className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                        onClick={() => handleDeleteAttr(a, section)}>
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      )}
+    </div>
+  )
+
+  const scopeWarningText = (section: AttrSectionKey): string | null => {
+    if (section === "project") return "この属性はプロジェクト全体で共有されます。変更はすべてのクラスに影響します。"
+    if (section === "parent") return `この属性は「${parentName}」クラスの属性です。変更はそのクラス全体に影響します。`
+    return null
+  }
 
   return (
     <div className="flex h-full flex-col">
@@ -326,7 +539,7 @@ export function ClassesScreen() {
                   <TabsTrigger value="relations">関連リレーション</TabsTrigger>
                 </TabsList>
 
-                {/* 基本情報：表示 / 編集で切替 */}
+                {/* 基本情報 */}
                 <TabsContent value="basic" className="mt-6 max-w-xl space-y-5">
                   {isEditing ? (
                     <>
@@ -382,40 +595,26 @@ export function ClassesScreen() {
                   )}
                 </TabsContent>
 
+                {/* 属性タブ */}
                 <TabsContent value="attributes" className="mt-6">
-                  <div className="mb-3 flex justify-end">
-                    <Button size="sm" variant="outline" className="h-8 gap-1.5 bg-transparent">
-                      <Plus className="h-3.5 w-3.5" />属性を追加
-                    </Button>
-                  </div>
-                  <div className="rounded-lg border border-border">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>属性名</TableHead>
-                          <TableHead>データ型</TableHead>
-                          <TableHead>必須／任意</TableHead>
-                          <TableHead>共通／固有</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {sampleAttributes.map((a) => (
-                          <TableRow key={a.id}>
-                            <TableCell className="font-medium text-foreground">{a.name}</TableCell>
-                            <TableCell className="text-muted-foreground">{a.dataType}</TableCell>
-                            <TableCell>
-                              <Badge variant={a.required === "必須" ? "default" : "secondary"} className="font-normal">
-                                {a.required}
-                              </Badge>
-                            </TableCell>
-                            <TableCell className="text-muted-foreground">{a.scope}</TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
+                  {loadingAttrs ? (
+                    <div className="flex h-20 items-center justify-center text-muted-foreground">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    </div>
+                  ) : (
+                    <div className="space-y-6">
+                      {renderAttrSection("プロジェクト共通属性", projectAttrs, "project")}
+                      {selected.parentId && renderAttrSection(
+                        `継承属性（${parentName}）`,
+                        inheritedAttrs,
+                        "parent"
+                      )}
+                      {renderAttrSection("クラス固有属性", ownAttrs, "own")}
+                    </div>
+                  )}
                 </TabsContent>
 
+                {/* 関連リレーション */}
                 <TabsContent value="relations" className="mt-6">
                   <div className="rounded-lg border border-border">
                     <Table>
@@ -503,7 +702,146 @@ export function ClassesScreen() {
         </DialogContent>
       </Dialog>
 
-      {/* 削除確認ダイアログ */}
+      {/* 属性追加ダイアログ */}
+      <Dialog open={showAddAttr} onOpenChange={setShowAddAttr}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>属性を追加</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            {addAttrSection !== "own" && (
+              <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+                <p className="text-xs text-amber-600 dark:text-amber-400">
+                  {addAttrSection === "project"
+                    ? "プロジェクト全体の共通属性として追加されます。全クラスに適用されます。"
+                    : `「${parentName}」クラスへ追加されます。そのクラス全体に影響します。`}
+                </p>
+              </div>
+            )}
+            <div className="space-y-2">
+              <Label htmlFor="attr-name">属性名 <span className="text-destructive">*</span></Label>
+              <Input id="attr-name" value={attrName} onChange={(e) => setAttrName(e.target.value)}
+                placeholder="例：登録日" />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="attr-dtype">データ型</Label>
+              <Select value={attrDataType} onValueChange={(v) => { if (v) setAttrDataType(v) }}>
+                <SelectTrigger id="attr-dtype">
+                  <SelectValue>{attrDataType}</SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  {["文字列", "数値", "日時", "真偽値"].map((t) => (
+                    <SelectItem key={t} value={t}>{t}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="attr-req">必須／任意</Label>
+              <Select value={attrRequired} onValueChange={(v) => setAttrRequired(v as AttributeRequired)}>
+                <SelectTrigger id="attr-req">
+                  <SelectValue>{attrRequired}</SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="必須">必須</SelectItem>
+                  <SelectItem value="任意">任意</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowAddAttr(false)}>キャンセル</Button>
+            <Button onClick={handleAddAttr} disabled={!attrName.trim() || addingAttr}>
+              {addingAttr ? "追加中..." : "追加"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 属性編集ダイアログ */}
+      <Dialog open={showEditAttr} onOpenChange={setShowEditAttr}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>属性を編集</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            {editAttrSection !== "own" && (
+              <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+                <p className="text-xs text-amber-600 dark:text-amber-400">
+                  {scopeWarningText(editAttrSection)}
+                </p>
+              </div>
+            )}
+            <div className="space-y-2">
+              <Label htmlFor="edit-attr-name">属性名 <span className="text-destructive">*</span></Label>
+              <Input id="edit-attr-name" value={editAttrName}
+                onChange={(e) => setEditAttrName(e.target.value)} />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-attr-dtype">データ型</Label>
+              <Select value={editAttrDataType} onValueChange={(v) => { if (v) setEditAttrDataType(v) }}>
+                <SelectTrigger id="edit-attr-dtype">
+                  <SelectValue>{editAttrDataType}</SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  {["文字列", "数値", "日時", "真偽値"].map((t) => (
+                    <SelectItem key={t} value={t}>{t}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-attr-req">必須／任意</Label>
+              <Select value={editAttrRequired} onValueChange={(v) => setEditAttrRequired(v as AttributeRequired)}>
+                <SelectTrigger id="edit-attr-req">
+                  <SelectValue>{editAttrRequired}</SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="必須">必須</SelectItem>
+                  <SelectItem value="任意">任意</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setShowEditAttr(false); setEditingAttr(null) }}>
+              キャンセル
+            </Button>
+            <Button onClick={handleEditAttr} disabled={!editAttrName.trim() || savingAttr}>
+              {savingAttr ? "保存中..." : "保存"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* スコープ警告確認ダイアログ（削除時） */}
+      <Dialog open={showScopeAlert} onOpenChange={setShowScopeAlert}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              {scopeAlertIsWarning && <AlertTriangle className="h-5 w-5 text-amber-500" />}
+              {scopeAlertIsWarning ? "影響範囲の確認" : "削除の確認"}
+            </DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">{scopeAlertMsg}</p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setShowScopeAlert(false); setPendingAction(null) }}>
+              キャンセル
+            </Button>
+            <Button variant="destructive" onClick={() => {
+              setShowScopeAlert(false)
+              pendingAction?.fn()
+              setPendingAction(null)
+            }}>
+              削除する
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* クラス削除確認ダイアログ */}
       <Dialog open={showDelete} onOpenChange={setShowDelete}>
         <DialogContent>
           <DialogHeader>

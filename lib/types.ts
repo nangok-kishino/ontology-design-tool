@@ -32,7 +32,7 @@ export type OntologyRelation = {
 
 export type AttributeRequired = "必須" | "任意"
 export type AttributeScope = "共通" | "固有"
-export type AttributeTargetType = "class" | "relation"
+export type AttributeTargetType = "class" | "relation" | "project"
 
 export type OntologyAttribute = {
   id: string

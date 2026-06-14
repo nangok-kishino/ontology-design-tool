@@ -34,6 +34,7 @@ export async function POST(request: NextRequest) {
     const now = new Date().toISOString()
     const item: OntologyAttribute = {
       id: crypto.randomUUID(),
+      projectId: body.projectId,
       name: body.name,
       dataType: body.dataType,
       required: body.required ?? "任意",
