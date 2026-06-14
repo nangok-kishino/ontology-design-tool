@@ -1,19 +1,10 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
 import {
   Table,
   TableBody,
@@ -24,15 +15,24 @@ import {
 } from "@/components/ui/table"
 import { TopBar } from "@/components/top-bar"
 import { cn } from "@/lib/utils"
-import {
-  classTree,
-  classDescriptions,
-  sampleAttributes,
-  relations,
-  parentClassOptions,
-  type ClassNode,
-} from "@/lib/ontology-data"
-import { ChevronDown, ChevronRight, Plus, Pencil, Trash2 } from "lucide-react"
+import { sampleAttributes, relations } from "@/lib/ontology-data"
+import type { OntologyClass } from "@/lib/types"
+import { ChevronDown, ChevronRight, Plus, Pencil, Trash2, Loader2 } from "lucide-react"
+
+type TreeNode = OntologyClass & { children: TreeNode[] }
+
+function buildTree(items: OntologyClass[]): TreeNode[] {
+  const map = new Map(items.map((c) => [c.id, { ...c, children: [] as TreeNode[] }]))
+  const roots: TreeNode[] = []
+  for (const node of map.values()) {
+    if (node.parentId && map.has(node.parentId)) {
+      map.get(node.parentId)!.children.push(node)
+    } else {
+      roots.push(node)
+    }
+  }
+  return roots
+}
 
 function TreeItem({
   node,
@@ -40,13 +40,13 @@ function TreeItem({
   selectedId,
   onSelect,
 }: {
-  node: ClassNode
+  node: TreeNode
   depth: number
-  selectedId: string
+  selectedId: string | null
   onSelect: (id: string) => void
 }) {
   const [open, setOpen] = useState(true)
-  const hasChildren = node.children && node.children.length > 0
+  const hasChildren = node.children.length > 0
   const isSelected = selectedId === node.id
 
   return (
@@ -77,7 +77,7 @@ function TreeItem({
       </div>
       {hasChildren && open && (
         <div>
-          {node.children!.map((child) => (
+          {node.children.map((child) => (
             <TreeItem
               key={child.id}
               node={child}
@@ -93,12 +93,32 @@ function TreeItem({
 }
 
 export function ClassesScreen() {
-  const [selectedId, setSelectedId] = useState("fuguai")
-  const selected = classDescriptions[selectedId]
+  const [classes, setClasses] = useState<OntologyClass[]>([])
+  const [loading, setLoading] = useState(true)
+  const [selectedId, setSelectedId] = useState<string | null>(null)
 
-  const relatedRelations = relations.filter(
-    (r) => r.sourceClass === selected.name || r.targetClass === selected.name,
-  )
+  useEffect(() => {
+    fetch("/api/classes")
+      .then((r) => r.json())
+      .then((data: OntologyClass[]) => {
+        setClasses(data)
+        if (data.length > 0) {
+          setSelectedId(data[0].id)
+        }
+      })
+      .finally(() => setLoading(false))
+  }, [])
+
+  const tree = buildTree(classes)
+  const selected = classes.find((c) => c.id === selectedId)
+  const parentName = selected?.parentId
+    ? (classes.find((c) => c.id === selected.parentId)?.name ?? "（なし）")
+    : "（なし）"
+
+  // 静的リレーション（Step6-7で置き換え）
+  const relatedRelations = selected
+    ? relations.filter((r) => r.sourceClass === selected.name || r.targetClass === selected.name)
+    : []
 
   return (
     <div className="flex h-full flex-col">
@@ -114,137 +134,148 @@ export function ClassesScreen() {
             </Button>
           </div>
           <div className="flex-1 overflow-auto p-2">
-            {classTree.map((node) => (
-              <TreeItem
-                key={node.id}
-                node={node}
-                depth={0}
-                selectedId={selectedId}
-                onSelect={setSelectedId}
-              />
-            ))}
+            {loading ? (
+              <div className="flex h-32 items-center justify-center text-muted-foreground">
+                <Loader2 className="h-5 w-5 animate-spin" />
+              </div>
+            ) : tree.length === 0 ? (
+              <p className="p-4 text-center text-sm text-muted-foreground">
+                クラスが登録されていません
+              </p>
+            ) : (
+              tree.map((node) => (
+                <TreeItem
+                  key={node.id}
+                  node={node}
+                  depth={0}
+                  selectedId={selectedId}
+                  onSelect={setSelectedId}
+                />
+              ))
+            )}
           </div>
         </div>
 
         {/* 右ペイン */}
-        <div className="col-span-2 flex flex-col overflow-hidden">
-          <div className="flex items-center justify-between border-b border-border px-6 py-3">
-            <h2 className="text-base font-semibold text-foreground">{selected.name}</h2>
-            <div className="flex gap-2">
-              <Button size="sm" variant="outline" className="h-8 gap-1.5 bg-transparent">
-                <Pencil className="h-3.5 w-3.5" />
-                編集
-              </Button>
-              <Button size="sm" variant="outline" className="h-8 gap-1.5 bg-transparent text-destructive">
-                <Trash2 className="h-3.5 w-3.5" />
-                削除
-              </Button>
+        {selected ? (
+          <div className="col-span-2 flex flex-col overflow-hidden">
+            <div className="flex items-center justify-between border-b border-border px-6 py-3">
+              <h2 className="text-base font-semibold text-foreground">{selected.name}</h2>
+              <div className="flex gap-2">
+                <Button size="sm" variant="outline" className="h-8 gap-1.5 bg-transparent">
+                  <Pencil className="h-3.5 w-3.5" />
+                  編集
+                </Button>
+                <Button size="sm" variant="outline" className="h-8 gap-1.5 bg-transparent text-destructive">
+                  <Trash2 className="h-3.5 w-3.5" />
+                  削除
+                </Button>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-auto p-6">
+              <Tabs defaultValue="basic">
+                <TabsList>
+                  <TabsTrigger value="basic">基本情報</TabsTrigger>
+                  <TabsTrigger value="attributes">属性</TabsTrigger>
+                  <TabsTrigger value="relations">関連リレーション</TabsTrigger>
+                </TabsList>
+
+                <TabsContent value="basic" className="mt-6 max-w-xl space-y-5">
+                  <div className="space-y-1">
+                    <Label className="text-xs text-muted-foreground">クラス名</Label>
+                    <p className="text-sm font-medium text-foreground">{selected.name}</p>
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs text-muted-foreground">説明</Label>
+                    <p className="text-sm text-foreground whitespace-pre-wrap">
+                      {selected.description || "（説明なし）"}
+                    </p>
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs text-muted-foreground">親クラス</Label>
+                    <p className="text-sm text-foreground">{parentName}</p>
+                  </div>
+                </TabsContent>
+
+                <TabsContent value="attributes" className="mt-6">
+                  <div className="mb-3 flex justify-end">
+                    <Button size="sm" variant="outline" className="h-8 gap-1.5 bg-transparent">
+                      <Plus className="h-3.5 w-3.5" />
+                      属性を追加
+                    </Button>
+                  </div>
+                  <div className="rounded-lg border border-border">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>属性名</TableHead>
+                          <TableHead>データ型</TableHead>
+                          <TableHead>必須／任意</TableHead>
+                          <TableHead>共通／固有</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {sampleAttributes.map((a) => (
+                          <TableRow key={a.id}>
+                            <TableCell className="font-medium text-foreground">{a.name}</TableCell>
+                            <TableCell className="text-muted-foreground">{a.dataType}</TableCell>
+                            <TableCell>
+                              <Badge
+                                variant={a.required === "必須" ? "default" : "secondary"}
+                                className="font-normal"
+                              >
+                                {a.required}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-muted-foreground">{a.scope}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </TabsContent>
+
+                <TabsContent value="relations" className="mt-6">
+                  <div className="rounded-lg border border-border">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>始点クラス</TableHead>
+                          <TableHead>リレーション名</TableHead>
+                          <TableHead>終点クラス</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {relatedRelations.length > 0 ? (
+                          relatedRelations.map((r) => (
+                            <TableRow key={r.id}>
+                              <TableCell className="text-foreground">{r.sourceClass}</TableCell>
+                              <TableCell className="font-medium text-foreground">{r.name}</TableCell>
+                              <TableCell className="text-foreground">{r.targetClass}</TableCell>
+                            </TableRow>
+                          ))
+                        ) : (
+                          <TableRow>
+                            <TableCell colSpan={3} className="text-center text-muted-foreground">
+                              関連するリレーションはありません
+                            </TableCell>
+                          </TableRow>
+                        )}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </TabsContent>
+              </Tabs>
             </div>
           </div>
-
-          <div className="flex-1 overflow-auto p-6">
-            <Tabs defaultValue="basic">
-              <TabsList>
-                <TabsTrigger value="basic">基本情報</TabsTrigger>
-                <TabsTrigger value="attributes">属性</TabsTrigger>
-                <TabsTrigger value="relations">関連リレーション</TabsTrigger>
-              </TabsList>
-
-              <TabsContent value="basic" className="mt-6 max-w-xl space-y-5">
-                <div className="space-y-2">
-                  <Label htmlFor="class-name">クラス名</Label>
-                  <Input id="class-name" defaultValue={selected.name} />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="class-desc">説明</Label>
-                  <Textarea id="class-desc" rows={4} defaultValue={selected.description} />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="class-parent">親クラス</Label>
-                  <Select defaultValue={selected.parent === "（なし）" ? "none" : selected.parent}>
-                    <SelectTrigger id="class-parent">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">（なし）</SelectItem>
-                      {parentClassOptions.map((p) => (
-                        <SelectItem key={p} value={p}>
-                          {p}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </TabsContent>
-
-              <TabsContent value="attributes" className="mt-6">
-                <div className="mb-3 flex justify-end">
-                  <Button size="sm" variant="outline" className="h-8 gap-1.5 bg-transparent">
-                    <Plus className="h-3.5 w-3.5" />
-                    属性を追加
-                  </Button>
-                </div>
-                <div className="rounded-lg border border-border">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>属性名</TableHead>
-                        <TableHead>データ型</TableHead>
-                        <TableHead>必須／任意</TableHead>
-                        <TableHead>共通／固有</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {sampleAttributes.map((a) => (
-                        <TableRow key={a.id}>
-                          <TableCell className="font-medium text-foreground">{a.name}</TableCell>
-                          <TableCell className="text-muted-foreground">{a.dataType}</TableCell>
-                          <TableCell>
-                            <Badge variant={a.required === "必須" ? "default" : "secondary"} className="font-normal">
-                              {a.required}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="text-muted-foreground">{a.scope}</TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              </TabsContent>
-
-              <TabsContent value="relations" className="mt-6">
-                <div className="rounded-lg border border-border">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>始点クラス</TableHead>
-                        <TableHead>リレーション名</TableHead>
-                        <TableHead>終点クラス</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {relatedRelations.length > 0 ? (
-                        relatedRelations.map((r) => (
-                          <TableRow key={r.id}>
-                            <TableCell className="text-foreground">{r.sourceClass}</TableCell>
-                            <TableCell className="font-medium text-foreground">{r.name}</TableCell>
-                            <TableCell className="text-foreground">{r.targetClass}</TableCell>
-                          </TableRow>
-                        ))
-                      ) : (
-                        <TableRow>
-                          <TableCell colSpan={3} className="text-center text-muted-foreground">
-                            関連するリレーションはありません
-                          </TableCell>
-                        </TableRow>
-                      )}
-                    </TableBody>
-                  </Table>
-                </div>
-              </TabsContent>
-            </Tabs>
-          </div>
-        </div>
+        ) : (
+          !loading && (
+            <div className="col-span-2 flex items-center justify-center text-muted-foreground">
+              <p className="text-sm">クラスを選択してください</p>
+            </div>
+          )
+        )}
       </div>
     </div>
   )
