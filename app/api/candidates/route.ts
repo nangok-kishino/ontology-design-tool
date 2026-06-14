@@ -34,6 +34,7 @@ export async function POST(request: NextRequest) {
     const now = new Date().toISOString()
     const item: LLMCandidate = {
       id: crypto.randomUUID(),
+      projectId: body.projectId,
       type: body.type,
       name: body.name,
       description: body.description ?? "",

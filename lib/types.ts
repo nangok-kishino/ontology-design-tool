@@ -38,6 +38,7 @@ export type OntologyAttribute = {
   id: string
   projectId: string
   name: string
+  description: string
   dataType: string
   required: AttributeRequired
   scope: AttributeScope
@@ -51,9 +52,10 @@ export type OntologyInstance = {
   id: string
   projectId: string
   name: string
-  classId: string
+  classId: string | null
   registeredBy: string
   registeredAt: string
+  attributes?: Record<string, string>
 }
 
 export type CandidateType = "class" | "relation"

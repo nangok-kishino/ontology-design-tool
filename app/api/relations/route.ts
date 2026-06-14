@@ -4,9 +4,22 @@ import type { OntologyRelation } from "@/lib/types"
 
 const CONTAINER = "relations"
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
+    const { searchParams } = new URL(request.url)
+    const projectId = searchParams.get("projectId")
     const container = await getContainer(CONTAINER)
+
+    if (projectId) {
+      const { resources } = await container.items
+        .query<OntologyRelation>({
+          query: "SELECT * FROM c WHERE c.projectId = @projectId",
+          parameters: [{ name: "@projectId", value: projectId }],
+        })
+        .fetchAll()
+      return NextResponse.json(resources)
+    }
+
     const { resources } = await container.items.readAll<OntologyRelation>().fetchAll()
     return NextResponse.json(resources)
   } catch (error) {
@@ -21,6 +34,7 @@ export async function POST(request: NextRequest) {
     const now = new Date().toISOString()
     const item: OntologyRelation = {
       id: crypto.randomUUID(),
+      projectId: body.projectId,
       name: body.name,
       description: body.description ?? "",
       sourceClassId: body.sourceClassId,

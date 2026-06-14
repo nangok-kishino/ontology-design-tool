@@ -28,6 +28,7 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
     const updated: OntologyAttribute = {
       ...existing,
       name: body.name ?? existing.name,
+      description: body.description !== undefined ? body.description : (existing.description ?? ""),
       dataType: body.dataType ?? existing.dataType,
       required: body.required ?? existing.required,
       scope: body.scope ?? existing.scope,

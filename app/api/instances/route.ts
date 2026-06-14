@@ -10,6 +10,16 @@ export async function GET(request: NextRequest) {
     const classId = searchParams.get("classId")
     const container = await getContainer(CONTAINER)
 
+    if (classId === "unclassified") {
+      // classId が null または未定義のインスタンスを取得
+      const { resources } = await container.items
+        .query<OntologyInstance>({
+          query: "SELECT * FROM c WHERE IS_NULL(c.classId) OR NOT IS_DEFINED(c.classId)",
+        })
+        .fetchAll()
+      return NextResponse.json(resources)
+    }
+
     if (classId) {
       const { resources } = await container.items
         .query<OntologyInstance>({
@@ -33,10 +43,12 @@ export async function POST(request: NextRequest) {
     const body = await request.json()
     const item: OntologyInstance = {
       id: crypto.randomUUID(),
+      projectId: body.projectId,
       name: body.name,
-      classId: body.classId,
-      registeredBy: body.registeredBy ?? "unknown",
+      classId: body.classId ?? null,
+      registeredBy: body.registeredBy ?? "",
       registeredAt: new Date().toISOString().split("T")[0],
+      attributes: body.attributes ?? {},
     }
     const container = await getContainer(CONTAINER)
     const { resource } = await container.items.create(item)

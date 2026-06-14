@@ -30,10 +30,11 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { TopBar } from "@/components/top-bar"
+import { Tooltip } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
 import { relations } from "@/lib/ontology-data"
 import type { OntologyClass, OntologyAttribute, AttributeRequired } from "@/lib/types"
-import { ChevronDown, ChevronRight, Plus, Pencil, Trash2, Loader2, X, AlertTriangle } from "lucide-react"
+import { ChevronDown, ChevronRight, Plus, Pencil, Trash2, Loader2, X, AlertTriangle, Info } from "lucide-react"
 import { useProject } from "@/app/project-context"
 
 type TreeNode = OntologyClass & { children: TreeNode[] }
@@ -123,6 +124,10 @@ export function ClassesScreen() {
   // クラス削除確認ダイアログ
   const [showDelete, setShowDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [deleteInstanceCount, setDeleteInstanceCount] = useState(0)
+  const [loadingDeleteInfo, setLoadingDeleteInfo] = useState(false)
+  const [deleteChildMode, setDeleteChildMode] = useState<"cascade" | "promote">("promote")
+  const [deleteInstanceMode, setDeleteInstanceMode] = useState<"delete" | "unclassify">("unclassify")
 
   // 属性 (3種)
   const [projectAttrs, setProjectAttrs] = useState<OntologyAttribute[]>([])
@@ -134,6 +139,7 @@ export function ClassesScreen() {
   const [showAddAttr, setShowAddAttr] = useState(false)
   const [addAttrSection, setAddAttrSection] = useState<AttrSectionKey>("own")
   const [attrName, setAttrName] = useState("")
+  const [attrDesc, setAttrDesc] = useState("")
   const [attrDataType, setAttrDataType] = useState("文字列")
   const [attrRequired, setAttrRequired] = useState<AttributeRequired>("任意")
   const [addingAttr, setAddingAttr] = useState(false)
@@ -143,6 +149,7 @@ export function ClassesScreen() {
   const [editingAttr, setEditingAttr] = useState<OntologyAttribute | null>(null)
   const [editAttrSection, setEditAttrSection] = useState<AttrSectionKey>("own")
   const [editAttrName, setEditAttrName] = useState("")
+  const [editAttrDesc, setEditAttrDesc] = useState("")
   const [editAttrDataType, setEditAttrDataType] = useState("文字列")
   const [editAttrRequired, setEditAttrRequired] = useState<AttributeRequired>("任意")
   const [savingAttr, setSavingAttr] = useState(false)
@@ -255,26 +262,63 @@ export function ClassesScreen() {
     }
   }
 
-  const handleDelete = async (mode: "simple" | "cascade" | "promote") => {
+  // 削除ダイアログを開きながらインスタンス数を取得
+  const openDeleteDialog = async () => {
+    setDeleteChildMode("promote")
+    setDeleteInstanceMode("unclassify")
+    setDeleteInstanceCount(0)
+    setShowDelete(true)
+    if (!selected) return
+    setLoadingDeleteInfo(true)
+    try {
+      const res = await fetch(`/api/instances?classId=${selected.id}`)
+      const insts = await res.json()
+      setDeleteInstanceCount(Array.isArray(insts) ? insts.length : 0)
+    } finally {
+      setLoadingDeleteInfo(false)
+    }
+  }
+
+  const handleDelete = async () => {
     if (!selected) return
     setDeleting(true)
     try {
       const children = classes.filter((c) => c.parentId === selected.id)
-      if (mode === "cascade") {
-        await Promise.all(
-          children.map((child) => fetch(`/api/classes/${child.id}`, { method: "DELETE" }))
-        )
-      } else if (mode === "promote") {
-        await Promise.all(
-          children.map((child) =>
+
+      // 子クラスの処理
+      if (hasChildren) {
+        if (deleteChildMode === "cascade") {
+          await Promise.all(children.map((child) => fetch(`/api/classes/${child.id}`, { method: "DELETE" })))
+        } else {
+          await Promise.all(children.map((child) =>
             fetch(`/api/classes/${child.id}`, {
               method: "PUT",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ parentId: null }),
             })
-          )
-        )
+          ))
+        }
       }
+
+      // インスタンスの処理
+      if (deleteInstanceCount > 0) {
+        const instRes = await fetch(`/api/instances?classId=${selected.id}`)
+        const insts = await instRes.json()
+        if (Array.isArray(insts)) {
+          if (deleteInstanceMode === "delete") {
+            await Promise.all(insts.map((inst) => fetch(`/api/instances/${inst.id}`, { method: "DELETE" })))
+          } else {
+            await Promise.all(insts.map((inst) =>
+              fetch(`/api/instances/${inst.id}`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ classId: null }),
+              })
+            ))
+          }
+        }
+      }
+
       await fetch(`/api/classes/${selected.id}`, { method: "DELETE" })
       await fetchClasses()
       setSelectedId(null)
@@ -287,9 +331,7 @@ export function ClassesScreen() {
   // 属性追加ダイアログを開く
   const openAddAttr = (section: AttrSectionKey) => {
     setAddAttrSection(section)
-    setAttrName("")
-    setAttrDataType("文字列")
-    setAttrRequired("任意")
+    setAttrName(""); setAttrDesc(""); setAttrDataType("文字列"); setAttrRequired("任意")
     setShowAddAttr(true)
   }
 
@@ -315,6 +357,7 @@ export function ClassesScreen() {
         body: JSON.stringify({
           projectId: currentProject.id,
           name: attrName.trim(),
+          description: attrDesc.trim(),
           dataType: attrDataType,
           required: attrRequired,
           scope,
@@ -324,7 +367,7 @@ export function ClassesScreen() {
       })
       await fetchAllAttrs(selected.id, selected.parentId, currentProject.id)
       setShowAddAttr(false)
-      setAttrName(""); setAttrDataType("文字列"); setAttrRequired("任意")
+      setAttrName(""); setAttrDesc(""); setAttrDataType("文字列"); setAttrRequired("任意")
     } finally {
       setAddingAttr(false)
     }
@@ -335,6 +378,7 @@ export function ClassesScreen() {
     setEditingAttr(attr)
     setEditAttrSection(section)
     setEditAttrName(attr.name)
+    setEditAttrDesc(attr.description ?? "")
     setEditAttrDataType(attr.dataType)
     setEditAttrRequired(attr.required)
     setShowEditAttr(true)
@@ -349,6 +393,7 @@ export function ClassesScreen() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: editAttrName.trim(),
+          description: editAttrDesc.trim(),
           dataType: editAttrDataType,
           required: editAttrRequired,
         }),
@@ -432,7 +477,16 @@ export function ClassesScreen() {
             <TableBody>
               {attrs.map((a) => (
                 <TableRow key={a.id}>
-                  <TableCell className="font-medium text-foreground">{a.name}</TableCell>
+                  <TableCell className="font-medium text-foreground">
+                    <div className="flex items-center gap-1.5">
+                      <span>{a.name}</span>
+                      {a.description && (
+                        <Tooltip content={a.description}>
+                          <Info className="h-3.5 w-3.5 cursor-help text-muted-foreground/50 transition-colors hover:text-muted-foreground" />
+                        </Tooltip>
+                      )}
+                    </div>
+                  </TableCell>
                   <TableCell className="text-muted-foreground">{a.dataType}</TableCell>
                   <TableCell>
                     <Badge variant={a.required === "必須" ? "default" : "secondary"} className="font-normal">
@@ -469,10 +523,10 @@ export function ClassesScreen() {
   return (
     <div className="flex h-full flex-col">
       <TopBar title="クラス管理" />
-      <div className="grid flex-1 grid-cols-3 overflow-hidden">
+      <div className="grid flex-1 overflow-hidden" style={{ gridTemplateColumns: "260px 1fr" }}>
         {/* 左ペイン */}
-        <div className="col-span-1 flex flex-col border-r border-border bg-card">
-          <div className="flex items-center justify-between border-b border-border px-4 py-3">
+        <div className="flex flex-col border-r border-border bg-card">
+          <div className="flex items-center justify-between px-4 py-3">
             <h2 className="text-sm font-semibold text-foreground">クラス一覧</h2>
             <Button size="sm" variant="outline" className="h-8 gap-1.5 bg-transparent"
               onClick={openAddDialog}>
@@ -498,9 +552,9 @@ export function ClassesScreen() {
 
         {/* 右ペイン */}
         {selected ? (
-          <div className="col-span-2 flex flex-col overflow-hidden">
+          <div className="flex flex-col overflow-hidden">
             {/* ヘッダー */}
-            <div className="flex items-center justify-between border-b border-border px-6 py-3">
+            <div className="flex items-center justify-between px-6 py-3">
               <h2 className="text-base font-semibold text-foreground">{selected.name}</h2>
               <div className="flex gap-2">
                 {isEditing ? (
@@ -523,7 +577,7 @@ export function ClassesScreen() {
                     </Button>
                     <Button size="sm" variant="outline"
                       className="h-8 gap-1.5 bg-transparent text-destructive hover:text-destructive"
-                      onClick={() => setShowDelete(true)}>
+                      onClick={openDeleteDialog}>
                       <Trash2 className="h-3.5 w-3.5" />削除
                     </Button>
                   </>
@@ -531,16 +585,18 @@ export function ClassesScreen() {
               </div>
             </div>
 
-            <div className="flex-1 overflow-auto p-6">
+            <div className="flex-1 overflow-auto">
               <Tabs defaultValue="basic">
-                <TabsList>
-                  <TabsTrigger value="basic">基本情報</TabsTrigger>
-                  <TabsTrigger value="attributes">属性</TabsTrigger>
-                  <TabsTrigger value="relations">関連リレーション</TabsTrigger>
-                </TabsList>
+                <div className="border-b border-border px-6 pt-3">
+                  <TabsList variant="line" className="h-auto w-auto justify-start border-0 p-0 gap-0">
+                    <TabsTrigger value="basic" className="h-auto flex-none rounded-t-sm rounded-b-none px-5 py-2 text-sm border-b-2 border-b-transparent after:hidden hover:bg-muted/50 data-active:bg-accent data-active:text-accent-foreground data-active:border-b-primary">基本情報</TabsTrigger>
+                    <TabsTrigger value="attributes" className="h-auto flex-none rounded-t-sm rounded-b-none px-5 py-2 text-sm border-b-2 border-b-transparent after:hidden hover:bg-muted/50 data-active:bg-accent data-active:text-accent-foreground data-active:border-b-primary">属性</TabsTrigger>
+                    <TabsTrigger value="relations" className="h-auto flex-none rounded-t-sm rounded-b-none px-5 py-2 text-sm border-b-2 border-b-transparent after:hidden hover:bg-muted/50 data-active:bg-accent data-active:text-accent-foreground data-active:border-b-primary">関連リレーション</TabsTrigger>
+                  </TabsList>
+                </div>
 
                 {/* 基本情報 */}
-                <TabsContent value="basic" className="mt-6 max-w-xl space-y-5">
+                <TabsContent value="basic" className="px-6 py-6 max-w-xl space-y-5">
                   {isEditing ? (
                     <>
                       <div className="space-y-2">
@@ -596,7 +652,7 @@ export function ClassesScreen() {
                 </TabsContent>
 
                 {/* 属性タブ */}
-                <TabsContent value="attributes" className="mt-6">
+                <TabsContent value="attributes" className="px-6 py-6">
                   {loadingAttrs ? (
                     <div className="flex h-20 items-center justify-center text-muted-foreground">
                       <Loader2 className="h-4 w-4 animate-spin" />
@@ -615,7 +671,7 @@ export function ClassesScreen() {
                 </TabsContent>
 
                 {/* 関連リレーション */}
-                <TabsContent value="relations" className="mt-6">
+                <TabsContent value="relations" className="px-6 py-6">
                   <div className="rounded-lg border border-border">
                     <Table>
                       <TableHeader>
@@ -650,7 +706,7 @@ export function ClassesScreen() {
           </div>
         ) : (
           !loading && (
-            <div className="col-span-2 flex items-center justify-center text-muted-foreground">
+            <div className="flex items-center justify-center text-muted-foreground">
               <p className="text-sm">クラスを選択してください</p>
             </div>
           )
@@ -725,13 +781,19 @@ export function ClassesScreen() {
                 placeholder="例：登録日" />
             </div>
             <div className="space-y-2">
+              <Label htmlFor="attr-desc">説明</Label>
+              <Textarea id="attr-desc" rows={2} value={attrDesc}
+                onChange={(e) => setAttrDesc(e.target.value)}
+                placeholder="属性の意味・用途を記述" />
+            </div>
+            <div className="space-y-2">
               <Label htmlFor="attr-dtype">データ型</Label>
               <Select value={attrDataType} onValueChange={(v) => { if (v) setAttrDataType(v) }}>
                 <SelectTrigger id="attr-dtype">
                   <SelectValue>{attrDataType}</SelectValue>
                 </SelectTrigger>
                 <SelectContent>
-                  {["文字列", "数値", "日時", "真偽値"].map((t) => (
+                  {["文字列", "数値", "日付", "真偽値"].map((t) => (
                     <SelectItem key={t} value={t}>{t}</SelectItem>
                   ))}
                 </SelectContent>
@@ -780,13 +842,19 @@ export function ClassesScreen() {
                 onChange={(e) => setEditAttrName(e.target.value)} />
             </div>
             <div className="space-y-2">
+              <Label htmlFor="edit-attr-desc">説明</Label>
+              <Textarea id="edit-attr-desc" rows={2} value={editAttrDesc}
+                onChange={(e) => setEditAttrDesc(e.target.value)}
+                placeholder="属性の意味・用途を記述" />
+            </div>
+            <div className="space-y-2">
               <Label htmlFor="edit-attr-dtype">データ型</Label>
               <Select value={editAttrDataType} onValueChange={(v) => { if (v) setEditAttrDataType(v) }}>
                 <SelectTrigger id="edit-attr-dtype">
                   <SelectValue>{editAttrDataType}</SelectValue>
                 </SelectTrigger>
                 <SelectContent>
-                  {["文字列", "数値", "日時", "真偽値"].map((t) => (
+                  {["文字列", "数値", "日付", "真偽値"].map((t) => (
                     <SelectItem key={t} value={t}>{t}</SelectItem>
                   ))}
                 </SelectContent>
@@ -843,50 +911,87 @@ export function ClassesScreen() {
 
       {/* クラス削除確認ダイアログ */}
       <Dialog open={showDelete} onOpenChange={setShowDelete}>
-        <DialogContent>
+        <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>クラスを削除</DialogTitle>
+            <DialogTitle>「{selected?.name}」を削除</DialogTitle>
           </DialogHeader>
-          {hasChildren ? (
-            <>
-              <p className="text-sm text-muted-foreground">
-                「{selected?.name}」には子クラスが{childClasses.length}つあります。削除方法を選択してください。
-              </p>
-              <ul className="ml-4 list-disc text-sm text-muted-foreground">
-                {childClasses.map((c) => <li key={c.id}>{c.name}</li>)}
-              </ul>
-              <div className="mt-2 flex flex-col gap-2">
-                <Button className="w-full" variant="destructive"
-                  onClick={() => handleDelete("cascade")} disabled={deleting}>
-                  {deleting ? "処理中..." : "子クラスも一緒に削除"}
-                </Button>
-                <Button className="w-full border-destructive text-destructive hover:bg-destructive/10"
-                  variant="outline"
-                  onClick={() => handleDelete("promote")} disabled={deleting}>
-                  {deleting ? "処理中..." : "子クラスをなしに残して削除"}
-                </Button>
-                <Button className="w-full" variant="outline"
-                  onClick={() => setShowDelete(false)} disabled={deleting}>
-                  キャンセル
-                </Button>
-              </div>
-            </>
+
+          {loadingDeleteInfo ? (
+            <div className="flex items-center justify-center py-4 text-muted-foreground">
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />確認中…
+            </div>
           ) : (
-            <>
-              <p className="text-sm text-muted-foreground">
-                「{selected?.name}」を削除します。この操作は取り消せません。
-              </p>
-              <DialogFooter>
-                <Button variant="outline" onClick={() => setShowDelete(false)} disabled={deleting}>
-                  キャンセル
-                </Button>
-                <Button variant="destructive"
-                  onClick={() => handleDelete("simple")} disabled={deleting}>
-                  {deleting ? "削除中..." : "削除する"}
-                </Button>
-              </DialogFooter>
-            </>
+            <div className="space-y-5 py-1">
+              {/* 子クラスの処理 */}
+              {hasChildren && (
+                <div className="space-y-2">
+                  <p className="text-sm font-medium text-foreground">
+                    子クラスの扱い
+                    <span className="ml-1.5 text-xs font-normal text-muted-foreground">
+                      （{childClasses.length}件）
+                    </span>
+                  </p>
+                  <div className="flex flex-col gap-1.5">
+                    {(["promote", "cascade"] as const).map((mode) => (
+                      <label key={mode} className="flex cursor-pointer items-center gap-2 rounded-md border border-border px-3 py-2 text-sm hover:bg-muted">
+                        <input
+                          type="radio"
+                          name="childMode"
+                          value={mode}
+                          checked={deleteChildMode === mode}
+                          onChange={() => setDeleteChildMode(mode)}
+                          className="accent-foreground"
+                        />
+                        {mode === "promote" ? "親なしで残す" : "一緒に削除"}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* インスタンスの処理 */}
+              {deleteInstanceCount > 0 && (
+                <div className="space-y-2">
+                  <p className="text-sm font-medium text-foreground">
+                    インスタンスの扱い
+                    <span className="ml-1.5 text-xs font-normal text-muted-foreground">
+                      （{deleteInstanceCount}件）
+                    </span>
+                  </p>
+                  <div className="flex flex-col gap-1.5">
+                    {(["unclassify", "delete"] as const).map((mode) => (
+                      <label key={mode} className="flex cursor-pointer items-center gap-2 rounded-md border border-border px-3 py-2 text-sm hover:bg-muted">
+                        <input
+                          type="radio"
+                          name="instanceMode"
+                          value={mode}
+                          checked={deleteInstanceMode === mode}
+                          onChange={() => setDeleteInstanceMode(mode)}
+                          className="accent-foreground"
+                        />
+                        {mode === "unclassify" ? "未分類として残す" : "一緒に削除"}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {!hasChildren && deleteInstanceCount === 0 && (
+                <p className="text-sm text-muted-foreground">
+                  この操作は取り消せません。
+                </p>
+              )}
+            </div>
           )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowDelete(false)} disabled={deleting}>
+              キャンセル
+            </Button>
+            <Button variant="destructive" onClick={handleDelete} disabled={deleting || loadingDeleteInfo}>
+              {deleting ? <><Loader2 className="mr-1.5 h-4 w-4 animate-spin" />処理中…</> : "削除する"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

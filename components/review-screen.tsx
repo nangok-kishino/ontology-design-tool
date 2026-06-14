@@ -258,7 +258,7 @@ export function ReviewScreen() {
             {placement === "sub" && (
               <div className="space-y-2 pl-6">
                 <Label htmlFor="parent-select">親クラスを選択</Label>
-                <Select value={parentClass} onValueChange={setParentClass}>
+                <Select value={parentClass} onValueChange={(v) => { if (v) setParentClass(v) }}>
                   <SelectTrigger id="parent-select">
                     <SelectValue />
                   </SelectTrigger>

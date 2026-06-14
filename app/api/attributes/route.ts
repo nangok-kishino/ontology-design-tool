@@ -36,6 +36,7 @@ export async function POST(request: NextRequest) {
       id: crypto.randomUUID(),
       projectId: body.projectId,
       name: body.name,
+      description: body.description ?? "",
       dataType: body.dataType,
       required: body.required ?? "任意",
       scope: body.scope ?? "固有",

@@ -28,7 +28,9 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
     const updated: OntologyInstance = {
       ...existing,
       name: body.name ?? existing.name,
-      classId: body.classId ?? existing.classId,
+      // classId は明示的に null を渡すことで未分類にできる
+      classId: "classId" in body ? (body.classId ?? null) : existing.classId,
+      attributes: body.attributes !== undefined ? body.attributes : existing.attributes,
     }
     const { resource } = await container.item(id, id).replace(updated)
     return NextResponse.json(resource)
