@@ -1,7 +1,16 @@
 // Cosmos DB エンティティ型定義
 
+export type Project = {
+  id: string
+  name: string
+  description: string
+  createdAt: string
+  updatedAt: string
+}
+
 export type OntologyClass = {
   id: string
+  projectId: string
   name: string
   description: string
   parentId: string | null
@@ -11,6 +20,7 @@ export type OntologyClass = {
 
 export type OntologyRelation = {
   id: string
+  projectId: string
   name: string
   description: string
   sourceClassId: string
@@ -26,6 +36,7 @@ export type AttributeTargetType = "class" | "relation"
 
 export type OntologyAttribute = {
   id: string
+  projectId: string
   name: string
   dataType: string
   required: AttributeRequired
@@ -38,6 +49,7 @@ export type OntologyAttribute = {
 
 export type OntologyInstance = {
   id: string
+  projectId: string
   name: string
   classId: string
   registeredBy: string
@@ -49,6 +61,7 @@ export type CandidateStatus = "確認中" | "承認済み" | "却下"
 
 export type LLMCandidate = {
   id: string
+  projectId: string
   type: CandidateType
   name: string
   description: string

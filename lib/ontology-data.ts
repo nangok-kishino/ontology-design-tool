@@ -210,10 +210,13 @@ export const relationCandidates: RelationCandidate[] = [
 export const parentClassOptions = ["知見", "不具合事例", "対策", "構成要素", "部品", "材料"]
 
 // ダッシュボード：クラスとインスタンスの対応
-export const classInstanceRows: { className: string; instances: string[] }[] = [
-  { className: "知見", instances: ["ポンプ異音事案2023", "モーター過熱事案2024"] },
-  { className: "不具合事例", instances: ["ポンプ異音事案2023"] },
-  { className: "構成要素", instances: ["部品Bの熱膨張", "冷却経路の詰まり"] },
+export const classInstanceRows: { className: string; parentClassName: string | null; instances: string[] }[] = [
+  { className: "知見", parentClassName: null, instances: ["ポンプ異音事案2023", "モーター過熱事案2024"] },
+  { className: "不具合事例", parentClassName: "知見", instances: ["ポンプ異音事案2023"] },
+  { className: "対策", parentClassName: "知見", instances: ["潤滑油の交換周期短縮", "冷却ファンの増設"] },
+  { className: "構成要素", parentClassName: null, instances: ["部品Bの熱膨張", "冷却経路の詰まり"] },
+  { className: "部品", parentClassName: "構成要素", instances: [] },
+  { className: "材料", parentClassName: "構成要素", instances: [] },
 ]
 
 // ダッシュボード：リレーション一覧

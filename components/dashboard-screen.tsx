@@ -19,7 +19,7 @@ export function DashboardScreen() {
     <div className="flex h-full flex-col">
       <TopBar title="ダッシュボード" action={{ label: "OWL/RDF エクスポート", icon: Download }} />
       <div className="flex-1 overflow-auto p-6">
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <div className="grid grid-cols-1 gap-6">
           <section>
             <Card>
               <CardHeader>
@@ -29,22 +29,30 @@ export function DashboardScreen() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="w-40">クラス</TableHead>
+                      <TableHead className="w-36">親クラス</TableHead>
+                      <TableHead className="w-36">クラス</TableHead>
                       <TableHead>インスタンス</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {classInstanceRows.map((row) => (
                       <TableRow key={row.className}>
+                        <TableCell className="align-top text-muted-foreground">
+                          {row.parentClassName ?? "—"}
+                        </TableCell>
                         <TableCell className="font-medium text-foreground align-top">{row.className}</TableCell>
                         <TableCell>
-                          <div className="flex flex-wrap gap-1.5">
-                            {row.instances.map((inst) => (
-                              <Badge key={inst} variant="secondary" className="font-normal">
-                                {inst}
-                              </Badge>
-                            ))}
-                          </div>
+                          {row.instances.length > 0 ? (
+                            <div className="flex flex-wrap gap-1.5">
+                              {row.instances.map((inst) => (
+                                <Badge key={inst} variant="secondary" className="font-normal">
+                                  {inst}
+                                </Badge>
+                              ))}
+                            </div>
+                          ) : (
+                            <span className="text-sm text-muted-foreground">—</span>
+                          )}
                         </TableCell>
                       </TableRow>
                     ))}

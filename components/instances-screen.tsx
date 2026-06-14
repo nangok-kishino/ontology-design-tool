@@ -22,7 +22,7 @@ export function InstancesScreen() {
 
   return (
     <div className="flex h-full flex-col">
-      <TopBar title="クラス用インスタンス" />
+      <TopBar title="登録済みインスタンス" />
       <div className="flex flex-1 gap-6 overflow-hidden p-6">
         {/* 左ペイン：クラス選択 */}
         <div className="w-1/3 min-w-64">

@@ -1,7 +1,10 @@
 "use client"
 
 import { cn } from "@/lib/utils"
-import { LayoutDashboard, Boxes, GitBranch, FileInput, Database } from "lucide-react"
+import {
+  LayoutDashboard, Boxes, GitBranch, FileInput, Database, FolderOpen,
+} from "lucide-react"
+import { useProject } from "@/app/project-context"
 
 export type ScreenId = "dashboard" | "review" | "classes" | "relations" | "instances"
 
@@ -25,7 +28,7 @@ const navGroups: NavGroup[] = [
   },
   {
     label: "インスタンス管理",
-    items: [{ id: "instances", label: "クラス用インスタンス", icon: Database }],
+    items: [{ id: "instances", label: "登録済みインスタンス", icon: Database }],
   },
 ]
 
@@ -36,49 +39,86 @@ export function Sidebar({
   active: ScreenId
   onNavigate: (id: ScreenId) => void
 }) {
+  const { currentProject, clearCurrentProject } = useProject()
+
   return (
-    <aside className="flex h-screen w-60 flex-col border-r border-neutral-800 bg-neutral-900 text-neutral-100">
-      <div className="flex items-center gap-2 border-b border-neutral-800 px-5 py-4">
-        <div className="flex h-8 w-8 items-center justify-center rounded-md bg-neutral-100 text-neutral-900">
-          <Boxes className="h-5 w-5" />
+    <aside className="flex h-screen w-60 flex-col border-r border-white/[0.06] bg-zinc-950 text-neutral-100">
+      {/* アプリタイトル */}
+      <div className="flex items-center gap-2.5 px-4 py-4">
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-indigo-500">
+          <Boxes className="h-4 w-4 text-white" />
         </div>
         <div className="leading-tight">
-          <p className="text-sm font-semibold">オントロジー</p>
-          <p className="text-xs text-neutral-400">設計支援ツール</p>
+          <p className="text-sm font-semibold tracking-tight text-white">オントロジー設計</p>
+          <p className="text-[11px] text-zinc-400">オントロジー設計支援ツール</p>
         </div>
       </div>
 
-      <nav className="flex-1 space-y-5 overflow-y-auto px-3 py-4">
-        {navGroups.map((group) => (
-          <div key={group.label} className="space-y-1">
-            <p className="px-3 pb-1 text-xs font-medium uppercase tracking-wide text-neutral-500">{group.label}</p>
-            {group.items.map((item) => {
-              const Icon = item.icon
-              const isActive = active === item.id
-              return (
-                <button
-                  key={item.id}
-                  onClick={() => onNavigate(item.id)}
-                  className={cn(
-                    "flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors",
-                    isActive
-                      ? "bg-neutral-100 font-medium text-neutral-900"
-                      : "text-neutral-300 hover:bg-neutral-800 hover:text-neutral-100",
-                  )}
-                >
-                  <Icon className="h-4 w-4 shrink-0" />
-                  <span>{item.label}</span>
-                </button>
-              )
-            })}
+      {/* プロジェクト表示 */}
+      <div className="px-3 pb-3">
+        <p className="mb-1 px-2 text-[10px] font-semibold uppercase tracking-widest text-zinc-400">
+          プロジェクト
+        </p>
+        {currentProject ? (
+          <div className="flex items-center justify-between rounded-md px-2 py-2">
+            <div className="flex min-w-0 items-center gap-2">
+              <FolderOpen className="h-3.5 w-3.5 shrink-0 text-zinc-300" />
+              <span className="truncate text-sm font-medium text-zinc-100">{currentProject.name}</span>
+            </div>
+            <button
+              onClick={clearCurrentProject}
+              className="ml-2 shrink-0 text-[11px] text-zinc-400 transition-colors hover:text-zinc-100"
+            >
+              変更
+            </button>
           </div>
-        ))}
-      </nav>
-
-      <div className="border-t border-neutral-800 px-5 py-4">
-        <p className="text-xs text-neutral-500">プロジェクト</p>
-        <p className="mt-0.5 truncate text-sm font-medium text-neutral-200">製造知識継承オントロジー</p>
+        ) : (
+          <div className="flex items-center gap-2 rounded-md px-2 py-2">
+            <FolderOpen className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
+            <span className="text-sm text-zinc-500">未選択</span>
+          </div>
+        )}
       </div>
+
+      {/* ナビゲーション（プロジェクト選択時のみ） */}
+      {currentProject && (
+        <>
+          <div className="mx-3 border-t border-white/[0.06]" />
+          <nav className="flex-1 space-y-4 overflow-y-auto px-3 py-4">
+            {navGroups.map((group) => (
+              <div key={group.label} className="space-y-0.5">
+                <p className="px-2 pb-1 text-[11px] font-semibold uppercase tracking-widest text-zinc-400">
+                  {group.label}
+                </p>
+                {group.items.map((item) => {
+                  const Icon = item.icon
+                  const isActive = active === item.id
+                  return (
+                    <button
+                      key={item.id}
+                      onClick={() => onNavigate(item.id)}
+                      className={cn(
+                        "flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-sm transition-colors",
+                        isActive
+                          ? "bg-white/10 font-medium text-white"
+                          : "text-zinc-300 hover:bg-white/5 hover:text-white",
+                      )}
+                    >
+                      <Icon
+                        className={cn(
+                          "h-4 w-4 shrink-0",
+                          isActive ? "text-indigo-400" : "text-zinc-400",
+                        )}
+                      />
+                      <span>{item.label}</span>
+                    </button>
+                  )
+                })}
+              </div>
+            ))}
+          </nav>
+        </>
+      )}
     </aside>
   )
 }

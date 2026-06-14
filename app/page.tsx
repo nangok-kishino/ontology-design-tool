@@ -7,20 +7,38 @@ import { ClassesScreen } from "@/components/classes-screen"
 import { RelationsScreen } from "@/components/relations-screen"
 import { ReviewScreen } from "@/components/review-screen"
 import { InstancesScreen } from "@/components/instances-screen"
+import { ProjectWelcomeScreen } from "@/components/project-welcome-screen"
+import { ProjectProvider } from "@/app/project-context"
+import { useProject } from "@/app/project-context"
 
-export default function Page() {
+function AppContent() {
+  const { currentProject, loading } = useProject()
   const [screen, setScreen] = useState<ScreenId>("dashboard")
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
       <Sidebar active={screen} onNavigate={setScreen} />
       <main className="flex-1 overflow-hidden">
-        {screen === "dashboard" && <DashboardScreen />}
-        {screen === "classes" && <ClassesScreen />}
-        {screen === "relations" && <RelationsScreen />}
-        {screen === "review" && <ReviewScreen />}
-        {screen === "instances" && <InstancesScreen />}
+        {!loading && !currentProject ? (
+          <ProjectWelcomeScreen />
+        ) : (
+          <>
+            {screen === "dashboard" && <DashboardScreen />}
+            {screen === "classes" && <ClassesScreen />}
+            {screen === "relations" && <RelationsScreen />}
+            {screen === "review" && <ReviewScreen />}
+            {screen === "instances" && <InstancesScreen />}
+          </>
+        )}
       </main>
     </div>
+  )
+}
+
+export default function Page() {
+  return (
+    <ProjectProvider>
+      <AppContent />
+    </ProjectProvider>
   )
 }
