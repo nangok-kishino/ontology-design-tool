@@ -63,6 +63,7 @@ export type OntologyInstance = {
   registeredAt: string
   updatedBy: string
   updatedAt: string
+  order?: number
   attributes?: Record<string, string>
 }
 

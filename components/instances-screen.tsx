@@ -30,8 +30,23 @@ import {
 import { TopBar } from "@/components/top-bar"
 import { cn } from "@/lib/utils"
 import type { OntologyClass, OntologyInstance, OntologyAttribute } from "@/lib/types"
-import { ChevronDown, ChevronRight, Plus, Trash2, Loader2, Info, X } from "lucide-react"
+import { ChevronDown, ChevronRight, Plus, Trash2, Loader2, Info, X, GripVertical } from "lucide-react"
 import { useProject } from "@/app/project-context"
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core"
+import {
+  SortableContext,
+  useSortable,
+  verticalListSortingStrategy,
+  arrayMove,
+} from "@dnd-kit/sortable"
+import { CSS } from "@dnd-kit/utilities"
 
 // ダイアログ内でも確実に動作するツールチップ（base-ui Tooltip は inert 問題あり）
 function InfoTooltip({ content }: { content: string }) {
@@ -251,6 +266,51 @@ function AttrSection({
   )
 }
 
+// ---------- ソータブル行 ----------
+
+function SortableInstRow({
+  inst,
+  isSelected,
+  onClick,
+}: {
+  inst: OntologyInstance
+  isSelected: boolean
+  onClick: () => void
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: inst.id })
+  const style: React.CSSProperties = {
+    transform: CSS.Translate.toString(transform),
+    transition,
+    opacity: isDragging ? 0.4 : 1,
+    position: "relative",
+    zIndex: isDragging ? 1 : undefined,
+  }
+  return (
+    <TableRow
+      ref={setNodeRef}
+      style={style}
+      className={cn(
+        "cursor-pointer transition-colors",
+        isSelected ? "bg-accent hover:bg-accent" : "hover:bg-muted/50",
+      )}
+      onClick={onClick}
+    >
+      <TableCell className="w-8 px-2" onClick={(e) => e.stopPropagation()}>
+        <button
+          {...attributes}
+          {...listeners}
+          className="flex items-center justify-center cursor-grab active:cursor-grabbing text-muted-foreground/40 hover:text-muted-foreground transition-colors"
+          tabIndex={-1}
+        >
+          <GripVertical className="h-4 w-4" />
+        </button>
+      </TableCell>
+      <TableCell className="font-medium text-foreground">{inst.name}</TableCell>
+      <TableCell className="text-sm text-muted-foreground">{inst.updatedAt || "—"}</TableCell>
+    </TableRow>
+  )
+}
+
 // ---------- メイン ----------
 
 type AttrGroups = {
@@ -297,6 +357,11 @@ export function InstancesScreen({ initialSelectedClassId }: { initialSelectedCla
   const [deleteTarget, setDeleteTarget] = useState<OntologyInstance | null>(null)
   const [deleting, setDeleting] = useState(false)
 
+  // DnD sensors（8px 動かないと drag 開始しない → 行クリックと競合しない）
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+  )
+
   // === fetch ===
 
   const fetchClasses = useCallback(async () => {
@@ -316,6 +381,7 @@ export function InstancesScreen({ initialSelectedClassId }: { initialSelectedCla
     setLoadingInstances(true)
     try {
       const data: OntologyInstance[] = await fetch(`/api/instances?classId=${classId}`).then((r) => r.json())
+      data.sort((a, b) => (a.order ?? Number.MAX_SAFE_INTEGER) - (b.order ?? Number.MAX_SAFE_INTEGER))
       setInstances(data)
       setInstanceCounts((prev) => ({ ...prev, [classId]: data.length }))
     } catch (err) {
@@ -368,6 +434,7 @@ export function InstancesScreen({ initialSelectedClassId }: { initialSelectedCla
         (i) => i.classId && !knownIds.has(i.classId) && !nullIdSet.has(i.id),
       )
       const combined = [...nullInstances, ...orphaned]
+      combined.sort((a, b) => (a.order ?? Number.MAX_SAFE_INTEGER) - (b.order ?? Number.MAX_SAFE_INTEGER))
       setInstances(combined)
       setInstanceCounts((prev) => ({ ...prev, [UNCLASSIFIED]: combined.length }))
     } catch (err) {
@@ -578,6 +645,27 @@ export function InstancesScreen({ initialSelectedClassId }: { initialSelectedCla
     }
   }
 
+  const handleDragEnd = async (event: DragEndEvent) => {
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+    const oldIndex = instances.findIndex((i) => i.id === active.id)
+    const newIndex = instances.findIndex((i) => i.id === over.id)
+    if (oldIndex === -1 || newIndex === -1) return
+    const reordered = arrayMove(instances, oldIndex, newIndex)
+    setInstances(reordered)
+    const updates = reordered.map((inst, index) => ({ id: inst.id, order: index }))
+    try {
+      await fetch("/api/instances/reorder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ updates }),
+      })
+    } catch {
+      // 失敗時は元に戻す
+      setInstances(instances)
+    }
+  }
+
   const hasMissingRequired = (attrs: OntologyAttribute[], values: Record<string, string>) =>
     attrs.some((a) => a.required === "必須" && !(values[a.id] ?? "").trim())
 
@@ -668,31 +756,29 @@ export function InstancesScreen({ initialSelectedClassId }: { initialSelectedCla
                 </p>
               ) : (
                 <div className="overflow-x-auto rounded-lg border border-border">
-                  <Table>
-                    <TableHeader>
-                      <TableRow className="bg-muted/50 hover:bg-muted/50">
-                        <TableHead className="font-semibold text-foreground">インスタンス名</TableHead>
-                        <TableHead className="w-32 font-semibold text-foreground">更新日</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {instances.map((inst) => (
-                        <TableRow
-                          key={inst.id}
-                          className={cn(
-                            "cursor-pointer transition-colors",
-                            selectedInst?.id === inst.id
-                              ? "bg-accent hover:bg-accent"
-                              : "hover:bg-muted/50",
-                          )}
-                          onClick={() => handleSelectInst(inst)}
-                        >
-                          <TableCell className="font-medium text-foreground">{inst.name}</TableCell>
-                          <TableCell className="text-sm text-muted-foreground">{inst.updatedAt || "—"}</TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
+                  <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                    <SortableContext items={instances.map((i) => i.id)} strategy={verticalListSortingStrategy}>
+                      <Table>
+                        <TableHeader>
+                          <TableRow className="bg-muted/50 hover:bg-muted/50">
+                            <TableHead className="w-8 px-2" />
+                            <TableHead className="font-semibold text-foreground">インスタンス名</TableHead>
+                            <TableHead className="w-32 font-semibold text-foreground">更新日</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {instances.map((inst) => (
+                            <SortableInstRow
+                              key={inst.id}
+                              inst={inst}
+                              isSelected={selectedInst?.id === inst.id}
+                              onClick={() => handleSelectInst(inst)}
+                            />
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </SortableContext>
+                  </DndContext>
                 </div>
               )}
             </div>
