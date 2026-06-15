@@ -522,7 +522,6 @@ export function InstancesScreen({ initialSelectedClassId }: { initialSelectedCla
           name: newName.trim(),
           classId: selectedClass.id,
           projectId: currentProject.id,
-          registeredBy: "",
           attributes: newAttrValues,
         }),
       })
@@ -711,6 +710,10 @@ export function InstancesScreen({ initialSelectedClassId }: { initialSelectedCla
                             {a.name}
                           </TableHead>
                         ))}
+                        <TableHead className="w-28 font-semibold text-foreground">登録日</TableHead>
+                        <TableHead className="w-32 font-semibold text-foreground">登録者</TableHead>
+                        <TableHead className="w-28 font-semibold text-foreground">更新日</TableHead>
+                        <TableHead className="w-32 font-semibold text-foreground">更新者</TableHead>
                         <TableHead className="w-16" />
                       </TableRow>
                     </TableHeader>
@@ -723,6 +726,18 @@ export function InstancesScreen({ initialSelectedClassId }: { initialSelectedCla
                               {inst.attributes?.[a.id] || "—"}
                             </TableCell>
                           ))}
+                          <TableCell className="text-sm text-muted-foreground">
+                            {inst.registeredAt || "—"}
+                          </TableCell>
+                          <TableCell className="text-sm text-muted-foreground">
+                            {inst.registeredBy || "—"}
+                          </TableCell>
+                          <TableCell className="text-sm text-muted-foreground">
+                            {inst.updatedAt || "—"}
+                          </TableCell>
+                          <TableCell className="text-sm text-muted-foreground">
+                            {inst.updatedBy || "—"}
+                          </TableCell>
                           <TableCell>
                             <div className="flex items-center justify-end gap-0.5">
                               <Button

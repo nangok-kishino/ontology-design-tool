@@ -39,14 +39,16 @@ type ClassRow = {
   key: string
   parentNodeId: string | null
   parentLabel: string
+  parentNameEn: string
   classLabel: string | null
+  classNameEn: string | null
   insts: OntologyInstance[]
 }
 
 function flattenClassRows(
   nodes: TreeNode[],
   instances: OntologyInstance[],
-  parent: { id: string; name: string } | null = null,
+  parent: { id: string; name: string; nameEn: string } | null = null,
 ): ClassRow[] {
   const rows: ClassRow[] = []
   for (const node of nodes) {
@@ -55,11 +57,13 @@ function flattenClassRows(
       key: node.id,
       parentNodeId: parent?.id ?? null,
       parentLabel: isRoot ? node.name : parent.name,
+      parentNameEn: isRoot ? (node.nameEn ?? "") : parent.nameEn,
       classLabel: isRoot ? null : node.name,
+      classNameEn: isRoot ? null : (node.nameEn ?? ""),
       insts: instances.filter((i) => i.classId === node.id),
     })
     if (node.children.length > 0) {
-      rows.push(...flattenClassRows(node.children, instances, { id: node.id, name: node.name }))
+      rows.push(...flattenClassRows(node.children, instances, { id: node.id, name: node.name, nameEn: node.nameEn ?? "" }))
     }
   }
   return rows
@@ -119,13 +123,8 @@ export function DashboardScreen({ onNavigate }: Props) {
     (i) => !i.classId || !knownClassIds.has(i.classId),
   )
 
-  const relationRows = relations.map((rel) => ({
-    rel,
-    sourceId: rel.sourceClassId,
-    sourceName: classes.find((c) => c.id === rel.sourceClassId)?.name ?? "—",
-    targetId: rel.targetClassId,
-    targetName: classes.find((c) => c.id === rel.targetClassId)?.name ?? "—",
-  }))
+  const classMap = new Map(classes.map((c) => [c.id, c]))
+  const relationRows = relations
 
   const pageTitle = currentProject
     ? `${currentProject.name} ダッシュボード`
@@ -180,14 +179,17 @@ export function DashboardScreen({ onNavigate }: Props) {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {classRows.map(({ key, parentNodeId, parentLabel, classLabel, insts }) => (
+                        {classRows.map(({ key, parentNodeId, parentLabel, parentNameEn, classLabel, classNameEn, insts }) => (
                           <TableRow key={key}>
                             <TableCell className="align-top">
                               <span
                                 className="cursor-pointer font-medium text-foreground hover:underline"
                                 onClick={() => onNavigate("classes", parentNodeId ?? key)}
                               >
-                                {parentLabel}
+                                <span className="flex flex-col">
+                                  <span>{parentLabel}</span>
+                                  {parentNameEn && <span className="text-xs font-normal text-muted-foreground">{parentNameEn}</span>}
+                                </span>
                               </span>
                             </TableCell>
                             <TableCell className="align-top">
@@ -196,7 +198,10 @@ export function DashboardScreen({ onNavigate }: Props) {
                                   className="cursor-pointer font-medium text-foreground hover:underline"
                                   onClick={() => onNavigate("classes", key)}
                                 >
-                                  {classLabel}
+                                  <span className="flex flex-col">
+                                    <span>{classLabel}</span>
+                                    {classNameEn && <span className="text-xs font-normal text-muted-foreground">{classNameEn}</span>}
+                                  </span>
                                 </span>
                               ) : <span className="text-muted-foreground">—</span>}
                             </TableCell>
@@ -271,24 +276,45 @@ export function DashboardScreen({ onNavigate }: Props) {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {relationRows.map(({ rel, sourceId, sourceName, targetId, targetName }) => (
+                        {relationRows.map((rel) => (
                           <TableRow
                             key={rel.id}
                             className="cursor-pointer hover:bg-muted/50"
                             onClick={() => onNavigate("relations", rel.id)}
                           >
-                            <TableCell className="font-medium text-foreground">{rel.name}</TableCell>
-                            <TableCell
-                              className="font-medium text-foreground"
-                              onClick={(e) => { e.stopPropagation(); onNavigate("classes", sourceId) }}
-                            >
-                              <span className="hover:underline">{sourceName}</span>
+                            <TableCell className="align-top font-medium text-foreground">
+                              <span className="flex flex-col">
+                                <span>{rel.name}</span>
+                                {rel.nameEn && <span className="text-xs font-normal text-muted-foreground">{rel.nameEn}</span>}
+                              </span>
                             </TableCell>
-                            <TableCell
-                              className="font-medium text-foreground"
-                              onClick={(e) => { e.stopPropagation(); onNavigate("classes", targetId) }}
-                            >
-                              <span className="hover:underline">{targetName}</span>
+                            <TableCell className="align-top font-medium text-foreground">
+                              <span className="flex flex-col gap-1">
+                                {(rel.classPairs ?? []).map((p, i) => {
+                                  const src = classMap.get(p.sourceClassId)
+                                  return (
+                                    <span key={i} className="flex flex-col cursor-pointer hover:underline"
+                                      onClick={(e) => { e.stopPropagation(); onNavigate("classes", p.sourceClassId) }}>
+                                      <span>{src?.name ?? "—"}</span>
+                                      {src?.nameEn && <span className="text-xs font-normal text-muted-foreground">{src.nameEn}</span>}
+                                    </span>
+                                  )
+                                })}
+                              </span>
+                            </TableCell>
+                            <TableCell className="align-top font-medium text-foreground">
+                              <span className="flex flex-col gap-1">
+                                {(rel.classPairs ?? []).map((p, i) => {
+                                  const tgt = classMap.get(p.targetClassId)
+                                  return (
+                                    <span key={i} className="flex flex-col cursor-pointer hover:underline"
+                                      onClick={(e) => { e.stopPropagation(); onNavigate("classes", p.targetClassId) }}>
+                                      <span>{tgt?.name ?? "—"}</span>
+                                      {tgt?.nameEn && <span className="text-xs font-normal text-muted-foreground">{tgt.nameEn}</span>}
+                                    </span>
+                                  )
+                                })}
+                              </span>
                             </TableCell>
                           </TableRow>
                         ))}

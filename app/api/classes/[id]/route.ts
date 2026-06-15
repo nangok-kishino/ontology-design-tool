@@ -28,6 +28,7 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
     const updated: OntologyClass = {
       ...existing,
       name: body.name ?? existing.name,
+      nameEn: body.nameEn !== undefined ? body.nameEn : (existing.nameEn ?? ""),
       description: body.description ?? existing.description,
       parentId: body.parentId !== undefined ? body.parentId : existing.parentId,
       updatedAt: new Date().toISOString(),

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getContainer } from "@/lib/cosmos"
+import { getPrincipalName } from "@/lib/auth"
 import type { OntologyInstance } from "@/lib/types"
 
 const CONTAINER = "instances"
@@ -51,13 +52,17 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
+    const now = new Date().toISOString().split("T")[0]
+    const actor = getPrincipalName(request)
     const item: OntologyInstance = {
       id: crypto.randomUUID(),
       projectId: body.projectId,
       name: body.name,
       classId: body.classId ?? null,
-      registeredBy: body.registeredBy ?? "",
-      registeredAt: new Date().toISOString().split("T")[0],
+      registeredBy: actor,
+      registeredAt: now,
+      updatedBy: actor,
+      updatedAt: now,
       attributes: body.attributes ?? {},
     }
     const container = await getContainer(CONTAINER)

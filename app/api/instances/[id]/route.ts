@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getContainer } from "@/lib/cosmos"
+import { getPrincipalName } from "@/lib/auth"
 import type { OntologyInstance } from "@/lib/types"
 
 const CONTAINER = "instances"
@@ -25,12 +26,14 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
     const container = await getContainer(CONTAINER)
     const { resource: existing } = await container.item(id, id).read<OntologyInstance>()
     if (!existing) return NextResponse.json({ error: "見つかりません" }, { status: 404 })
+    const now = new Date().toISOString().split("T")[0]
     const updated: OntologyInstance = {
       ...existing,
       name: body.name ?? existing.name,
-      // classId は明示的に null を渡すことで未分類にできる
       classId: "classId" in body ? (body.classId ?? null) : existing.classId,
       attributes: body.attributes !== undefined ? body.attributes : existing.attributes,
+      updatedBy: getPrincipalName(request),
+      updatedAt: now,
     }
     const { resource } = await container.item(id, id).replace(updated)
     return NextResponse.json(resource)

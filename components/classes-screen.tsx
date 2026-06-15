@@ -88,7 +88,10 @@ function TreeItem({
         ) : (
           <span className="h-4 w-4" />
         )}
-        <span>{node.name}</span>
+        <span className="flex flex-col">
+          <span>{node.name}</span>
+          {node.nameEn && <span className="text-xs text-muted-foreground">{node.nameEn}</span>}
+        </span>
       </div>
       {hasChildren && open && (
         <div>
@@ -110,6 +113,7 @@ export function ClassesScreen({ initialSelectedId }: { initialSelectedId?: strin
   // クラス追加ダイアログ
   const [showAdd, setShowAdd] = useState(false)
   const [newName, setNewName] = useState("")
+  const [newNameEn, setNewNameEn] = useState("")
   const [newDesc, setNewDesc] = useState("")
   const [newParentId, setNewParentId] = useState<string | null>(null)
   const [adding, setAdding] = useState(false)
@@ -117,6 +121,7 @@ export function ClassesScreen({ initialSelectedId }: { initialSelectedId?: strin
   // クラス編集モード
   const [isEditing, setIsEditing] = useState(false)
   const [editName, setEditName] = useState("")
+  const [editNameEn, setEditNameEn] = useState("")
   const [editDesc, setEditDesc] = useState("")
   const [editParentId, setEditParentId] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
@@ -226,6 +231,7 @@ export function ClassesScreen({ initialSelectedId }: { initialSelectedId?: strin
         body: JSON.stringify({
           projectId: currentProject.id,
           name: newName.trim(),
+          nameEn: newNameEn.trim(),
           description: newDesc.trim(),
           parentId: newParentId,
         }),
@@ -234,7 +240,7 @@ export function ClassesScreen({ initialSelectedId }: { initialSelectedId?: strin
       await fetchClasses()
       setSelectedId(created.id)
       setShowAdd(false)
-      setNewName(""); setNewDesc(""); setNewParentId(null)
+      setNewName(""); setNewNameEn(""); setNewDesc(""); setNewParentId(null)
     } finally {
       setAdding(false)
     }
@@ -243,6 +249,7 @@ export function ClassesScreen({ initialSelectedId }: { initialSelectedId?: strin
   const startEdit = () => {
     if (!selected) return
     setEditName(selected.name)
+    setEditNameEn(selected.nameEn ?? "")
     setEditDesc(selected.description)
     setEditParentId(selected.parentId)
     setIsEditing(true)
@@ -257,6 +264,7 @@ export function ClassesScreen({ initialSelectedId }: { initialSelectedId?: strin
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: editName.trim(),
+          nameEn: editNameEn.trim(),
           description: editDesc.trim(),
           parentId: editParentId,
         }),
@@ -611,6 +619,12 @@ export function ClassesScreen({ initialSelectedId }: { initialSelectedId?: strin
                           onChange={(e) => setEditName(e.target.value)} />
                       </div>
                       <div className="space-y-2">
+                        <Label htmlFor="edit-name-en">英語名</Label>
+                        <Input id="edit-name-en" value={editNameEn}
+                          onChange={(e) => setEditNameEn(e.target.value)}
+                          placeholder="例：Defect Case" />
+                      </div>
+                      <div className="space-y-2">
                         <Label htmlFor="edit-desc">説明</Label>
                         <Textarea id="edit-desc" rows={4} value={editDesc}
                           onChange={(e) => setEditDesc(e.target.value)} />
@@ -729,6 +743,11 @@ export function ClassesScreen({ initialSelectedId }: { initialSelectedId?: strin
               <Input id="cls-name" value={newName} onChange={(e) => setNewName(e.target.value)}
                 placeholder="例：不具合事例"
                 onKeyDown={(e) => e.key === "Enter" && !adding && handleAdd()} />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="cls-name-en">英語名</Label>
+              <Input id="cls-name-en" value={newNameEn} onChange={(e) => setNewNameEn(e.target.value)}
+                placeholder="例：Defect Case" />
             </div>
             <div className="space-y-2">
               <Label htmlFor="cls-desc">説明</Label>

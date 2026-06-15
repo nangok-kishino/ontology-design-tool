@@ -8,8 +8,9 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   try {
     const { id } = await params
     const container = await getContainer(CONTAINER)
-    const { resource } = await container.item(id, id).read<OntologyRelation>()
-    if (!resource) return NextResponse.json({ error: "見つかりません" }, { status: 404 })
+    const { resource: raw } = await container.item(id, id).read<any>()
+    if (!raw) return NextResponse.json({ error: "見つかりません" }, { status: 404 })
+    const resource: OntologyRelation = raw.classPairs ? raw : { ...raw, classPairs: [{ sourceClassId: raw.sourceClassId, targetClassId: raw.targetClassId }] }
     return NextResponse.json(resource)
   } catch (error: any) {
     if (error?.code === 404) return NextResponse.json({ error: "見つかりません" }, { status: 404 })
@@ -23,14 +24,15 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
     const { id } = await params
     const body = await request.json()
     const container = await getContainer(CONTAINER)
-    const { resource: existing } = await container.item(id, id).read<OntologyRelation>()
-    if (!existing) return NextResponse.json({ error: "見つかりません" }, { status: 404 })
+    const { resource: rawExisting } = await container.item(id, id).read<any>()
+    if (!rawExisting) return NextResponse.json({ error: "見つかりません" }, { status: 404 })
+    const existing: OntologyRelation = rawExisting.classPairs ? rawExisting : { ...rawExisting, classPairs: [{ sourceClassId: rawExisting.sourceClassId, targetClassId: rawExisting.targetClassId }] }
     const updated: OntologyRelation = {
       ...existing,
       name: body.name ?? existing.name,
+      nameEn: body.nameEn !== undefined ? body.nameEn : (existing.nameEn ?? ""),
       description: body.description ?? existing.description,
-      sourceClassId: body.sourceClassId ?? existing.sourceClassId,
-      targetClassId: body.targetClassId ?? existing.targetClassId,
+      classPairs: body.classPairs ?? existing.classPairs,
       parentRelationId: body.parentRelationId !== undefined ? body.parentRelationId : existing.parentRelationId,
       updatedAt: new Date().toISOString(),
     }

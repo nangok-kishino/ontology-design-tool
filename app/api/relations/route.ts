@@ -10,18 +10,21 @@ export async function GET(request: NextRequest) {
     const projectId = searchParams.get("projectId")
     const container = await getContainer(CONTAINER)
 
+    const normalize = (r: any): OntologyRelation =>
+      r.classPairs ? r : { ...r, classPairs: [{ sourceClassId: r.sourceClassId, targetClassId: r.targetClassId }] }
+
     if (projectId) {
       const { resources } = await container.items
-        .query<OntologyRelation>({
+        .query<any>({
           query: "SELECT * FROM c WHERE c.projectId = @projectId",
           parameters: [{ name: "@projectId", value: projectId }],
         })
         .fetchAll()
-      return NextResponse.json(resources)
+      return NextResponse.json(resources.map(normalize))
     }
 
-    const { resources } = await container.items.readAll<OntologyRelation>().fetchAll()
-    return NextResponse.json(resources)
+    const { resources } = await container.items.readAll<any>().fetchAll()
+    return NextResponse.json(resources.map(normalize))
   } catch (error) {
     console.error("GET /api/relations:", error)
     return NextResponse.json({ error: "リレーション一覧の取得に失敗しました" }, { status: 500 })
@@ -36,9 +39,9 @@ export async function POST(request: NextRequest) {
       id: crypto.randomUUID(),
       projectId: body.projectId,
       name: body.name,
+      nameEn: body.nameEn ?? "",
       description: body.description ?? "",
-      sourceClassId: body.sourceClassId,
-      targetClassId: body.targetClassId,
+      classPairs: body.classPairs ?? [],
       parentRelationId: body.parentRelationId ?? null,
       createdAt: now,
       updatedAt: now,

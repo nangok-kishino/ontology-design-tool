@@ -32,7 +32,7 @@ import {
 import { TopBar } from "@/components/top-bar"
 import { Tooltip } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
-import type { OntologyRelation, OntologyClass, OntologyAttribute, AttributeRequired } from "@/lib/types"
+import type { OntologyRelation, OntologyClass, OntologyAttribute, AttributeRequired, ClassPair } from "@/lib/types"
 import { ArrowRight, Plus, Pencil, Trash2, Loader2, X, AlertTriangle, Info } from "lucide-react"
 import { useProject } from "@/app/project-context"
 
@@ -48,17 +48,17 @@ export function RelationsScreen({ initialSelectedId }: { initialSelectedId?: str
   // リレーション追加ダイアログ
   const [showAdd, setShowAdd] = useState(false)
   const [newName, setNewName] = useState("")
+  const [newNameEn, setNewNameEn] = useState("")
   const [newDesc, setNewDesc] = useState("")
-  const [newSourceId, setNewSourceId] = useState<string | null>(null)
-  const [newTargetId, setNewTargetId] = useState<string | null>(null)
+  const [newPairs, setNewPairs] = useState<ClassPair[]>([{ sourceClassId: "", targetClassId: "" }])
   const [adding, setAdding] = useState(false)
 
   // 編集モード
   const [isEditing, setIsEditing] = useState(false)
   const [editName, setEditName] = useState("")
+  const [editNameEn, setEditNameEn] = useState("")
   const [editDesc, setEditDesc] = useState("")
-  const [editSourceId, setEditSourceId] = useState<string | null>(null)
-  const [editTargetId, setEditTargetId] = useState<string | null>(null)
+  const [editPairs, setEditPairs] = useState<ClassPair[]>([])
   const [saving, setSaving] = useState(false)
 
   // 削除確認ダイアログ
@@ -153,7 +153,7 @@ export function RelationsScreen({ initialSelectedId }: { initialSelectedId?: str
   }, [selectedId, currentProject?.id])
 
   const handleAdd = async () => {
-    if (!newName.trim() || !newSourceId || !newTargetId || !currentProject) return
+    if (!newName.trim() || !currentProject || newPairs.length === 0 || newPairs.some(p => !p.sourceClassId || !p.targetClassId)) return
     setAdding(true)
     try {
       const res = await fetch("/api/relations", {
@@ -162,32 +162,42 @@ export function RelationsScreen({ initialSelectedId }: { initialSelectedId?: str
         body: JSON.stringify({
           projectId: currentProject.id,
           name: newName.trim(),
+          nameEn: newNameEn.trim(),
           description: newDesc.trim(),
-          sourceClassId: newSourceId,
-          targetClassId: newTargetId,
+          classPairs: newPairs,
         }),
       })
       const created: OntologyRelation = await res.json()
       await fetchRelations()
       setSelectedId(created.id)
       setShowAdd(false)
-      setNewName(""); setNewDesc(""); setNewSourceId(null); setNewTargetId(null)
+      setNewName(""); setNewNameEn(""); setNewDesc(""); setNewPairs([{ sourceClassId: "", targetClassId: "" }])
     } finally {
       setAdding(false)
     }
   }
 
+  const addNewPair = () => setNewPairs(p => [...p, { sourceClassId: "", targetClassId: "" }])
+  const removeNewPair = (i: number) => setNewPairs(p => p.filter((_, j) => j !== i))
+  const updateNewPair = (i: number, field: keyof ClassPair, val: string) =>
+    setNewPairs(p => p.map((pair, j) => j === i ? { ...pair, [field]: val } : pair))
+
+  const addEditPair = () => setEditPairs(p => [...p, { sourceClassId: "", targetClassId: "" }])
+  const removeEditPair = (i: number) => setEditPairs(p => p.filter((_, j) => j !== i))
+  const updateEditPair = (i: number, field: keyof ClassPair, val: string) =>
+    setEditPairs(p => p.map((pair, j) => j === i ? { ...pair, [field]: val } : pair))
+
   const startEdit = () => {
     if (!selected) return
     setEditName(selected.name)
+    setEditNameEn(selected.nameEn ?? "")
     setEditDesc(selected.description)
-    setEditSourceId(selected.sourceClassId)
-    setEditTargetId(selected.targetClassId)
+    setEditPairs(selected.classPairs ?? [])
     setIsEditing(true)
   }
 
   const handleSave = async () => {
-    if (!editName.trim() || !editSourceId || !editTargetId || !selected) return
+    if (!editName.trim() || !selected || editPairs.length === 0 || editPairs.some(p => !p.sourceClassId || !p.targetClassId)) return
     setSaving(true)
     try {
       await fetch(`/api/relations/${selected.id}`, {
@@ -195,9 +205,9 @@ export function RelationsScreen({ initialSelectedId }: { initialSelectedId?: str
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: editName.trim(),
+          nameEn: editNameEn.trim(),
           description: editDesc.trim(),
-          sourceClassId: editSourceId,
-          targetClassId: editTargetId,
+          classPairs: editPairs,
         }),
       })
       await fetchRelations()
@@ -383,7 +393,7 @@ export function RelationsScreen({ initialSelectedId }: { initialSelectedId?: str
           <div className="flex items-center justify-between px-4 py-3">
             <h2 className="text-sm font-semibold text-foreground">リレーション一覧</h2>
             <Button size="sm" variant="outline" className="h-8 gap-1.5 bg-transparent"
-              onClick={() => { setNewName(""); setNewDesc(""); setNewSourceId(null); setNewTargetId(null); setShowAdd(true) }}>
+              onClick={() => { setNewName(""); setNewNameEn(""); setNewDesc(""); setNewPairs([{ sourceClassId: "", targetClassId: "" }]); setShowAdd(true) }}>
               <Plus className="h-3.5 w-3.5" />追加
             </Button>
           </div>
@@ -409,11 +419,14 @@ export function RelationsScreen({ initialSelectedId }: { initialSelectedId?: str
                     )}
                   >
                     <span className="font-medium text-foreground">{r.name}</span>
-                    <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                      {className(r.sourceClassId)}
-                      <ArrowRight className="h-3 w-3" />
-                      {className(r.targetClassId)}
-                    </span>
+                    {r.nameEn && <span className="text-xs text-muted-foreground">{r.nameEn}</span>}
+                    {(r.classPairs ?? []).map((p, i) => (
+                      <span key={i} className="flex items-center gap-1 text-xs text-muted-foreground">
+                        {className(p.sourceClassId)}
+                        <ArrowRight className="h-3 w-3" />
+                        {className(p.targetClassId)}
+                      </span>
+                    ))}
                   </button>
                 )
               })
@@ -428,9 +441,16 @@ export function RelationsScreen({ initialSelectedId }: { initialSelectedId?: str
               <div className="flex items-center gap-2">
                 <h2 className="text-base font-semibold text-foreground">{selected.name}</h2>
                 <span className="flex items-center gap-1 text-sm text-muted-foreground">
-                  <span>{className(selected.sourceClassId)}</span>
-                  <ArrowRight className="h-3.5 w-3.5" />
-                  <span>{className(selected.targetClassId)}</span>
+                  {(selected.classPairs ?? []).slice(0, 1).map((p, i) => (
+                    <span key={i} className="flex items-center gap-1">
+                      <span>{className(p.sourceClassId)}</span>
+                      <ArrowRight className="h-3.5 w-3.5" />
+                      <span>{className(p.targetClassId)}</span>
+                    </span>
+                  ))}
+                  {(selected.classPairs ?? []).length > 1 && (
+                    <span className="ml-1 text-xs">+{selected.classPairs.length - 1}</span>
+                  )}
                 </span>
               </div>
               <div className="flex gap-2">
@@ -441,7 +461,7 @@ export function RelationsScreen({ initialSelectedId }: { initialSelectedId?: str
                       <X className="h-3.5 w-3.5" />キャンセル
                     </Button>
                     <Button size="sm" className="h-8 gap-1.5"
-                      onClick={handleSave} disabled={!editName.trim() || !editSourceId || !editTargetId || saving}>
+                      onClick={handleSave} disabled={!editName.trim() || editPairs.length === 0 || editPairs.some(p => !p.sourceClassId || !p.targetClassId) || saving}>
                       {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
                       {saving ? "保存中..." : "保存"}
                     </Button>
@@ -478,39 +498,53 @@ export function RelationsScreen({ initialSelectedId }: { initialSelectedId?: str
                         <Label>リレーション名 <span className="text-destructive">*</span></Label>
                         <Input value={editName} onChange={(e) => setEditName(e.target.value)} />
                       </div>
-                      <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label>英語名</Label>
+                        <Input value={editNameEn} onChange={(e) => setEditNameEn(e.target.value)}
+                          placeholder="例：causes" />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>始点・終点クラスのペア <span className="text-destructive">*</span></Label>
                         <div className="space-y-2">
-                          <Label>始点クラス <span className="text-destructive">*</span></Label>
-                          <Select value={editSourceId ?? "__none__"}
-                            onValueChange={(v) => setEditSourceId(v === "__none__" ? null : v)}>
-                            <SelectTrigger>
-                              <SelectValue>
-                                {editSourceId ? className(editSourceId) : "選択してください"}
-                              </SelectValue>
-                            </SelectTrigger>
-                            <SelectContent>
-                              {classes.map((c) => (
-                                <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                          {editPairs.map((pair, i) => (
+                            <div key={i} className="flex items-center gap-2">
+                              <Select value={pair.sourceClassId || "__none__"}
+                                onValueChange={(v) => updateEditPair(i, "sourceClassId", v === "__none__" ? "" : v)}>
+                                <SelectTrigger className="flex-1">
+                                  <SelectValue>{pair.sourceClassId ? className(pair.sourceClassId) : "始点クラス"}</SelectValue>
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {classes.map((c) => (
+                                    <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                              <ArrowRight className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
+                              <Select value={pair.targetClassId || "__none__"}
+                                onValueChange={(v) => updateEditPair(i, "targetClassId", v === "__none__" ? "" : v)}>
+                                <SelectTrigger className="flex-1">
+                                  <SelectValue>{pair.targetClassId ? className(pair.targetClassId) : "終点クラス"}</SelectValue>
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {classes.map((c) => (
+                                    <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                              {editPairs.length > 1 && (
+                                <Button size="icon" variant="ghost" className="h-8 w-8 flex-shrink-0 text-muted-foreground"
+                                  onClick={() => removeEditPair(i)}>
+                                  <X className="h-4 w-4" />
+                                </Button>
+                              )}
+                            </div>
+                          ))}
                         </div>
-                        <div className="space-y-2">
-                          <Label>終点クラス <span className="text-destructive">*</span></Label>
-                          <Select value={editTargetId ?? "__none__"}
-                            onValueChange={(v) => setEditTargetId(v === "__none__" ? null : v)}>
-                            <SelectTrigger>
-                              <SelectValue>
-                                {editTargetId ? className(editTargetId) : "選択してください"}
-                              </SelectValue>
-                            </SelectTrigger>
-                            <SelectContent>
-                              {classes.map((c) => (
-                                <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
+                        <Button size="sm" variant="outline" className="gap-1 bg-transparent"
+                          onClick={addEditPair}>
+                          <Plus className="h-3.5 w-3.5" />
+                          ペアを追加
+                        </Button>
                       </div>
                       <div className="space-y-2">
                         <Label>説明</Label>
@@ -523,15 +557,15 @@ export function RelationsScreen({ initialSelectedId }: { initialSelectedId?: str
                         <Label className="text-xs text-muted-foreground">リレーション名</Label>
                         <p className="text-sm font-medium text-foreground">{selected.name}</p>
                       </div>
-                      <div className="grid grid-cols-2 gap-4">
-                        <div className="space-y-1">
-                          <Label className="text-xs text-muted-foreground">始点クラス</Label>
-                          <p className="text-sm text-foreground">{className(selected.sourceClassId)}</p>
-                        </div>
-                        <div className="space-y-1">
-                          <Label className="text-xs text-muted-foreground">終点クラス</Label>
-                          <p className="text-sm text-foreground">{className(selected.targetClassId)}</p>
-                        </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs text-muted-foreground">始点・終点クラスのペア</Label>
+                        {(selected.classPairs ?? []).map((p, i) => (
+                          <div key={i} className="flex items-center gap-2 text-sm text-foreground">
+                            <span>{className(p.sourceClassId)}</span>
+                            <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
+                            <span>{className(p.targetClassId)}</span>
+                          </div>
+                        ))}
                       </div>
                       <div className="space-y-1">
                         <Label className="text-xs text-muted-foreground">説明</Label>
@@ -578,39 +612,53 @@ export function RelationsScreen({ initialSelectedId }: { initialSelectedId?: str
               <Input value={newName} onChange={(e) => setNewName(e.target.value)}
                 placeholder="例：引き起こす" />
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label>英語名</Label>
+              <Input value={newNameEn} onChange={(e) => setNewNameEn(e.target.value)}
+                placeholder="例：causes" />
+            </div>
+            <div className="space-y-2">
+              <Label>始点・終点クラスのペア <span className="text-destructive">*</span></Label>
               <div className="space-y-2">
-                <Label>始点クラス <span className="text-destructive">*</span></Label>
-                <Select value={newSourceId ?? "__none__"}
-                  onValueChange={(v) => setNewSourceId(v === "__none__" ? null : v)}>
-                  <SelectTrigger>
-                    <SelectValue>
-                      {newSourceId ? className(newSourceId) : "選択してください"}
-                    </SelectValue>
-                  </SelectTrigger>
-                  <SelectContent>
-                    {classes.map((c) => (
-                      <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                {newPairs.map((pair, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <Select value={pair.sourceClassId || "__none__"}
+                      onValueChange={(v) => updateNewPair(i, "sourceClassId", v === "__none__" ? "" : v)}>
+                      <SelectTrigger className="flex-1">
+                        <SelectValue>{pair.sourceClassId ? className(pair.sourceClassId) : "始点クラス"}</SelectValue>
+                      </SelectTrigger>
+                      <SelectContent>
+                        {classes.map((c) => (
+                          <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <ArrowRight className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
+                    <Select value={pair.targetClassId || "__none__"}
+                      onValueChange={(v) => updateNewPair(i, "targetClassId", v === "__none__" ? "" : v)}>
+                      <SelectTrigger className="flex-1">
+                        <SelectValue>{pair.targetClassId ? className(pair.targetClassId) : "終点クラス"}</SelectValue>
+                      </SelectTrigger>
+                      <SelectContent>
+                        {classes.map((c) => (
+                          <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {newPairs.length > 1 && (
+                      <Button size="icon" variant="ghost" className="h-8 w-8 flex-shrink-0 text-muted-foreground"
+                        onClick={() => removeNewPair(i)}>
+                        <X className="h-4 w-4" />
+                      </Button>
+                    )}
+                  </div>
+                ))}
               </div>
-              <div className="space-y-2">
-                <Label>終点クラス <span className="text-destructive">*</span></Label>
-                <Select value={newTargetId ?? "__none__"}
-                  onValueChange={(v) => setNewTargetId(v === "__none__" ? null : v)}>
-                  <SelectTrigger>
-                    <SelectValue>
-                      {newTargetId ? className(newTargetId) : "選択してください"}
-                    </SelectValue>
-                  </SelectTrigger>
-                  <SelectContent>
-                    {classes.map((c) => (
-                      <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+              <Button size="sm" variant="outline" className="gap-1 bg-transparent"
+                onClick={addNewPair}>
+                <Plus className="h-3.5 w-3.5" />
+                ペアを追加
+              </Button>
             </div>
             <div className="space-y-2">
               <Label>説明</Label>
@@ -621,7 +669,7 @@ export function RelationsScreen({ initialSelectedId }: { initialSelectedId?: str
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowAdd(false)}>キャンセル</Button>
             <Button onClick={handleAdd}
-              disabled={!newName.trim() || !newSourceId || !newTargetId || adding}>
+              disabled={!newName.trim() || newPairs.length === 0 || newPairs.some(p => !p.sourceClassId || !p.targetClassId) || adding}>
               {adding ? "登録中..." : "登録"}
             </Button>
           </DialogFooter>

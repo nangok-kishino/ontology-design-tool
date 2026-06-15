@@ -12,19 +12,25 @@ export type OntologyClass = {
   id: string
   projectId: string
   name: string
+  nameEn?: string
   description: string
   parentId: string | null
   createdAt: string
   updatedAt: string
 }
 
+export type ClassPair = {
+  sourceClassId: string
+  targetClassId: string
+}
+
 export type OntologyRelation = {
   id: string
   projectId: string
   name: string
+  nameEn?: string
   description: string
-  sourceClassId: string
-  targetClassId: string
+  classPairs: ClassPair[]
   parentRelationId: string | null
   createdAt: string
   updatedAt: string
@@ -55,6 +61,8 @@ export type OntologyInstance = {
   classId: string | null
   registeredBy: string
   registeredAt: string
+  updatedBy: string
+  updatedAt: string
   attributes?: Record<string, string>
 }
 
