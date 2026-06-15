@@ -30,7 +30,7 @@ import {
 import { TopBar } from "@/components/top-bar"
 import { cn } from "@/lib/utils"
 import type { OntologyClass, OntologyInstance, OntologyAttribute } from "@/lib/types"
-import { ChevronDown, ChevronRight, Plus, Pencil, Trash2, Loader2, Info } from "lucide-react"
+import { ChevronDown, ChevronRight, Plus, Trash2, Loader2, Info, X } from "lucide-react"
 import { useProject } from "@/app/project-context"
 
 // ダイアログ内でも確実に動作するツールチップ（base-ui Tooltip は inert 問題あり）
@@ -160,7 +160,7 @@ const DATA_TYPE_LABELS: Record<string, string> = {
   "文字列": "文字列型",
   "数値": "数値型",
   "日付": "日付型",
-  "日時": "日付型", // 旧データとの互換
+  "日時": "日付型",
   "真偽値": "真偽値型",
 }
 
@@ -168,7 +168,6 @@ function dataTypeLabel(dataType: string): string {
   return DATA_TYPE_LABELS[dataType] ?? `${dataType}型`
 }
 
-// ネイティブ input 共通クラス（base-ui Input と同じスタイル）
 const inputCls =
   "h-8 w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-sm transition-colors outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
 
@@ -182,14 +181,9 @@ function AttrInput({
   onChange: (v: string) => void
 }) {
   const isDate = attr.dataType === "日付" || attr.dataType === "日時"
-
   if (attr.dataType === "真偽値") {
     return (
-      <select
-        className={inputCls}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-      >
+      <select className={inputCls} value={value} onChange={(e) => onChange(e.target.value)}>
         <option value="">選択してください</option>
         <option value="true">はい</option>
         <option value="false">いいえ</option>
@@ -198,12 +192,7 @@ function AttrInput({
   }
   if (isDate) {
     return (
-      <input
-        type="date"
-        className={inputCls}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-      />
+      <input type="date" className={inputCls} value={value} onChange={(e) => onChange(e.target.value)} />
     )
   }
   if (attr.dataType === "数値") {
@@ -247,13 +236,10 @@ function AttrSection({
       <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{title}</p>
       {attrs.map((attr) => (
         <div key={attr.id} className="space-y-1.5">
-          {/* ラベル行：Tooltip は Label の外に置く（内側だと hover イベントが干渉する） */}
           <div className="flex items-center gap-1.5">
             <Label className="text-sm font-medium">
               {attr.name}
-              {attr.required === "必須" && (
-                <span className="ml-0.5 text-destructive">*</span>
-              )}
+              {attr.required === "必須" && <span className="ml-0.5 text-destructive">*</span>}
             </Label>
             <span className="text-xs text-muted-foreground">({dataTypeLabel(attr.dataType)})</span>
             {attr.description && <InfoTooltip content={attr.description} />}
@@ -283,35 +269,36 @@ export function InstancesScreen({ initialSelectedClassId }: { initialSelectedCla
   const [instanceCounts, setInstanceCounts] = useState<Record<string, number>>({})
   const [loadingClasses, setLoadingClasses] = useState(true)
   const [loadingInstances, setLoadingInstances] = useState(false)
+  const [isUnclassifiedSelected, setIsUnclassifiedSelected] = useState(false)
+  const [attrRefreshKey, setAttrRefreshKey] = useState(0)
 
+  // 追加ダイアログ用属性（選択クラス）
   const [attrGroups, setAttrGroups] = useState<AttrGroups>({ project: [], inherited: [], own: [], parentName: "" })
   const [loadingAttrs, setLoadingAttrs] = useState(false)
+  const allAttrs = [...attrGroups.project, ...attrGroups.inherited, ...attrGroups.own]
 
+  // 追加ダイアログ
   const [showAdd, setShowAdd] = useState(false)
   const [newName, setNewName] = useState("")
   const [newAttrValues, setNewAttrValues] = useState<Record<string, string>>({})
   const [adding, setAdding] = useState(false)
 
-  const [editTarget, setEditTarget] = useState<OntologyInstance | null>(null)
-  const [editName, setEditName] = useState("")
-  const [editClassId, setEditClassId] = useState<string | null>(null)
-  const [editAttrValues, setEditAttrValues] = useState<Record<string, string>>({})
-  const [editAttrGroups, setEditAttrGroups] = useState<AttrGroups>({ project: [], inherited: [], own: [], parentName: "" })
-  const [loadingEditAttrs, setLoadingEditAttrs] = useState(false)
-  const [saving, setSaving] = useState(false)
+  // 詳細パネル
+  const [selectedInst, setSelectedInst] = useState<OntologyInstance | null>(null)
+  const [detailName, setDetailName] = useState("")
+  const [detailClassId, setDetailClassId] = useState<string | null>(null)
+  const [detailAttrValues, setDetailAttrValues] = useState<Record<string, string>>({})
+  const [detailAttrGroups, setDetailAttrGroups] = useState<AttrGroups>({ project: [], inherited: [], own: [], parentName: "" })
+  const [loadingDetailAttrs, setLoadingDetailAttrs] = useState(false)
+  const [savingDetail, setSavingDetail] = useState(false)
+  const allDetailAttrs = [...detailAttrGroups.project, ...detailAttrGroups.inherited, ...detailAttrGroups.own]
 
-  // 未分類が選択されているか
-  const [isUnclassifiedSelected, setIsUnclassifiedSelected] = useState(false)
-
+  // 削除ダイアログ
   const [deleteTarget, setDeleteTarget] = useState<OntologyInstance | null>(null)
   const [deleting, setDeleting] = useState(false)
 
-  // クラスクリックのたびにインクリメントして属性を強制再取得
-  const [attrRefreshKey, setAttrRefreshKey] = useState(0)
+  // === fetch ===
 
-  const allAttrs = [...attrGroups.project, ...attrGroups.inherited, ...attrGroups.own]
-
-  // クラス一覧
   const fetchClasses = useCallback(async () => {
     if (!currentProject) return
     setLoadingClasses(true)
@@ -325,7 +312,6 @@ export function InstancesScreen({ initialSelectedClassId }: { initialSelectedCla
     }
   }, [currentProject?.id])
 
-  // インスタンス一覧
   const fetchInstances = useCallback(async (classId: string) => {
     setLoadingInstances(true)
     try {
@@ -339,7 +325,6 @@ export function InstancesScreen({ initialSelectedClassId }: { initialSelectedCla
     }
   }, [])
 
-  // 全件数（未分類カウントは孤立インスタンスも含む）
   const fetchAllCounts = useCallback(async (classList: OntologyClass[], projectId: string) => {
     const [classResults, nullData, projectData] = await Promise.all([
       Promise.all(
@@ -368,11 +353,7 @@ export function InstancesScreen({ initialSelectedClassId }: { initialSelectedCla
     setInstanceCounts(counts)
   }, [])
 
-  // 未分類インスタンスの一覧取得（nullのclassId + 孤立インスタンス）
-  const fetchUnclassifiedInstances = useCallback(async (
-    allClasses: OntologyClass[],
-    projectId: string,
-  ) => {
+  const fetchUnclassifiedInstances = useCallback(async (allClasses: OntologyClass[], projectId: string) => {
     setLoadingInstances(true)
     try {
       const [nullData, projectData] = await Promise.all([
@@ -396,12 +377,7 @@ export function InstancesScreen({ initialSelectedClassId }: { initialSelectedCla
     }
   }, [])
 
-  // 属性（3種）。classes をクロージャではなく引数で受け取り stale reference を防ぐ
-  const fetchAttrs = useCallback(async (
-    cls: OntologyClass,
-    projectId: string,
-    allClasses: OntologyClass[],
-  ) => {
+  const fetchAttrs = useCallback(async (cls: OntologyClass, projectId: string, allClasses: OntologyClass[]) => {
     setLoadingAttrs(true)
     try {
       const [projData, ownData] = await Promise.all([
@@ -429,13 +405,12 @@ export function InstancesScreen({ initialSelectedClassId }: { initialSelectedCla
     }
   }, [])
 
-  // 編集ダイアログ用の属性取得（クラス変更時に呼ぶ）
-  const fetchEditAttrs = useCallback(async (cls: OntologyClass | null, allClasses: OntologyClass[]) => {
+  const fetchDetailAttrs = useCallback(async (cls: OntologyClass | null, allClasses: OntologyClass[]) => {
     if (!cls || !currentProject) {
-      setEditAttrGroups({ project: [], inherited: [], own: [], parentName: "" })
+      setDetailAttrGroups({ project: [], inherited: [], own: [], parentName: "" })
       return
     }
-    setLoadingEditAttrs(true)
+    setLoadingDetailAttrs(true)
     try {
       const [projData, ownData] = await Promise.all([
         fetch(`/api/attributes?targetId=${currentProject.id}`).then((r) => r.json()),
@@ -449,7 +424,7 @@ export function InstancesScreen({ initialSelectedClassId }: { initialSelectedCla
         const parentData = await fetch(`/api/attributes?targetId=${cls.parentId}`).then((r) => r.json())
         inherited = Array.isArray(parentData) ? parentData : []
       }
-      setEditAttrGroups({
+      setDetailAttrGroups({
         project: Array.isArray(projData) ? projData : [],
         inherited,
         own: Array.isArray(ownData) ? ownData : [],
@@ -458,9 +433,11 @@ export function InstancesScreen({ initialSelectedClassId }: { initialSelectedCla
     } catch (err) {
       console.error(err)
     } finally {
-      setLoadingEditAttrs(false)
+      setLoadingDetailAttrs(false)
     }
   }, [currentProject?.id])
+
+  // === effects ===
 
   useEffect(() => { fetchClasses() }, [currentProject?.id])
   useEffect(() => {
@@ -489,17 +466,29 @@ export function InstancesScreen({ initialSelectedClassId }: { initialSelectedCla
     }
   }, [selectedClass?.id, currentProject?.id, attrRefreshKey, classes, isUnclassifiedSelected])
 
-  // クラス選択
+  // === handlers ===
+
   const handleSelectClass = (cls: OntologyClass) => {
     setSelectedClass(cls)
     setIsUnclassifiedSelected(false)
     setAttrRefreshKey((k) => k + 1)
+    setSelectedInst(null)
   }
 
   const handleSelectUnclassified = () => {
     setSelectedClass(null)
     setIsUnclassifiedSelected(true)
     setAttrRefreshKey((k) => k + 1)
+    setSelectedInst(null)
+  }
+
+  const handleSelectInst = (inst: OntologyInstance) => {
+    setSelectedInst(inst)
+    setDetailName(inst.name)
+    setDetailClassId(inst.classId)
+    setDetailAttrValues(inst.attributes ?? {})
+    const cls = inst.classId ? classes.find((c) => c.id === inst.classId) ?? null : null
+    fetchDetailAttrs(cls, classes)
   }
 
   const openAdd = () => {
@@ -535,60 +524,37 @@ export function InstancesScreen({ initialSelectedClassId }: { initialSelectedCla
     }
   }
 
-  const openEdit = (inst: OntologyInstance) => {
-    const today = new Date().toISOString().split("T")[0]
-    const base: Record<string, string> = {}
-    allAttrs.forEach((a) => { if (a.dataType === "日付" || a.dataType === "日時") base[a.id] = today })
-    setEditTarget(inst)
-    setEditName(inst.name)
-    setEditClassId(inst.classId)
-    setEditAttrValues({ ...base, ...(inst.attributes ?? {}) })
-    // 編集ダイアログ用属性を取得（現在の選択クラスの属性を初期値として使う）
-    const cls = inst.classId ? classes.find((c) => c.id === inst.classId) ?? null : null
-    setEditAttrGroups({ ...attrGroups })
-    if (cls?.id !== selectedClass?.id) {
-      fetchEditAttrs(cls, classes)
-    }
-  }
-
-  // 編集ダイアログ内でクラスを変更したとき
-  const handleEditClassChange = (newClassId: string) => {
+  const handleDetailClassChange = (newClassId: string) => {
     const cls = newClassId === UNCLASSIFIED ? null : (classes.find((c) => c.id === newClassId) ?? null)
-    setEditClassId(newClassId === UNCLASSIFIED ? null : newClassId)
-    // 属性値は保持したまま、表示する属性定義だけ更新
-    fetchEditAttrs(cls, classes)
+    setDetailClassId(newClassId === UNCLASSIFIED ? null : newClassId)
+    fetchDetailAttrs(cls, classes)
   }
 
-  const allEditAttrs = [...editAttrGroups.project, ...editAttrGroups.inherited, ...editAttrGroups.own]
-
-  const handleSave = async () => {
-    if (!editTarget || !editName.trim()) return
-    setSaving(true)
-    const prevClassId = editTarget.classId
+  const handleDetailSave = async () => {
+    if (!selectedInst || !detailName.trim()) return
+    setSavingDetail(true)
+    const prevClassId = selectedInst.classId
     try {
-      const res = await fetch(`/api/instances/${editTarget.id}`, {
+      const res = await fetch(`/api/instances/${selectedInst.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: editName.trim(), classId: editClassId, attributes: editAttrValues }),
+        body: JSON.stringify({ name: detailName.trim(), classId: detailClassId, attributes: detailAttrValues }),
       })
       if (!res.ok) throw new Error()
-      setEditTarget(null)
-
-      // 現在表示中のビューを更新
+      const updated: OntologyInstance = await res.json()
+      setSelectedInst(updated)
       if (isUnclassifiedSelected && currentProject) {
         await fetchUnclassifiedInstances(classes, currentProject.id)
       } else {
         await fetchInstances(selectedClass?.id ?? UNCLASSIFIED)
       }
-
-      // クラスが変わった場合は全カウントを再計算
-      if (editClassId !== prevClassId && currentProject) {
+      if (detailClassId !== prevClassId && currentProject) {
         await fetchAllCounts(classes, currentProject.id)
       }
     } catch {
       alert("インスタンスの更新に失敗しました")
     } finally {
-      setSaving(false)
+      setSavingDetail(false)
     }
   }
 
@@ -598,6 +564,7 @@ export function InstancesScreen({ initialSelectedClassId }: { initialSelectedCla
     try {
       const res = await fetch(`/api/instances/${deleteTarget.id}`, { method: "DELETE" })
       if (!res.ok) throw new Error()
+      if (selectedInst?.id === deleteTarget.id) setSelectedInst(null)
       setDeleteTarget(null)
       if (isUnclassifiedSelected && currentProject) {
         await fetchUnclassifiedInstances(classes, currentProject.id)
@@ -624,7 +591,7 @@ export function InstancesScreen({ initialSelectedClassId }: { initialSelectedCla
       <TopBar title="登録済みインスタンス" />
 
       <div className="grid flex-1 overflow-hidden" style={{ gridTemplateColumns: "260px 1fr" }}>
-        {/* 左ペイン：クラス選択（ツリー） */}
+        {/* 左ペイン：クラス選択 */}
         <div className="flex flex-col border-r border-border bg-card">
           <div className="px-4 py-3">
             <h2 className="text-sm font-semibold text-foreground">クラス選択</h2>
@@ -649,7 +616,6 @@ export function InstancesScreen({ initialSelectedClassId }: { initialSelectedCla
                     onSelect={handleSelectClass}
                   />
                 ))}
-                {/* 未分類 */}
                 <button
                   onClick={handleSelectUnclassified}
                   className={cn(
@@ -672,9 +638,10 @@ export function InstancesScreen({ initialSelectedClassId }: { initialSelectedCla
           </div>
         </div>
 
-        {/* 右ペイン */}
+        {/* 中央＋詳細パネルエリア */}
         {(selectedClass || isUnclassifiedSelected) ? (
-          <div className="flex flex-col overflow-hidden">
+          <div className="relative flex flex-col overflow-hidden">
+            {/* インスタンス一覧 */}
             <div className="flex items-center justify-between px-6 py-3">
               <h2 className="text-base font-semibold text-foreground">{currentLabel}</h2>
               {canAdd && (
@@ -705,66 +672,160 @@ export function InstancesScreen({ initialSelectedClassId }: { initialSelectedCla
                     <TableHeader>
                       <TableRow className="bg-muted/50 hover:bg-muted/50">
                         <TableHead className="font-semibold text-foreground">インスタンス名</TableHead>
-                        {allAttrs.map((a) => (
-                          <TableHead key={a.id} className="font-semibold text-foreground">
-                            {a.name}
-                          </TableHead>
-                        ))}
-                        <TableHead className="w-28 font-semibold text-foreground">登録日</TableHead>
-                        <TableHead className="w-32 font-semibold text-foreground">登録者</TableHead>
-                        <TableHead className="w-28 font-semibold text-foreground">更新日</TableHead>
-                        <TableHead className="w-32 font-semibold text-foreground">更新者</TableHead>
-                        <TableHead className="w-16" />
+                        <TableHead className="w-32 font-semibold text-foreground">更新日</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {instances.map((inst) => (
-                        <TableRow key={inst.id}>
+                        <TableRow
+                          key={inst.id}
+                          className={cn(
+                            "cursor-pointer transition-colors",
+                            selectedInst?.id === inst.id
+                              ? "bg-accent hover:bg-accent"
+                              : "hover:bg-muted/50",
+                          )}
+                          onClick={() => handleSelectInst(inst)}
+                        >
                           <TableCell className="font-medium text-foreground">{inst.name}</TableCell>
-                          {allAttrs.map((a) => (
-                            <TableCell key={a.id} className="text-muted-foreground">
-                              {inst.attributes?.[a.id] || "—"}
-                            </TableCell>
-                          ))}
-                          <TableCell className="text-sm text-muted-foreground">
-                            {inst.registeredAt || "—"}
-                          </TableCell>
-                          <TableCell className="text-sm text-muted-foreground">
-                            {inst.registeredBy || "—"}
-                          </TableCell>
-                          <TableCell className="text-sm text-muted-foreground">
-                            {inst.updatedAt || "—"}
-                          </TableCell>
-                          <TableCell className="text-sm text-muted-foreground">
-                            {inst.updatedBy || "—"}
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex items-center justify-end gap-0.5">
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-7 w-7"
-                                aria-label="編集"
-                                onClick={() => openEdit(inst)}
-                              >
-                                <Pencil className="h-3.5 w-3.5" />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-7 w-7 text-muted-foreground hover:text-destructive"
-                                aria-label="削除"
-                                onClick={() => setDeleteTarget(inst)}
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </Button>
-                            </div>
-                          </TableCell>
+                          <TableCell className="text-sm text-muted-foreground">{inst.updatedAt || "—"}</TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
                   </Table>
                 </div>
+              )}
+            </div>
+
+            {/* 詳細パネル（右からスライドイン） */}
+            <div
+              className={cn(
+                "absolute right-0 top-0 h-full w-96 border-l border-border bg-card shadow-2xl flex flex-col transition-transform duration-200 ease-in-out",
+                selectedInst ? "translate-x-0" : "translate-x-full",
+              )}
+            >
+              {selectedInst && (
+                <>
+                  {/* ヘッダー：インスタンス名 + 閉じるボタン */}
+                  <div className="flex items-center gap-2 border-b border-border px-4 py-3">
+                    <Input
+                      value={detailName}
+                      onChange={(e) => setDetailName(e.target.value)}
+                      className="h-8 flex-1 text-sm font-medium"
+                      placeholder="インスタンス名"
+                    />
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 shrink-0"
+                      onClick={() => setSelectedInst(null)}
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+
+                  {/* 本体（スクロール可） */}
+                  <div className="flex-1 space-y-5 overflow-y-auto px-4 py-4">
+                    {/* システム属性（読み取り専用） */}
+                    <div className="space-y-2">
+                      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">システム属性</p>
+                      <div className="grid grid-cols-2 gap-x-4 gap-y-3 rounded-lg bg-muted/30 px-3 py-3 text-sm">
+                        <div>
+                          <p className="text-xs text-muted-foreground">登録日</p>
+                          <p className="mt-0.5 font-medium">{selectedInst.registeredAt || "—"}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-muted-foreground">登録者</p>
+                          <p className="mt-0.5 font-medium">{selectedInst.registeredBy || "—"}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-muted-foreground">更新日</p>
+                          <p className="mt-0.5 font-medium">{selectedInst.updatedAt || "—"}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-muted-foreground">更新者</p>
+                          <p className="mt-0.5 font-medium">{selectedInst.updatedBy || "—"}</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* クラス */}
+                    <div className="space-y-1.5">
+                      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">クラス</p>
+                      <Select
+                        value={detailClassId ?? UNCLASSIFIED}
+                        onValueChange={(v) => { if (v) handleDetailClassChange(v) }}
+                      >
+                        <SelectTrigger className="h-8 text-sm">
+                          <SelectValue>
+                            {detailClassId
+                              ? (classes.find((c) => c.id === detailClassId)?.name ?? "不明なクラス")
+                              : "未分類"}
+                          </SelectValue>
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value={UNCLASSIFIED}>未分類</SelectItem>
+                          {classes.map((cls) => (
+                            <SelectItem key={cls.id} value={cls.id}>{cls.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {/* ユーザー定義属性 */}
+                    {loadingDetailAttrs ? (
+                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                        <Loader2 className="h-4 w-4 animate-spin" />属性を読み込み中…
+                      </div>
+                    ) : (
+                      <>
+                        <AttrSection
+                          title="プロジェクト共通属性"
+                          attrs={detailAttrGroups.project}
+                          values={detailAttrValues}
+                          onChange={(id, v) => setDetailAttrValues((prev) => ({ ...prev, [id]: v }))}
+                        />
+                        {detailAttrGroups.inherited.length > 0 && (
+                          <AttrSection
+                            title={`継承属性（${detailAttrGroups.parentName}）`}
+                            attrs={detailAttrGroups.inherited}
+                            values={detailAttrValues}
+                            onChange={(id, v) => setDetailAttrValues((prev) => ({ ...prev, [id]: v }))}
+                          />
+                        )}
+                        <AttrSection
+                          title="クラス固有属性"
+                          attrs={detailAttrGroups.own}
+                          values={detailAttrValues}
+                          onChange={(id, v) => setDetailAttrValues((prev) => ({ ...prev, [id]: v }))}
+                        />
+                        {allDetailAttrs.length === 0 && (
+                          <p className="text-sm text-muted-foreground">このクラスには属性が設定されていません</p>
+                        )}
+                      </>
+                    )}
+                  </div>
+
+                  {/* フッター：削除・保存 */}
+                  <div className="flex items-center justify-between border-t border-border px-4 py-3">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="gap-1.5 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                      onClick={() => setDeleteTarget(selectedInst)}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />削除
+                    </Button>
+                    <Button
+                      size="sm"
+                      onClick={handleDetailSave}
+                      disabled={!detailName.trim() || savingDetail || hasMissingRequired(allDetailAttrs, detailAttrValues)}
+                    >
+                      {savingDetail && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}
+                      保存
+                    </Button>
+                  </div>
+                </>
               )}
             </div>
           </div>
@@ -839,95 +900,6 @@ export function InstancesScreen({ initialSelectedClassId }: { initialSelectedCla
             >
               {adding && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}
               追加
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* ---- 編集ダイアログ ---- */}
-      <Dialog open={!!editTarget} onOpenChange={(open) => { if (!open) setEditTarget(null) }}>
-        <DialogContent className="flex max-h-[85vh] flex-col sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>インスタンスを編集</DialogTitle>
-          </DialogHeader>
-          <div className="flex-1 space-y-5 overflow-y-auto py-2 px-1 -mx-1">
-            <div className="space-y-3">
-              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">基本情報</p>
-              <div className="space-y-1.5">
-                <Label htmlFor="edit-inst-name">
-                  インスタンス名<span className="ml-0.5 text-destructive">*</span>
-                </Label>
-                <Input
-                  id="edit-inst-name"
-                  value={editName}
-                  onChange={(e) => setEditName(e.target.value)}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label>クラス</Label>
-                <Select
-                  value={editClassId ?? UNCLASSIFIED}
-                  onValueChange={(v) => { if (v) handleEditClassChange(v) }}
-                >
-                  <SelectTrigger>
-                    <SelectValue>
-                      {editClassId
-                        ? (classes.find((c) => c.id === editClassId)?.name ?? "不明なクラス")
-                        : "未分類"}
-                    </SelectValue>
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={UNCLASSIFIED}>未分類</SelectItem>
-                    {classes.map((cls) => (
-                      <SelectItem key={cls.id} value={cls.id}>{cls.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-
-            {loadingEditAttrs ? (
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Loader2 className="h-4 w-4 animate-spin" />属性を読み込み中…
-              </div>
-            ) : (
-              <>
-                <AttrSection
-                  title="プロジェクト共通属性"
-                  attrs={editAttrGroups.project}
-                  values={editAttrValues}
-                  onChange={(id, v) => setEditAttrValues((prev) => ({ ...prev, [id]: v }))}
-                />
-                {editAttrGroups.inherited.length > 0 && (
-                  <AttrSection
-                    title={`継承属性（${editAttrGroups.parentName}）`}
-                    attrs={editAttrGroups.inherited}
-                    values={editAttrValues}
-                    onChange={(id, v) => setEditAttrValues((prev) => ({ ...prev, [id]: v }))}
-                  />
-                )}
-                <AttrSection
-                  title="クラス固有属性"
-                  attrs={editAttrGroups.own}
-                  values={editAttrValues}
-                  onChange={(id, v) => setEditAttrValues((prev) => ({ ...prev, [id]: v }))}
-                />
-                {allEditAttrs.length === 0 && (
-                  <p className="text-sm text-muted-foreground">このクラスには属性が設定されていません</p>
-                )}
-              </>
-            )}
-          </div>
-          <DialogFooter className="pt-2">
-            <Button variant="outline" onClick={() => setEditTarget(null)} disabled={saving}>
-              キャンセル
-            </Button>
-            <Button
-              onClick={handleSave}
-              disabled={!editName.trim() || saving || hasMissingRequired(allEditAttrs, editAttrValues)}
-            >
-              {saving && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}
-              保存
             </Button>
           </DialogFooter>
         </DialogContent>
