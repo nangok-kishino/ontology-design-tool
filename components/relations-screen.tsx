@@ -33,10 +33,17 @@ import { TopBar } from "@/components/top-bar"
 import { Tooltip } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
 import type { OntologyRelation, OntologyClass, OntologyAttribute, AttributeRequired, ClassPair } from "@/lib/types"
-import { ArrowRight, Plus, Pencil, Trash2, Loader2, X, AlertTriangle, Info } from "lucide-react"
+import { ArrowRight, Plus, Pencil, Trash2, Loader2, X, AlertTriangle, Info, Lock } from "lucide-react"
 import { useProject } from "@/app/project-context"
 
 type AttrSectionKey = "project" | "own"
+
+const SYSTEM_ATTRS = [
+  { name: "登録日", dataType: "日付", required: "必須", description: "レコードが初めて登録された日付（システム自動付与）" },
+  { name: "登録者", dataType: "文字列", required: "必須", description: "レコードを最初に登録したユーザー（システム自動付与）" },
+  { name: "更新日", dataType: "日付", required: "必須", description: "レコードが最後に更新された日付（システム自動付与）" },
+  { name: "更新者", dataType: "文字列", required: "必須", description: "レコードを最後に更新したユーザー（システム自動付与）" },
+] as const
 
 export function RelationsScreen({ initialSelectedId }: { initialSelectedId?: string }) {
   const { currentProject, loading: projectLoading } = useProject()
@@ -315,69 +322,91 @@ export function RelationsScreen({ initialSelectedId }: { initialSelectedId?: str
   const selected = relations.find((r) => r.id === selectedId)
   const className = (id: string | null) => id ? (classes.find((c) => c.id === id)?.name ?? "不明") : "—"
 
-  const renderAttrSection = (title: string, attrs: OntologyAttribute[], section: AttrSectionKey) => (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between">
-        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{title}</p>
-        <Button size="sm" variant="outline" className="h-7 gap-1 bg-transparent text-xs"
-          onClick={() => openAddAttr(section)}>
-          <Plus className="h-3 w-3" />追加
-        </Button>
-      </div>
-      {attrs.length === 0 ? (
-        <p className="rounded-lg border border-dashed border-border py-3 text-center text-xs text-muted-foreground">
-          なし
-        </p>
-      ) : (
-        <div className="rounded-lg border border-border">
-          <Table>
-            <TableHeader>
-              <TableRow className="bg-muted/50 hover:bg-muted/50">
-                <TableHead className="font-semibold text-foreground">属性名</TableHead>
-                <TableHead className="w-24 font-semibold text-foreground">データ型</TableHead>
-                <TableHead className="w-20 font-semibold text-foreground">必須/任意</TableHead>
-                <TableHead className="w-16" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {attrs.map((a) => (
-                <TableRow key={a.id}>
-                  <TableCell className="font-medium text-foreground">
-                    <div className="flex items-center gap-1.5">
-                      <span>{a.name}</span>
-                      {a.description && (
-                        <Tooltip content={a.description}>
+  const renderAttrSection = (title: string, attrs: OntologyAttribute[], section: AttrSectionKey) => {
+    const isProject = section === "project"
+    const hasRows = isProject || attrs.length > 0
+    return (
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{title}</p>
+          <Button size="sm" variant="outline" className="h-7 gap-1 bg-transparent text-xs"
+            onClick={() => openAddAttr(section)}>
+            <Plus className="h-3 w-3" />追加
+          </Button>
+        </div>
+        {!hasRows ? (
+          <p className="rounded-lg border border-dashed border-border py-3 text-center text-xs text-muted-foreground">
+            なし
+          </p>
+        ) : (
+          <div className="rounded-lg border border-border">
+            <Table>
+              <TableHeader>
+                <TableRow className="bg-muted/50 hover:bg-muted/50">
+                  <TableHead className="font-semibold text-foreground">属性名</TableHead>
+                  <TableHead className="w-24 font-semibold text-foreground">データ型</TableHead>
+                  <TableHead className="w-20 font-semibold text-foreground">必須/任意</TableHead>
+                  <TableHead className="w-16" />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {isProject && SYSTEM_ATTRS.map((s) => (
+                  <TableRow key={`sys-${s.name}`} className="bg-muted/20">
+                    <TableCell className="font-medium text-foreground">
+                      <div className="flex items-center gap-1.5">
+                        <Lock className="h-3 w-3 shrink-0 text-muted-foreground/60" />
+                        <span>{s.name}</span>
+                        <Tooltip content={s.description}>
                           <Info className="h-3.5 w-3.5 cursor-help text-muted-foreground/50 transition-colors hover:text-muted-foreground" />
                         </Tooltip>
-                      )}
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-muted-foreground">{a.dataType}</TableCell>
-                  <TableCell>
-                    <Badge variant={a.required === "必須" ? "default" : "secondary"} className="font-normal">
-                      {a.required}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex items-center justify-end gap-0.5">
-                      <Button variant="ghost" size="icon" className="h-7 w-7"
-                        onClick={() => openEditAttr(a, section)}>
-                        <Pencil className="h-3.5 w-3.5" />
-                      </Button>
-                      <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive"
-                        onClick={() => handleDeleteAttr(a, section)}>
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
-      )}
-    </div>
-  )
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">{s.dataType}</TableCell>
+                    <TableCell>
+                      <Badge variant="default" className="font-normal">{s.required}</Badge>
+                    </TableCell>
+                    <TableCell />
+                  </TableRow>
+                ))}
+                {attrs.map((a) => (
+                  <TableRow key={a.id}>
+                    <TableCell className="font-medium text-foreground">
+                      <div className="flex items-center gap-1.5">
+                        <span>{a.name}</span>
+                        {a.description && (
+                          <Tooltip content={a.description}>
+                            <Info className="h-3.5 w-3.5 cursor-help text-muted-foreground/50 transition-colors hover:text-muted-foreground" />
+                          </Tooltip>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">{a.dataType}</TableCell>
+                    <TableCell>
+                      <Badge variant={a.required === "必須" ? "default" : "secondary"} className="font-normal">
+                        {a.required}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center justify-end gap-0.5">
+                        <Button variant="ghost" size="icon" className="h-7 w-7"
+                          onClick={() => openEditAttr(a, section)}>
+                          <Pencil className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                          onClick={() => handleDeleteAttr(a, section)}>
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </div>
+    )
+  }
 
   const scopeWarningText = (section: AttrSectionKey) =>
     section === "project"
