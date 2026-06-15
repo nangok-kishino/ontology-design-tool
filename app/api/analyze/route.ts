@@ -51,9 +51,7 @@ export async function POST(request: NextRequest) {
     const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")
 
     if (isPdf) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const mod = await import("pdf-parse") as any
-      const pdfParse = mod.default ?? mod
+      const { default: pdfParse } = await import("pdf-parse")
       const buffer = Buffer.from(await file.arrayBuffer())
       const data = await pdfParse(buffer)
       text = data.text
@@ -111,7 +109,8 @@ export async function POST(request: NextRequest) {
       })),
     })
   } catch (error) {
-    console.error("POST /api/analyze:", error)
-    return NextResponse.json({ error: "解析に失敗しました" }, { status: 500 })
+    const message = error instanceof Error ? error.message : String(error)
+    console.error("POST /api/analyze:", message)
+    return NextResponse.json({ error: `解析に失敗しました: ${message}` }, { status: 500 })
   }
 }
