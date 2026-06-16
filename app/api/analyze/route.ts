@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
-import Anthropic from "@anthropic-ai/sdk"
 import { getContainer } from "@/lib/cosmos"
 
-const EXTRACT_TOOL: Anthropic.Tool = {
+const EXTRACT_TOOL = {
   name: "extract_ontology_candidates",
   description: "文書からインスタンス候補と新規リレーション候補を抽出する",
   input_schema: {
@@ -125,32 +124,46 @@ export async function POST(request: NextRequest) {
         }).join("\n")
       : "（登録済みインスタンスなし）"
 
-    // LLM解析
-    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
-    const response = await client.messages.create({
-      model: "claude-sonnet-4-6",
-      max_tokens: 4096,
-      system:
-        "あなたはオントロジーエンジニアです。提供された文書と定義済みクラス・リレーション・登録済みインスタンスを参照し、以下を抽出してください。\n\n" +
-        "1. インスタンス候補：文書中の具体的な事例・対象・固有名詞を列挙し、次のように分類してください。\n" +
-        "   - 【登録済みインスタンス】と同一または類似するものは candidateType: \"merge\" とし、existingInstanceId と existingInstanceName を指定してください。\n" +
-        "   - 新規と判断したものは candidateType: \"new\" とし、既存クラスに割り当ててください（suggestedClassId と suggestedClassName を指定）。\n" +
-        "   - 適切なクラスがない場合は isNewClass: true とし、新規クラス名と説明を提案してください。\n\n" +
-        "2. リレーション候補：文書が示唆するクラス間の関係で、【定義済みリレーション】に含まれない組み合わせのみを挙げてください。",
-      tools: [EXTRACT_TOOL],
-      tool_choice: { type: "tool", name: "extract_ontology_candidates" },
-      messages: [{
-        role: "user",
-        content:
-          `【定義済みクラス】\n${classListText}\n\n` +
-          `【定義済みリレーション】（これらと重複しない候補のみ提案してください）\n${relListText}\n\n` +
-          `【登録済みインスタンス】（これらと照合し、同一・類似のものは candidateType: "merge" にしてください）\n${instanceListText}\n\n` +
-          `【文書】\n${text.slice(0, 12000)}`,
-      }],
+    // LLM解析（SDK を使わず raw fetch でリクエスト）
+    const apiKey = process.env.ANTHROPIC_API_KEY
+    const anthropicRes = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "x-api-key": apiKey!,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-6",
+        max_tokens: 4096,
+        system:
+          "あなたはオントロジーエンジニアです。提供された文書と定義済みクラス・リレーション・登録済みインスタンスを参照し、以下を抽出してください。\n\n" +
+          "1. インスタンス候補：文書中の具体的な事例・対象・固有名詞を列挙し、次のように分類してください。\n" +
+          "   - 【登録済みインスタンス】と同一または類似するものは candidateType: \"merge\" とし、existingInstanceId と existingInstanceName を指定してください。\n" +
+          "   - 新規と判断したものは candidateType: \"new\" とし、既存クラスに割り当ててください（suggestedClassId と suggestedClassName を指定）。\n" +
+          "   - 適切なクラスがない場合は isNewClass: true とし、新規クラス名と説明を提案してください。\n\n" +
+          "2. リレーション候補：文書が示唆するクラス間の関係で、【定義済みリレーション】に含まれない組み合わせのみを挙げてください。",
+        tools: [EXTRACT_TOOL],
+        tool_choice: { type: "tool", name: "extract_ontology_candidates" },
+        messages: [{
+          role: "user",
+          content:
+            `【定義済みクラス】\n${classListText}\n\n` +
+            `【定義済みリレーション】（これらと重複しない候補のみ提案してください）\n${relListText}\n\n` +
+            `【登録済みインスタンス】（これらと照合し、同一・類似のものは candidateType: "merge" にしてください）\n${instanceListText}\n\n` +
+            `【文書】\n${text.slice(0, 12000)}`,
+        }],
+      }),
     })
 
-    const toolUse = response.content.find((c) => c.type === "tool_use")
-    if (!toolUse || toolUse.type !== "tool_use") {
+    if (!anthropicRes.ok) {
+      const errBody = await anthropicRes.text()
+      throw new Error(`${anthropicRes.status} ${errBody}`)
+    }
+
+    const responseJson = await anthropicRes.json()
+    const toolUse = responseJson.content?.find((c: any) => c.type === "tool_use")
+    if (!toolUse) {
       return NextResponse.json({ error: "解析結果を取得できませんでした" }, { status: 500 })
     }
 
