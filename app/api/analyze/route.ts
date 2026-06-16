@@ -247,15 +247,13 @@ export async function POST(request: NextRequest) {
     })
   } catch (error: any) {
     const message = error instanceof Error ? error.message : String(error)
-    console.error("POST /api/analyze error:", {
-      message,
-      status: error?.status,
-      errorType: error?.error?.error?.type,
-      errorMsg: error?.error?.error?.message,
-      headers: error?.headers ? Object.fromEntries([...error.headers.entries()].filter(([k]) => !k.toLowerCase().includes("auth") && !k.toLowerCase().includes("key"))) : undefined,
+    const debug = {
       apiKeySet: !!process.env.ANTHROPIC_API_KEY,
-      apiKeyPrefix: process.env.ANTHROPIC_API_KEY?.slice(0, 14),
-    })
-    return NextResponse.json({ error: `解析に失敗しました: ${message}` }, { status: 500 })
+      apiKeyPrefix: process.env.ANTHROPIC_API_KEY?.slice(0, 14) ?? "(unset)",
+      errorStatus: error?.status,
+      errorType: error?.error?.error?.type,
+    }
+    console.error("POST /api/analyze error:", { message, ...debug })
+    return NextResponse.json({ error: `解析に失敗しました: ${message}`, debug }, { status: 500 })
   }
 }
