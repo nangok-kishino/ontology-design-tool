@@ -136,7 +136,7 @@ export async function POST(request: NextRequest) {
         "content-type": "application/json",
       },
       body: JSON.stringify({
-        model: "gpt-4o",
+        model: "gpt-5.4",
         messages: [
           {
             role: "system",
@@ -267,8 +267,8 @@ export async function POST(request: NextRequest) {
   } catch (error: any) {
     const message = error instanceof Error ? error.message : String(error)
     const debug = {
-      apiKeySet: !!process.env.ANTHROPIC_API_KEY,
-      apiKeyPrefix: process.env.ANTHROPIC_API_KEY?.slice(0, 14) ?? "(unset)",
+      apiKeySet: !!process.env.OPENAI_API_KEY,
+      apiKeyPrefix: process.env.OPENAI_API_KEY?.slice(0, 7) ?? "(unset)",
       errorStatus: error?.status,
       errorType: error?.error?.error?.type,
     }
