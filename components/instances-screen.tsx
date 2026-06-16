@@ -30,7 +30,7 @@ import {
 import { TopBar } from "@/components/top-bar"
 import { cn } from "@/lib/utils"
 import type { OntologyClass, OntologyInstance, OntologyAttribute } from "@/lib/types"
-import { ChevronDown, ChevronRight, Plus, Trash2, Loader2, Info, X, GripVertical } from "lucide-react"
+import { ChevronDown, ChevronRight, Plus, Trash2, Loader2, Info, X, GripVertical, AlertTriangle } from "lucide-react"
 import { useProject } from "@/app/project-context"
 import {
   DndContext,
@@ -928,6 +928,12 @@ export function InstancesScreen({ initialSelectedClassId }: { initialSelectedCla
           <DialogHeader>
             <DialogTitle>インスタンスを追加 — {selectedClass?.name}</DialogTitle>
           </DialogHeader>
+          {selectedClass && classes.some((c) => c.parentId === selectedClass.id) && (
+            <div className="flex items-start gap-2 rounded-md border border-yellow-300 bg-yellow-50 px-3 py-2.5 text-sm text-yellow-800 dark:border-yellow-700 dark:bg-yellow-950 dark:text-yellow-200">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>このクラスにはサブクラスが存在します。サブクラスへの割当を検討してください。</span>
+            </div>
+          )}
           <div className="flex-1 space-y-5 overflow-y-auto py-2 px-1 -mx-1">
             <div className="space-y-3">
               <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">基本情報</p>

@@ -32,8 +32,7 @@ import {
 import { TopBar } from "@/components/top-bar"
 import { Tooltip } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
-import { relations } from "@/lib/ontology-data"
-import type { OntologyClass, OntologyAttribute, AttributeRequired } from "@/lib/types"
+import type { OntologyClass, OntologyAttribute, OntologyRelation, AttributeRequired } from "@/lib/types"
 import { ChevronDown, ChevronRight, Plus, Pencil, Trash2, Loader2, X, AlertTriangle, Info, Lock } from "lucide-react"
 import { useProject } from "@/app/project-context"
 
@@ -141,6 +140,9 @@ export function ClassesScreen({ initialSelectedId }: { initialSelectedId?: strin
   const [deleteChildMode, setDeleteChildMode] = useState<"cascade" | "promote">("promote")
   const [deleteInstanceMode, setDeleteInstanceMode] = useState<"delete" | "unclassify">("unclassify")
 
+  // リレーション
+  const [relations, setRelations] = useState<OntologyRelation[]>([])
+
   // 属性 (3種)
   const [projectAttrs, setProjectAttrs] = useState<OntologyAttribute[]>([])
   const [inheritedAttrs, setInheritedAttrs] = useState<OntologyAttribute[]>([])
@@ -176,10 +178,12 @@ export function ClassesScreen({ initialSelectedId }: { initialSelectedId?: strin
     if (!currentProject) return
     setLoading(true)
     try {
-      const data: OntologyClass[] = await fetch(
-        `/api/classes?projectId=${currentProject.id}`
-      ).then((r) => r.json())
-      setClasses(data)
+      const [classData, relData] = await Promise.all([
+        fetch(`/api/classes?projectId=${currentProject.id}`).then((r) => r.json()),
+        fetch(`/api/relations?projectId=${currentProject.id}`).then((r) => r.json()),
+      ])
+      setClasses(classData)
+      setRelations(Array.isArray(relData) ? relData : [])
     } finally {
       setLoading(false)
     }
@@ -187,7 +191,7 @@ export function ClassesScreen({ initialSelectedId }: { initialSelectedId?: strin
 
   useEffect(() => {
     if (projectLoading) return
-    if (!currentProject) { setClasses([]); setLoading(false); return }
+    if (!currentProject) { setClasses([]); setRelations([]); setLoading(false); return }
     setSelectedId(null)
     fetchClasses()
   }, [currentProject?.id, projectLoading])
@@ -459,9 +463,33 @@ export function ClassesScreen({ initialSelectedId }: { initialSelectedId?: strin
   const hasChildren = childClasses.length > 0
   const parentClass = selected?.parentId ? classes.find((c) => c.id === selected.parentId) : null
   const parentName = parentClass?.name ?? "なし"
-  const relatedRelations = selected
-    ? relations.filter((r) => r.sourceClass === selected.name || r.targetClass === selected.name)
+  const directRelations = selected
+    ? relations.filter((r) => r.classPairs.some((p) => p.sourceClassId === selected.id || p.targetClassId === selected.id))
     : []
+
+  // 親クラスを遡って継承リレーションを収集する
+  type InheritedRelRow = { relation: OntologyRelation; sourceClassId: string; targetClassId: string; inheritedFrom: OntologyClass }
+  const inheritedRelations: InheritedRelRow[] = []
+  if (selected) {
+    const directIds = new Set(directRelations.map((r) => r.id))
+    let ancestorId = selected.parentId
+    while (ancestorId) {
+      const ancestor = classes.find((c) => c.id === ancestorId)
+      if (!ancestor) break
+      for (const rel of relations) {
+        if (directIds.has(rel.id)) continue
+        for (const pair of rel.classPairs) {
+          if (pair.sourceClassId === ancestor.id || pair.targetClassId === ancestor.id) {
+            inheritedRelations.push({ relation: rel, sourceClassId: pair.sourceClassId, targetClassId: pair.targetClassId, inheritedFrom: ancestor })
+            directIds.add(rel.id) // 同じリレーションを重複追加しない
+          }
+        }
+      }
+      ancestorId = ancestor.parentId
+    }
+  }
+
+  const getClassName = (id: string) => classes.find((c) => c.id === id)?.name ?? id
 
   const parentCandidates = classes.filter((c) => c.parentId === null && c.id !== selectedId)
   const addParentCandidates = classes.filter((c) => c.parentId === null)
@@ -721,33 +749,76 @@ export function ClassesScreen({ initialSelectedId }: { initialSelectedId?: strin
 
                 {/* 関連リレーション */}
                 <TabsContent value="relations" className="px-6 py-6">
-                  <div className="rounded-lg border border-border">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>始点クラス</TableHead>
-                          <TableHead>リレーション名</TableHead>
-                          <TableHead>終点クラス</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {relatedRelations.length > 0 ? (
-                          relatedRelations.map((r) => (
-                            <TableRow key={r.id}>
-                              <TableCell className="text-foreground">{r.sourceClass}</TableCell>
-                              <TableCell className="font-medium text-foreground">{r.name}</TableCell>
-                              <TableCell className="text-foreground">{r.targetClass}</TableCell>
+                  <div className="space-y-6">
+                    {/* 直接定義されたリレーション */}
+                    <div className="space-y-2">
+                      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">直接定義されたリレーション</p>
+                      <div className="rounded-lg border border-border">
+                        <Table>
+                          <TableHeader>
+                            <TableRow className="bg-muted/50 hover:bg-muted/50">
+                              <TableHead className="font-semibold text-foreground">始点クラス</TableHead>
+                              <TableHead className="font-semibold text-foreground">リレーション名</TableHead>
+                              <TableHead className="font-semibold text-foreground">終点クラス</TableHead>
                             </TableRow>
-                          ))
-                        ) : (
-                          <TableRow>
-                            <TableCell colSpan={3} className="text-center text-muted-foreground">
-                              関連するリレーションはありません
-                            </TableCell>
-                          </TableRow>
-                        )}
-                      </TableBody>
-                    </Table>
+                          </TableHeader>
+                          <TableBody>
+                            {directRelations.length > 0 ? (
+                              directRelations.flatMap((r) =>
+                                r.classPairs
+                                  .filter((p) => p.sourceClassId === selected!.id || p.targetClassId === selected!.id)
+                                  .map((p, i) => (
+                                    <TableRow key={`${r.id}-${i}`}>
+                                      <TableCell className="text-foreground">{getClassName(p.sourceClassId)}</TableCell>
+                                      <TableCell className="font-medium text-foreground">{r.name}</TableCell>
+                                      <TableCell className="text-foreground">{getClassName(p.targetClassId)}</TableCell>
+                                    </TableRow>
+                                  ))
+                              )
+                            ) : (
+                              <TableRow>
+                                <TableCell colSpan={3} className="text-center text-muted-foreground">
+                                  直接定義されたリレーションはありません
+                                </TableCell>
+                              </TableRow>
+                            )}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    </div>
+
+                    {/* 継承されたリレーション */}
+                    {inheritedRelations.length > 0 && (
+                      <div className="space-y-2">
+                        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">継承されたリレーション</p>
+                        <div className="rounded-lg border border-border">
+                          <Table>
+                            <TableHeader>
+                              <TableRow className="bg-muted/50 hover:bg-muted/50">
+                                <TableHead className="font-semibold text-foreground">始点クラス</TableHead>
+                                <TableHead className="font-semibold text-foreground">リレーション名</TableHead>
+                                <TableHead className="font-semibold text-foreground">終点クラス</TableHead>
+                                <TableHead className="font-semibold text-foreground">継承元クラス</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {inheritedRelations.map((row, i) => (
+                                <TableRow key={`inh-${row.relation.id}-${i}`}>
+                                  <TableCell className="text-foreground">{getClassName(row.sourceClassId)}</TableCell>
+                                  <TableCell className="font-medium text-foreground">{row.relation.name}</TableCell>
+                                  <TableCell className="text-foreground">{getClassName(row.targetClassId)}</TableCell>
+                                  <TableCell className="text-muted-foreground text-sm">{row.inheritedFrom.name}</TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </div>
+                      </div>
+                    )}
+
+                    {directRelations.length === 0 && inheritedRelations.length === 0 && (
+                      <p className="text-center text-sm text-muted-foreground py-4">関連するリレーションはありません</p>
+                    )}
                   </div>
                 </TabsContent>
               </Tabs>
