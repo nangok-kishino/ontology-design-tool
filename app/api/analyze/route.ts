@@ -265,7 +265,12 @@ export async function POST(request: NextRequest) {
     })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    console.error("POST /api/analyze:", message)
-    return NextResponse.json({ error: `解析に失敗しました: ${message}` }, { status: 500 })
+    const geminiKey = process.env.GEMINI_API_KEY
+    const debug = {
+      apiKeySet: !!geminiKey,
+      apiKeyPrefix: geminiKey?.slice(0, 8) ?? "(unset)",
+    }
+    console.error("POST /api/analyze:", { message, ...debug })
+    return NextResponse.json({ error: `解析に失敗しました: ${message}`, debug }, { status: 500 })
   }
 }
