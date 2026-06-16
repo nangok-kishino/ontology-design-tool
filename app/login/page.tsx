@@ -48,7 +48,7 @@ export default function LoginPage() {
             disabled={loading || !password}
             className="w-full bg-blue-600 text-white py-2 rounded text-sm hover:bg-blue-700 disabled:opacity-50"
           >
-            {loading ? "確認中..." : "入室"}
+            {loading ? "確認中..." : "ログイン"}
           </button>
         </form>
       </div>
