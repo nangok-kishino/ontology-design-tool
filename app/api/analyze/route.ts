@@ -158,7 +158,18 @@ export async function POST(request: NextRequest) {
 
     if (!anthropicRes.ok) {
       const errBody = await anthropicRes.text()
-      throw new Error(`${anthropicRes.status} ${errBody}`)
+      const resHeaders: Record<string, string> = {}
+      anthropicRes.headers.forEach((v, k) => { resHeaders[k] = v })
+      return NextResponse.json({
+        error: `解析に失敗しました: ${anthropicRes.status}`,
+        debug: {
+          apiKeySet: !!process.env.ANTHROPIC_API_KEY,
+          apiKeyPrefix: process.env.ANTHROPIC_API_KEY?.slice(0, 14) ?? "(unset)",
+          status: anthropicRes.status,
+          body: errBody,
+          headers: resHeaders,
+        }
+      }, { status: 500 })
     }
 
     const responseJson = await anthropicRes.json()
