@@ -16,6 +16,7 @@ node_modules
 
 # Auto-generated
 next-env.d.ts
+tsconfig.tsbuildinfo
 
 # Claude Code
 .claude/
