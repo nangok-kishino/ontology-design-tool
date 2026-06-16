@@ -2,52 +2,55 @@ import { NextRequest, NextResponse } from "next/server"
 import { getContainer } from "@/lib/cosmos"
 
 const EXTRACT_TOOL = {
-  name: "extract_ontology_candidates",
-  description: "文書からインスタンス候補と新規リレーション候補を抽出する",
-  input_schema: {
-    type: "object" as const,
-    properties: {
-      instances: {
-        type: "array",
-        description: "文書中の具体的なインスタンス候補（特定の事例・対象・固有名詞）",
-        items: {
-          type: "object",
-          properties: {
-            name: { type: "string", description: "インスタンス候補名" },
-            candidateType: {
-              type: "string",
-              enum: ["new", "merge"],
-              description: "new: 新規インスタンス候補 / merge: 登録済みインスタンスとの統合候補",
+  type: "function" as const,
+  function: {
+    name: "extract_ontology_candidates",
+    description: "文書からインスタンス候補と新規リレーション候補を抽出する",
+    parameters: {
+      type: "object",
+      properties: {
+        instances: {
+          type: "array",
+          description: "文書中の具体的なインスタンス候補（特定の事例・対象・固有名詞）",
+          items: {
+            type: "object",
+            properties: {
+              name: { type: "string", description: "インスタンス候補名" },
+              candidateType: {
+                type: "string",
+                enum: ["new", "merge"],
+                description: "new: 新規インスタンス候補 / merge: 登録済みインスタンスとの統合候補",
+              },
+              suggestedClassId: { type: "string", description: "割当先の既存クラスID（candidateType=newの場合、なければ空文字）" },
+              suggestedClassName: { type: "string", description: "割当先クラス名（既存または新規提案名）" },
+              isNewClass: { type: "boolean", description: "適切な既存クラスがなく新規クラス作成が必要ならtrue（candidateType=newの場合のみ）" },
+              newClassName: { type: "string", description: "新規クラス名（isNewClass=trueの場合）" },
+              newClassDescription: { type: "string", description: "新規クラスの説明（isNewClass=trueの場合、1〜2文）" },
+              existingInstanceId: { type: "string", description: "統合候補の登録済みインスタンスID（candidateType=mergeの場合）" },
+              existingInstanceName: { type: "string", description: "統合候補の登録済みインスタンス名（candidateType=mergeの場合）" },
             },
-            suggestedClassId: { type: "string", description: "割当先の既存クラスID（candidateType=newの場合、なければ空文字）" },
-            suggestedClassName: { type: "string", description: "割当先クラス名（既存または新規提案名）" },
-            isNewClass: { type: "boolean", description: "適切な既存クラスがなく新規クラス作成が必要ならtrue（candidateType=newの場合のみ）" },
-            newClassName: { type: "string", description: "新規クラス名（isNewClass=trueの場合）" },
-            newClassDescription: { type: "string", description: "新規クラスの説明（isNewClass=trueの場合、1〜2文）" },
-            existingInstanceId: { type: "string", description: "統合候補の登録済みインスタンスID（candidateType=mergeの場合）" },
-            existingInstanceName: { type: "string", description: "統合候補の登録済みインスタンス名（candidateType=mergeの場合）" },
+            required: ["name", "candidateType", "suggestedClassName", "isNewClass"],
           },
-          required: ["name", "candidateType", "suggestedClassName", "isNewClass"],
+        },
+        relations: {
+          type: "array",
+          description: "既存リレーションに含まれない新たなクラス間関係の候補",
+          items: {
+            type: "object",
+            properties: {
+              sourceClassId: { type: "string", description: "始点クラスのID（既存クラスから。不明なら空文字）" },
+              sourceClassName: { type: "string", description: "始点クラス名" },
+              relationName: { type: "string", description: "リレーション名（動詞句）" },
+              targetClassId: { type: "string", description: "終点クラスのID（既存クラスから。不明なら空文字）" },
+              targetClassName: { type: "string", description: "終点クラス名" },
+              description: { type: "string", description: "リレーションの説明（1〜2文）" },
+            },
+            required: ["sourceClassName", "relationName", "targetClassName", "description"],
+          },
         },
       },
-      relations: {
-        type: "array",
-        description: "既存リレーションに含まれない新たなクラス間関係の候補",
-        items: {
-          type: "object",
-          properties: {
-            sourceClassId: { type: "string", description: "始点クラスのID（既存クラスから。不明なら空文字）" },
-            sourceClassName: { type: "string", description: "始点クラス名" },
-            relationName: { type: "string", description: "リレーション名（動詞句）" },
-            targetClassId: { type: "string", description: "終点クラスのID（既存クラスから。不明なら空文字）" },
-            targetClassName: { type: "string", description: "終点クラス名" },
-            description: { type: "string", description: "リレーションの説明（1〜2文）" },
-          },
-          required: ["sourceClassName", "relationName", "targetClassName", "description"],
-        },
-      },
+      required: ["instances", "relations"],
     },
-    required: ["instances", "relations"],
   },
 }
 
@@ -124,61 +127,53 @@ export async function POST(request: NextRequest) {
         }).join("\n")
       : "（登録済みインスタンスなし）"
 
-    // LLM解析（SDK を使わず raw fetch でリクエスト）
-    const apiKey = process.env.ANTHROPIC_API_KEY
-    const anthropicRes = await fetch("https://api.anthropic.com/v1/messages", {
+    // LLM解析（OpenAI API）
+    const apiKey = process.env.OPENAI_API_KEY
+    const openaiRes = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
-        "x-api-key": apiKey!,
-        "anthropic-version": "2023-06-01",
+        "Authorization": `Bearer ${apiKey}`,
         "content-type": "application/json",
       },
       body: JSON.stringify({
-        model: "claude-sonnet-4-6",
-        max_tokens: 4096,
-        system:
-          "あなたはオントロジーエンジニアです。提供された文書と定義済みクラス・リレーション・登録済みインスタンスを参照し、以下を抽出してください。\n\n" +
-          "1. インスタンス候補：文書中の具体的な事例・対象・固有名詞を列挙し、次のように分類してください。\n" +
-          "   - 【登録済みインスタンス】と同一または類似するものは candidateType: \"merge\" とし、existingInstanceId と existingInstanceName を指定してください。\n" +
-          "   - 新規と判断したものは candidateType: \"new\" とし、既存クラスに割り当ててください（suggestedClassId と suggestedClassName を指定）。\n" +
-          "   - 適切なクラスがない場合は isNewClass: true とし、新規クラス名と説明を提案してください。\n\n" +
-          "2. リレーション候補：文書が示唆するクラス間の関係で、【定義済みリレーション】に含まれない組み合わせのみを挙げてください。",
+        model: "gpt-4o",
+        messages: [
+          {
+            role: "system",
+            content:
+              "あなたはオントロジーエンジニアです。提供された文書と定義済みクラス・リレーション・登録済みインスタンスを参照し、以下を抽出してください。\n\n" +
+              "1. インスタンス候補：文書中の具体的な事例・対象・固有名詞を列挙し、次のように分類してください。\n" +
+              "   - 【登録済みインスタンス】と同一または類似するものは candidateType: \"merge\" とし、existingInstanceId と existingInstanceName を指定してください。\n" +
+              "   - 新規と判断したものは candidateType: \"new\" とし、既存クラスに割り当ててください（suggestedClassId と suggestedClassName を指定）。\n" +
+              "   - 適切なクラスがない場合は isNewClass: true とし、新規クラス名と説明を提案してください。\n\n" +
+              "2. リレーション候補：文書が示唆するクラス間の関係で、【定義済みリレーション】に含まれない組み合わせのみを挙げてください。",
+          },
+          {
+            role: "user",
+            content:
+              `【定義済みクラス】\n${classListText}\n\n` +
+              `【定義済みリレーション】（これらと重複しない候補のみ提案してください）\n${relListText}\n\n` +
+              `【登録済みインスタンス】（これらと照合し、同一・類似のものは candidateType: "merge" にしてください）\n${instanceListText}\n\n` +
+              `【文書】\n${text.slice(0, 12000)}`,
+          },
+        ],
         tools: [EXTRACT_TOOL],
-        tool_choice: { type: "tool", name: "extract_ontology_candidates" },
-        messages: [{
-          role: "user",
-          content:
-            `【定義済みクラス】\n${classListText}\n\n` +
-            `【定義済みリレーション】（これらと重複しない候補のみ提案してください）\n${relListText}\n\n` +
-            `【登録済みインスタンス】（これらと照合し、同一・類似のものは candidateType: "merge" にしてください）\n${instanceListText}\n\n` +
-            `【文書】\n${text.slice(0, 12000)}`,
-        }],
+        tool_choice: { type: "function", function: { name: "extract_ontology_candidates" } },
       }),
     })
 
-    if (!anthropicRes.ok) {
-      const errBody = await anthropicRes.text()
-      const resHeaders: Record<string, string> = {}
-      anthropicRes.headers.forEach((v, k) => { resHeaders[k] = v })
-      return NextResponse.json({
-        error: `解析に失敗しました: ${anthropicRes.status}`,
-        debug: {
-          apiKeySet: !!process.env.ANTHROPIC_API_KEY,
-          apiKeyPrefix: process.env.ANTHROPIC_API_KEY?.slice(0, 14) ?? "(unset)",
-          status: anthropicRes.status,
-          body: errBody,
-          headers: resHeaders,
-        }
-      }, { status: 500 })
+    if (!openaiRes.ok) {
+      const errBody = await openaiRes.text()
+      throw new Error(`OpenAI API error ${openaiRes.status}: ${errBody}`)
     }
 
-    const responseJson = await anthropicRes.json()
-    const toolUse = responseJson.content?.find((c: any) => c.type === "tool_use")
-    if (!toolUse) {
+    const responseJson = await openaiRes.json()
+    const toolCall = responseJson.choices?.[0]?.message?.tool_calls?.[0]
+    if (!toolCall) {
       return NextResponse.json({ error: "解析結果を取得できませんでした" }, { status: 500 })
     }
 
-    const result = toolUse.input as {
+    const result = JSON.parse(toolCall.function.arguments) as {
       instances: Array<{
         name: string
         candidateType?: "new" | "merge"
