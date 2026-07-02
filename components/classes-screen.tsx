@@ -6,7 +6,6 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   Dialog,
   DialogContent,
@@ -31,9 +30,19 @@ import {
 } from "@/components/ui/table"
 import { TopBar } from "@/components/top-bar"
 import { Tooltip } from "@/components/ui/tooltip"
+import { ImportDialog } from "@/components/import-dialog"
+import { SectionHeader } from "@/components/section-header"
 import { cn } from "@/lib/utils"
 import type { OntologyClass, OntologyAttribute, OntologyRelation, AttributeRequired } from "@/lib/types"
-import { ChevronDown, ChevronRight, Plus, Pencil, Trash2, Loader2, X, AlertTriangle, Info, Lock } from "lucide-react"
+import {
+  buildClassesYaml,
+  downloadYaml,
+  parseClassesYaml,
+  previewClassesImport,
+  executeClassesImport,
+  type ClassExportItem,
+} from "@/lib/import-export"
+import { ChevronDown, ChevronRight, Plus, Pencil, Trash2, Loader2, X, AlertTriangle, Info, Lock, Download, Upload, FileText, Tags, Link2 } from "lucide-react"
 import { useProject } from "@/app/project-context"
 
 type TreeNode = OntologyClass & { children: TreeNode[] }
@@ -167,6 +176,10 @@ export function ClassesScreen({ initialSelectedId }: { initialSelectedId?: strin
   const [editAttrDataType, setEditAttrDataType] = useState("文字列")
   const [editAttrRequired, setEditAttrRequired] = useState<AttributeRequired>("任意")
   const [savingAttr, setSavingAttr] = useState(false)
+
+  // インポート/エクスポート
+  const [showImport, setShowImport] = useState(false)
+  const [exporting, setExporting] = useState(false)
 
   // スコープ警告（削除時の確認）
   const [showScopeAlert, setShowScopeAlert] = useState(false)
@@ -457,6 +470,22 @@ export function ClassesScreen({ initialSelectedId }: { initialSelectedId?: strin
     setShowAdd(true)
   }
 
+  const handleExport = async () => {
+    if (!currentProject || classes.length === 0) return
+    setExporting(true)
+    try {
+      const attrsByClassId = new Map<string, OntologyAttribute[]>()
+      await Promise.all(classes.map(async (c) => {
+        const attrs = await fetch(`/api/attributes?targetId=${c.id}`).then((r) => r.json())
+        attrsByClassId.set(c.id, Array.isArray(attrs) ? attrs : [])
+      }))
+      const yamlText = buildClassesYaml(classes, attrsByClassId)
+      downloadYaml(`classes_${currentProject.name}.yaml`, yamlText)
+    } finally {
+      setExporting(false)
+    }
+  }
+
   const tree = buildTree(classes)
   const selected = classes.find((c) => c.id === selectedId)
   const childClasses = selected ? classes.filter((c) => c.parentId === selected.id) : []
@@ -593,7 +622,17 @@ export function ClassesScreen({ initialSelectedId }: { initialSelectedId?: strin
 
   return (
     <div className="flex h-full flex-col">
-      <TopBar title="クラス管理" />
+      <TopBar title="クラス管理">
+        <Button size="sm" variant="outline" className="h-8 gap-1.5 bg-transparent"
+          onClick={handleExport} disabled={!currentProject || classes.length === 0 || exporting}>
+          {exporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+          エクスポート
+        </Button>
+        <Button size="sm" variant="outline" className="h-8 gap-1.5 bg-transparent"
+          onClick={() => setShowImport(true)} disabled={!currentProject}>
+          <Upload className="h-3.5 w-3.5" />インポート
+        </Button>
+      </TopBar>
       <div className="grid flex-1 overflow-hidden" style={{ gridTemplateColumns: "260px 1fr" }}>
         {/* 左ペイン */}
         <div className="flex flex-col border-r border-border bg-card">
@@ -656,18 +695,10 @@ export function ClassesScreen({ initialSelectedId }: { initialSelectedId?: strin
               </div>
             </div>
 
-            <div className="flex-1 overflow-auto">
-              <Tabs defaultValue="basic">
-                <div className="border-b border-border px-6 pt-3">
-                  <TabsList variant="line" className="h-auto w-auto justify-start border-0 p-0 gap-0">
-                    <TabsTrigger value="basic" className="h-auto flex-none rounded-t-sm rounded-b-none px-5 py-2 text-sm border-b-2 border-b-transparent after:hidden hover:bg-muted/50 data-active:bg-accent data-active:text-accent-foreground data-active:border-b-primary">基本情報</TabsTrigger>
-                    <TabsTrigger value="attributes" className="h-auto flex-none rounded-t-sm rounded-b-none px-5 py-2 text-sm border-b-2 border-b-transparent after:hidden hover:bg-muted/50 data-active:bg-accent data-active:text-accent-foreground data-active:border-b-primary">属性</TabsTrigger>
-                    <TabsTrigger value="relations" className="h-auto flex-none rounded-t-sm rounded-b-none px-5 py-2 text-sm border-b-2 border-b-transparent after:hidden hover:bg-muted/50 data-active:bg-accent data-active:text-accent-foreground data-active:border-b-primary">関連リレーション</TabsTrigger>
-                  </TabsList>
-                </div>
-
+            <div className="flex-1 overflow-auto px-6 py-6 space-y-8">
                 {/* 基本情報 */}
-                <TabsContent value="basic" className="px-6 py-6 max-w-xl space-y-5">
+                <div className="space-y-5 max-w-xl">
+                  <SectionHeader icon={FileText} title="基本情報" />
                   {isEditing ? (
                     <>
                       <div className="space-y-2">
@@ -726,10 +757,11 @@ export function ClassesScreen({ initialSelectedId }: { initialSelectedId?: strin
                       </div>
                     </>
                   )}
-                </TabsContent>
+                </div>
 
-                {/* 属性タブ */}
-                <TabsContent value="attributes" className="px-6 py-6">
+                {/* 属性 */}
+                <div className="space-y-4">
+                  <SectionHeader icon={Tags} title="属性" />
                   {loadingAttrs ? (
                     <div className="flex h-20 items-center justify-center text-muted-foreground">
                       <Loader2 className="h-4 w-4 animate-spin" />
@@ -745,10 +777,11 @@ export function ClassesScreen({ initialSelectedId }: { initialSelectedId?: strin
                       {renderAttrSection("クラス固有属性", ownAttrs, "own")}
                     </div>
                   )}
-                </TabsContent>
+                </div>
 
                 {/* 関連リレーション */}
-                <TabsContent value="relations" className="px-6 py-6">
+                <div className="space-y-4">
+                  <SectionHeader icon={Link2} title="関連リレーション" />
                   <div className="space-y-6">
                     {/* 直接定義されたリレーション */}
                     <div className="space-y-2">
@@ -820,8 +853,7 @@ export function ClassesScreen({ initialSelectedId }: { initialSelectedId?: strin
                       <p className="text-center text-sm text-muted-foreground py-4">関連するリレーションはありません</p>
                     )}
                   </div>
-                </TabsContent>
-              </Tabs>
+                </div>
             </div>
           </div>
         ) : (
@@ -1119,6 +1151,33 @@ export function ClassesScreen({ initialSelectedId }: { initialSelectedId?: strin
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* クラス定義インポート */}
+      <ImportDialog<ClassExportItem>
+        open={showImport}
+        onOpenChange={setShowImport}
+        title="クラス定義をインポート"
+        entityLabel="クラス"
+        replaceNote="紐づくインスタンスは削除せず未分類になります。"
+        parse={parseClassesYaml}
+        preview={(items, mode) => previewClassesImport(items, classes, mode)}
+        onExecute={async (items, mode) => {
+          if (!currentProject) throw new Error("プロジェクトが選択されていません")
+          const result = await executeClassesImport(currentProject.id, items, classes, mode)
+          return {
+            created: result.created,
+            updated: result.updated,
+            deleted: result.deleted,
+            note: result.unclassifiedInstances > 0
+              ? `未分類にしたインスタンス: ${result.unclassifiedInstances}件`
+              : undefined,
+          }
+        }}
+        onImported={async () => {
+          setSelectedId(null)
+          await fetchClasses()
+        }}
+      />
     </div>
   )
 }

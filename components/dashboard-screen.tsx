@@ -1,7 +1,6 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import {
   Table,
   TableBody,
@@ -73,6 +72,9 @@ interface Props {
   onNavigate: (screen: ScreenId, id?: string) => void
 }
 
+// OWL/RDF エクスポートは未実装のため非表示。実装後に true にする
+const OWL_RDF_EXPORT_ENABLED = false
+
 function CountBadge({ count }: { count: number }) {
   return (
     <span className="rounded-full bg-muted px-2 py-0.5 text-xs tabular-nums text-muted-foreground">
@@ -126,13 +128,9 @@ export function DashboardScreen({ onNavigate }: Props) {
   const classMap = new Map(classes.map((c) => [c.id, c]))
   const relationRows = relations
 
-  const pageTitle = currentProject
-    ? `${currentProject.name} ダッシュボード`
-    : "ダッシュボード"
-
   return (
     <div className="flex h-full flex-col">
-      <TopBar title={pageTitle} />
+      <TopBar title="ダッシュボード" />
 
       {projectLoading || loading ? (
         <div className="flex flex-1 items-center justify-center text-muted-foreground">
@@ -144,26 +142,26 @@ export function DashboardScreen({ onNavigate }: Props) {
         </div>
       ) : (
         <div className="flex-1 overflow-auto p-6">
-          <div className="mb-6 flex justify-end">
-            <Button size="sm" variant="outline" className="gap-2" disabled>
-              <Download className="h-4 w-4" />
-              OWL/RDF エクスポート
-            </Button>
-          </div>
+          {OWL_RDF_EXPORT_ENABLED && (
+            <div className="mb-6 flex justify-end">
+              <Button size="sm" variant="outline" className="gap-2" disabled>
+                <Download className="h-4 w-4" />
+                OWL/RDF エクスポート
+              </Button>
+            </div>
+          )}
 
-          <div className="grid grid-cols-1 gap-6">
+          <div className="grid grid-cols-1 gap-8">
             {/* クラス／インスタンス */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-3 text-base">
-                  <span>クラス</span>
-                  <CountBadge count={classes.length} />
-                  <span className="text-muted-foreground">/</span>
-                  <span>インスタンス</span>
-                  <CountBadge count={instances.length} />
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
+            <div className="space-y-3">
+              <h2 className="flex items-center gap-3 text-base font-semibold text-foreground">
+                <span>クラス</span>
+                <CountBadge count={classes.length} />
+                <span className="text-muted-foreground">/</span>
+                <span>インスタンス</span>
+                <CountBadge count={instances.length} />
+              </h2>
+              <div>
                 {classRows.length === 0 ? (
                   <p className="py-4 text-center text-sm text-muted-foreground">
                     クラスが登録されていません
@@ -249,18 +247,16 @@ export function DashboardScreen({ onNavigate }: Props) {
                     </Table>
                   </div>
                 )}
-              </CardContent>
-            </Card>
+              </div>
+            </div>
 
             {/* リレーション */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-3 text-base">
-                  <span>リレーション</span>
-                  <CountBadge count={relations.length} />
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
+            <div className="space-y-3">
+              <h2 className="flex items-center gap-3 text-base font-semibold text-foreground">
+                <span>リレーション</span>
+                <CountBadge count={relations.length} />
+              </h2>
+              <div>
                 {relationRows.length === 0 ? (
                   <p className="py-4 text-center text-sm text-muted-foreground">
                     リレーションが登録されていません
@@ -322,8 +318,8 @@ export function DashboardScreen({ onNavigate }: Props) {
                     </Table>
                   </div>
                 )}
-              </CardContent>
-            </Card>
+              </div>
+            </div>
           </div>
         </div>
       )}

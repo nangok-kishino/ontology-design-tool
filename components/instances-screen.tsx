@@ -28,9 +28,18 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { TopBar } from "@/components/top-bar"
+import { ImportDialog } from "@/components/import-dialog"
 import { cn } from "@/lib/utils"
 import type { OntologyClass, OntologyInstance, OntologyAttribute } from "@/lib/types"
-import { ChevronDown, ChevronRight, Plus, Trash2, Loader2, Info, X, GripVertical, AlertTriangle } from "lucide-react"
+import {
+  buildInstancesYaml,
+  downloadYaml,
+  parseInstancesYaml,
+  previewInstancesImport,
+  executeInstancesImport,
+  type InstanceExportItem,
+} from "@/lib/import-export"
+import { ChevronDown, ChevronRight, Plus, Trash2, Loader2, Info, X, GripVertical, AlertTriangle, Download, Upload } from "lucide-react"
 import { useProject } from "@/app/project-context"
 import {
   DndContext,
@@ -108,12 +117,14 @@ function ClassTreeItem({
   depth,
   selectedId,
   instanceCounts,
+  loadingCounts,
   onSelect,
 }: {
   node: TreeNode
   depth: number
   selectedId: string | null
   instanceCounts: Record<string, number>
+  loadingCounts: boolean
   onSelect: (cls: OntologyClass) => void
 }) {
   const [open, setOpen] = useState(true)
@@ -144,11 +155,11 @@ function ClassTreeItem({
         <span className="flex-1">{node.name}</span>
         <span
           className={cn(
-            "rounded-full px-2 py-0.5 text-xs tabular-nums",
+            "flex items-center justify-center rounded-full px-2 py-0.5 text-xs tabular-nums min-w-[1.5rem]",
             isSelected ? "bg-accent-foreground/10 text-accent-foreground" : "bg-muted text-muted-foreground",
           )}
         >
-          {count}
+          {loadingCounts ? <Loader2 className="h-3 w-3 animate-spin" /> : count}
         </span>
       </div>
       {hasChildren && open && (
@@ -160,6 +171,7 @@ function ClassTreeItem({
               depth={depth + 1}
               selectedId={selectedId}
               instanceCounts={instanceCounts}
+              loadingCounts={loadingCounts}
               onSelect={onSelect}
             />
           ))}
@@ -328,6 +340,7 @@ export function InstancesScreen({ initialSelectedClassId }: { initialSelectedCla
   const [instances, setInstances] = useState<OntologyInstance[]>([])
   const [instanceCounts, setInstanceCounts] = useState<Record<string, number>>({})
   const [loadingClasses, setLoadingClasses] = useState(true)
+  const [loadingCounts, setLoadingCounts] = useState(false)
   const [loadingInstances, setLoadingInstances] = useState(false)
   const [isUnclassifiedSelected, setIsUnclassifiedSelected] = useState(false)
   const [attrRefreshKey, setAttrRefreshKey] = useState(0)
@@ -356,6 +369,10 @@ export function InstancesScreen({ initialSelectedClassId }: { initialSelectedCla
   // 削除ダイアログ
   const [deleteTarget, setDeleteTarget] = useState<OntologyInstance | null>(null)
   const [deleting, setDeleting] = useState(false)
+
+  // インポート/エクスポート
+  const [showImport, setShowImport] = useState(false)
+  const [exporting, setExporting] = useState(false)
 
   // DnD sensors（8px 動かないと drag 開始しない → 行クリックと競合しない）
   const sensors = useSensors(
@@ -392,31 +409,36 @@ export function InstancesScreen({ initialSelectedClassId }: { initialSelectedCla
   }, [])
 
   const fetchAllCounts = useCallback(async (classList: OntologyClass[], projectId: string) => {
-    const [classResults, nullData, projectData] = await Promise.all([
-      Promise.all(
-        classList.map(async (cls) => {
-          try {
-            const data: OntologyInstance[] = await fetch(`/api/instances?classId=${cls.id}`).then((r) => r.json())
-            return { id: cls.id, count: data.length }
-          } catch {
-            return { id: cls.id, count: 0 }
-          }
-        }),
-      ),
-      fetch(`/api/instances?classId=${UNCLASSIFIED}`).then((r) => r.json()).catch(() => []),
-      fetch(`/api/instances?projectId=${projectId}`).then((r) => r.json()).catch(() => []),
-    ])
-    const counts: Record<string, number> = {}
-    classResults.forEach(({ id, count }) => { counts[id] = count })
-    const nullInstances: OntologyInstance[] = Array.isArray(nullData) ? nullData : []
-    const projectInstances: OntologyInstance[] = Array.isArray(projectData) ? projectData : []
-    const knownIds = new Set(classList.map((c) => c.id))
-    const nullIdSet = new Set(nullInstances.map((i) => i.id))
-    const orphaned = projectInstances.filter(
-      (i) => i.classId && !knownIds.has(i.classId) && !nullIdSet.has(i.id),
-    )
-    counts[UNCLASSIFIED] = nullInstances.length + orphaned.length
-    setInstanceCounts(counts)
+    setLoadingCounts(true)
+    try {
+      const [classResults, nullData, projectData] = await Promise.all([
+        Promise.all(
+          classList.map(async (cls) => {
+            try {
+              const data: OntologyInstance[] = await fetch(`/api/instances?classId=${cls.id}`).then((r) => r.json())
+              return { id: cls.id, count: data.length }
+            } catch {
+              return { id: cls.id, count: 0 }
+            }
+          }),
+        ),
+        fetch(`/api/instances?classId=${UNCLASSIFIED}`).then((r) => r.json()).catch(() => []),
+        fetch(`/api/instances?projectId=${projectId}`).then((r) => r.json()).catch(() => []),
+      ])
+      const counts: Record<string, number> = {}
+      classResults.forEach(({ id, count }) => { counts[id] = count })
+      const nullInstances: OntologyInstance[] = Array.isArray(nullData) ? nullData : []
+      const projectInstances: OntologyInstance[] = Array.isArray(projectData) ? projectData : []
+      const knownIds = new Set(classList.map((c) => c.id))
+      const nullIdSet = new Set(nullInstances.map((i) => i.id))
+      const orphaned = projectInstances.filter(
+        (i) => i.classId && !knownIds.has(i.classId) && !nullIdSet.has(i.id),
+      )
+      counts[UNCLASSIFIED] = nullInstances.length + orphaned.length
+      setInstanceCounts(counts)
+    } finally {
+      setLoadingCounts(false)
+    }
   }, [])
 
   const fetchUnclassifiedInstances = useCallback(async (allClasses: OntologyClass[], projectId: string) => {
@@ -666,6 +688,39 @@ export function InstancesScreen({ initialSelectedClassId }: { initialSelectedCla
     }
   }
 
+  const handleExport = async () => {
+    if (!currentProject) return
+    setExporting(true)
+    try {
+      const allInstances: OntologyInstance[] = await fetch(`/api/instances?projectId=${currentProject.id}`).then((r) => r.json())
+      const [projectAttrs, perClassAttrs] = await Promise.all([
+        fetch(`/api/attributes?targetId=${currentProject.id}`).then((r) => r.json()),
+        Promise.all(classes.map((c) => fetch(`/api/attributes?targetId=${c.id}`).then((r) => r.json()))),
+      ])
+      const attrIdToName = new Map<string, string>()
+      const addAll = (attrs: unknown) => {
+        if (Array.isArray(attrs)) attrs.forEach((a: OntologyAttribute) => attrIdToName.set(a.id, a.name))
+      }
+      addAll(projectAttrs)
+      perClassAttrs.forEach(addAll)
+      const classesById = new Map(classes.map((c) => [c.id, c]))
+      const yamlText = buildInstancesYaml(Array.isArray(allInstances) ? allInstances : [], classesById, attrIdToName)
+      downloadYaml(`instances_${currentProject.name}.yaml`, yamlText)
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  const refreshAfterImport = async () => {
+    if (!currentProject) return
+    await fetchAllCounts(classes, currentProject.id)
+    if (isUnclassifiedSelected) {
+      await fetchUnclassifiedInstances(classes, currentProject.id)
+    } else if (selectedClass) {
+      await fetchInstances(selectedClass.id)
+    }
+  }
+
   const hasMissingRequired = (attrs: OntologyAttribute[], values: Record<string, string>) =>
     attrs.some((a) => a.required === "必須" && !(values[a.id] ?? "").trim())
 
@@ -676,7 +731,17 @@ export function InstancesScreen({ initialSelectedClassId }: { initialSelectedCla
 
   return (
     <div className="flex h-full flex-col">
-      <TopBar title="登録済みインスタンス" />
+      <TopBar title="登録済みインスタンス">
+        <Button size="sm" variant="outline" className="h-8 gap-1.5 bg-transparent"
+          onClick={handleExport} disabled={!currentProject || exporting}>
+          {exporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+          エクスポート
+        </Button>
+        <Button size="sm" variant="outline" className="h-8 gap-1.5 bg-transparent"
+          onClick={() => setShowImport(true)} disabled={!currentProject}>
+          <Upload className="h-3.5 w-3.5" />インポート
+        </Button>
+      </TopBar>
 
       <div className="grid flex-1 overflow-hidden" style={{ gridTemplateColumns: "260px 1fr" }}>
         {/* 左ペイン：クラス選択 */}
@@ -701,6 +766,7 @@ export function InstancesScreen({ initialSelectedClassId }: { initialSelectedCla
                     depth={0}
                     selectedId={selectedClass?.id ?? null}
                     instanceCounts={instanceCounts}
+                    loadingCounts={loadingCounts}
                     onSelect={handleSelectClass}
                   />
                 ))}
@@ -715,10 +781,10 @@ export function InstancesScreen({ initialSelectedClassId }: { initialSelectedCla
                 >
                   <span>未分類</span>
                   <span className={cn(
-                    "rounded-full px-2 py-0.5 text-xs tabular-nums",
+                    "flex items-center justify-center rounded-full px-2 py-0.5 text-xs tabular-nums min-w-[1.5rem]",
                     isUnclassifiedSelected ? "bg-accent-foreground/10 text-accent-foreground" : "bg-muted text-muted-foreground",
                   )}>
-                    {unclassifiedCount}
+                    {loadingCounts ? <Loader2 className="h-3 w-3 animate-spin" /> : unclassifiedCount}
                   </span>
                 </button>
               </>
@@ -915,6 +981,11 @@ export function InstancesScreen({ initialSelectedClassId }: { initialSelectedCla
               )}
             </div>
           </div>
+        ) : loadingClasses ? (
+          <div className="flex flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="h-5 w-5 animate-spin" />
+            読み込み中…
+          </div>
         ) : (
           <div className="flex items-center justify-center text-sm text-muted-foreground">
             左からクラスを選択してください
@@ -1017,6 +1088,27 @@ export function InstancesScreen({ initialSelectedClassId }: { initialSelectedCla
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* ---- インスタンスインポート ---- */}
+      <ImportDialog<InstanceExportItem>
+        open={showImport}
+        onOpenChange={setShowImport}
+        title="インスタンスをインポート"
+        entityLabel="インスタンス"
+        parse={parseInstancesYaml}
+        preview={async (items, mode) => {
+          if (!currentProject) return { toCreate: [], toUpdate: [], toDelete: [], errors: ["プロジェクトが選択されていません"] }
+          const allInstances: OntologyInstance[] = await fetch(`/api/instances?projectId=${currentProject.id}`).then((r) => r.json())
+          return previewInstancesImport(items, Array.isArray(allInstances) ? allInstances : [], classes, currentProject.id, mode)
+        }}
+        onExecute={async (items, mode) => {
+          if (!currentProject) throw new Error("プロジェクトが選択されていません")
+          const allInstances: OntologyInstance[] = await fetch(`/api/instances?projectId=${currentProject.id}`).then((r) => r.json())
+          const result = await executeInstancesImport(currentProject.id, items, Array.isArray(allInstances) ? allInstances : [], classes, mode)
+          return { created: result.created, updated: result.updated, deleted: result.deleted }
+        }}
+        onImported={refreshAfterImport}
+      />
     </div>
   )
 }

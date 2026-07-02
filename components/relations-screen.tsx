@@ -6,7 +6,6 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   Dialog,
   DialogContent,
@@ -31,9 +30,19 @@ import {
 } from "@/components/ui/table"
 import { TopBar } from "@/components/top-bar"
 import { Tooltip } from "@/components/ui/tooltip"
+import { ImportDialog } from "@/components/import-dialog"
+import { SectionHeader } from "@/components/section-header"
 import { cn } from "@/lib/utils"
 import type { OntologyRelation, OntologyClass, OntologyAttribute, AttributeRequired, ClassPair } from "@/lib/types"
-import { ArrowRight, Plus, Pencil, Trash2, Loader2, X, AlertTriangle, Info, Lock } from "lucide-react"
+import {
+  buildRelationsYaml,
+  downloadYaml,
+  parseRelationsYaml,
+  previewRelationsImport,
+  executeRelationsImport,
+  type RelationExportItem,
+} from "@/lib/import-export"
+import { ArrowRight, Plus, Pencil, Trash2, Loader2, X, AlertTriangle, Info, Lock, Download, Upload, FileText, Tags } from "lucide-react"
 import { useProject } from "@/app/project-context"
 
 type AttrSectionKey = "project" | "own"
@@ -95,6 +104,10 @@ export function RelationsScreen({ initialSelectedId }: { initialSelectedId?: str
   const [editAttrDataType, setEditAttrDataType] = useState("文字列")
   const [editAttrRequired, setEditAttrRequired] = useState<AttributeRequired>("任意")
   const [savingAttr, setSavingAttr] = useState(false)
+
+  // インポート/エクスポート
+  const [showImport, setShowImport] = useState(false)
+  const [exporting, setExporting] = useState(false)
 
   // 属性削除確認
   const [showAttrAlert, setShowAttrAlert] = useState(false)
@@ -319,6 +332,23 @@ export function RelationsScreen({ initialSelectedId }: { initialSelectedId?: str
     setShowAttrAlert(true)
   }
 
+  const handleExport = async () => {
+    if (!currentProject || relations.length === 0) return
+    setExporting(true)
+    try {
+      const attrsByRelationId = new Map<string, OntologyAttribute[]>()
+      await Promise.all(relations.map(async (r) => {
+        const attrs = await fetch(`/api/attributes?targetId=${r.id}`).then((res) => res.json())
+        attrsByRelationId.set(r.id, Array.isArray(attrs) ? attrs : [])
+      }))
+      const classesById = new Map(classes.map((c) => [c.id, c]))
+      const yamlText = buildRelationsYaml(relations, classesById, attrsByRelationId)
+      downloadYaml(`relations_${currentProject.name}.yaml`, yamlText)
+    } finally {
+      setExporting(false)
+    }
+  }
+
   const selected = relations.find((r) => r.id === selectedId)
   const className = (id: string | null) => id ? (classes.find((c) => c.id === id)?.name ?? "不明") : "—"
 
@@ -415,7 +445,17 @@ export function RelationsScreen({ initialSelectedId }: { initialSelectedId?: str
 
   return (
     <div className="flex h-full flex-col">
-      <TopBar title="リレーション管理" />
+      <TopBar title="リレーション管理">
+        <Button size="sm" variant="outline" className="h-8 gap-1.5 bg-transparent"
+          onClick={handleExport} disabled={!currentProject || relations.length === 0 || exporting}>
+          {exporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+          エクスポート
+        </Button>
+        <Button size="sm" variant="outline" className="h-8 gap-1.5 bg-transparent"
+          onClick={() => setShowImport(true)} disabled={!currentProject}>
+          <Upload className="h-3.5 w-3.5" />インポート
+        </Button>
+      </TopBar>
       <div className="grid flex-1 overflow-hidden" style={{ gridTemplateColumns: "260px 1fr" }}>
         {/* 左ペイン */}
         <div className="flex flex-col border-r border-border bg-card">
@@ -510,17 +550,10 @@ export function RelationsScreen({ initialSelectedId }: { initialSelectedId?: str
               </div>
             </div>
 
-            <div className="flex-1 overflow-auto">
-              <Tabs defaultValue="basic">
-                <div className="border-b border-border px-6 pt-3">
-                  <TabsList variant="line" className="h-auto w-auto justify-start border-0 p-0 gap-0">
-                    <TabsTrigger value="basic" className="h-auto flex-none rounded-t-sm rounded-b-none px-5 py-2 text-sm border-b-2 border-b-transparent after:hidden hover:bg-muted/50 data-active:bg-accent data-active:text-accent-foreground data-active:border-b-primary">基本情報</TabsTrigger>
-                    <TabsTrigger value="attributes" className="h-auto flex-none rounded-t-sm rounded-b-none px-5 py-2 text-sm border-b-2 border-b-transparent after:hidden hover:bg-muted/50 data-active:bg-accent data-active:text-accent-foreground data-active:border-b-primary">属性</TabsTrigger>
-                  </TabsList>
-                </div>
-
+            <div className="flex-1 overflow-auto px-6 py-6 space-y-8">
                 {/* 基本情報 */}
-                <TabsContent value="basic" className="px-6 py-6 max-w-xl space-y-5">
+                <div className="space-y-5 max-w-xl">
+                  <SectionHeader icon={FileText} title="基本情報" />
                   {isEditing ? (
                     <>
                       <div className="space-y-2">
@@ -604,10 +637,11 @@ export function RelationsScreen({ initialSelectedId }: { initialSelectedId?: str
                       </div>
                     </>
                   )}
-                </TabsContent>
+                </div>
 
-                {/* 属性タブ */}
-                <TabsContent value="attributes" className="px-6 py-6">
+                {/* 属性 */}
+                <div className="space-y-4">
+                  <SectionHeader icon={Tags} title="属性" />
                   {loadingAttrs ? (
                     <div className="flex h-20 items-center justify-center text-muted-foreground">
                       <Loader2 className="h-4 w-4 animate-spin" />
@@ -618,8 +652,7 @@ export function RelationsScreen({ initialSelectedId }: { initialSelectedId?: str
                       {renderAttrSection("リレーション固有属性", ownAttrs, "own")}
                     </div>
                   )}
-                </TabsContent>
-              </Tabs>
+                </div>
             </div>
           </div>
         ) : (
@@ -855,6 +888,25 @@ export function RelationsScreen({ initialSelectedId }: { initialSelectedId?: str
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* リレーション定義インポート */}
+      <ImportDialog<RelationExportItem>
+        open={showImport}
+        onOpenChange={setShowImport}
+        title="リレーション定義をインポート"
+        entityLabel="リレーション"
+        parse={parseRelationsYaml}
+        preview={(items, mode) => previewRelationsImport(items, relations, classes, mode)}
+        onExecute={async (items, mode) => {
+          if (!currentProject) throw new Error("プロジェクトが選択されていません")
+          const result = await executeRelationsImport(currentProject.id, items, relations, classes, mode)
+          return { created: result.created, updated: result.updated, deleted: result.deleted }
+        }}
+        onImported={async () => {
+          setSelectedId(null)
+          await fetchRelations()
+        }}
+      />
     </div>
   )
 }
