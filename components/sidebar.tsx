@@ -73,10 +73,13 @@ export function Sidebar({
             </button>
           </div>
         ) : (
-          <div className="flex items-center gap-2 rounded-md px-2 py-2">
+          <button
+            onClick={() => onNavigate("dashboard")}
+            className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left transition-colors hover:bg-white/5"
+          >
             <FolderOpen className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
             <span className="text-sm text-zinc-500">未選択</span>
-          </div>
+          </button>
         )}
       </div>
 
