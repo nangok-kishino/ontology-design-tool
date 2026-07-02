@@ -8,6 +8,7 @@ import { RelationsScreen } from "@/components/relations-screen"
 import { ReviewScreen } from "@/components/review-screen"
 import { InstancesScreen } from "@/components/instances-screen"
 import { ProjectWelcomeScreen } from "@/components/project-welcome-screen"
+import { OntologyInfoScreen } from "@/components/ontology-info-screen"
 import { ProjectProvider } from "@/app/project-context"
 import { useProject } from "@/app/project-context"
 
@@ -25,7 +26,9 @@ function AppContent() {
     <div className="flex h-screen overflow-hidden bg-background">
       <Sidebar active={screen} onNavigate={(s) => navigate(s)} />
       <main className="flex-1 overflow-hidden">
-        {!loading && !currentProject ? (
+        {screen === "ontology-info" ? (
+          <OntologyInfoScreen />
+        ) : !loading && !currentProject ? (
           <ProjectWelcomeScreen />
         ) : (
           <>

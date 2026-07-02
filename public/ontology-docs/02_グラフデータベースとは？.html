@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>第2章：グラフデータベースとは？</title>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Noto Sans JP', sans-serif;
+            color: #333;
+            line-height: 1.6;
+            margin: 0;
+            padding: 40px;
+            background-color: #f9fafb;
+        }
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: #fff;
+            padding: 40px 60px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        }
+        h1 {
+            font-size: 28px;
+            color: #1e293b;
+            border-bottom: 3px solid #2563eb;
+            padding-bottom: 10px;
+            margin-bottom: 30px;
+        }
+        h2 {
+            font-size: 22px;
+            color: #2563eb;
+            margin-top: 40px;
+            margin-bottom: 20px;
+            border-left: 5px solid #2563eb;
+            padding-left: 15px;
+        }
+        h3 {
+            font-size: 18px;
+            color: #334155;
+            margin-top: 30px;
+            margin-bottom: 10px;
+        }
+        p, li {
+            font-size: 16px;
+            color: #475569;
+        }
+        ul, ol {
+            margin-bottom: 20px;
+        }
+
+        /* Graph Visualization Styles */
+        .graph-viz {
+            background-color: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 40px;
+            margin: 30px 0;
+            display: flex;
+            align-items: flex-start;
+            justify-content: center;
+            gap: 20px;
+        }
+        .node-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+        }
+        .node {
+            background: #eff6ff;
+            border: 2px solid #3b82f6;
+            color: #1d4ed8;
+            font-weight: bold;
+            padding: 15px 25px;
+            border-radius: 50px;
+            box-shadow: 0 4px 6px rgba(59,130,246,0.1);
+            text-align: center;
+            min-width: 140px;
+            z-index: 2;
+        }
+        .node-label {
+            font-size: 12px;
+            color: #2563eb;
+            font-weight: bold;
+            margin-bottom: -15px;
+            z-index: 3;
+            background: #f8fafc;
+            padding: 0 8px;
+        }
+        .edge-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            position: relative;
+            flex-grow: 1;
+            min-width: 150px;
+        }
+        .edge-title {
+            font-size: 12px;
+            color: #475569;
+            font-weight: bold;
+            margin-bottom: -10px;
+            z-index: 3;
+            background: #f8fafc;
+            padding: 0 8px;
+        }
+        .edge-line {
+            width: 100%;
+            height: 2px;
+            background-color: #94a3b8;
+            position: relative;
+            margin: 20px 0;
+            z-index: 1;
+        }
+        .edge-line::after {
+            content: '';
+            position: absolute;
+            right: 0;
+            top: -4px;
+            border-top: 5px solid transparent;
+            border-bottom: 5px solid transparent;
+            border-left: 10px solid #94a3b8;
+        }
+        .edge-label {
+            background: #fff;
+            border: 1px solid #cbd5e1;
+            color: #475569;
+            font-size: 13px;
+            font-weight: bold;
+            padding: 4px 12px;
+            border-radius: 4px;
+            position: absolute;
+            top: 8px;
+            z-index: 2;
+        }
+        
+        /* Property Layout Grouping */
+        .property-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            width: 100%;
+            margin-top: 15px;
+        }
+        .property-title {
+            font-size: 11px;
+            color: #64748b;
+            font-weight: bold;
+            margin-bottom: -8px;
+            z-index: 3;
+            background: #f8fafc;
+            padding: 0 8px;
+            text-align: center;
+        }
+        .property-box {
+            background: #fff;
+            border: 1px dashed #cbd5e1;
+            padding: 12px 16px;
+            border-radius: 4px;
+            font-size: 12px;
+            color: #64748b;
+            text-align: left;
+            width: 100%;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.02);
+            z-index: 2;
+        }
+        .property-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 4px;
+        }
+        .property-row:last-child {
+            margin-bottom: 0;
+        }
+        .property-key {
+            font-weight: bold;
+            color: #475569;
+            margin-right: 10px;
+        }
+
+        .highlight {
+            font-weight: bold;
+            color: #0f172a;
+        }
+        .note {
+            background-color: #f8fafc;
+            border-left: 4px solid #94a3b8;
+            padding: 15px;
+            margin: 20px 0;
+            color: #475569;
+            font-size: 15px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>第2章：グラフデータベースとは？</h1>
+    <p>本章では、知見伝承プロジェクトのデータ基盤となる「グラフデータベース」の基本的な仕組みと、製造業における技術的な導入メリットについて解説します。</p>
+
+    <h2>1. データモデルの特性と選択</h2>
+    <p>データベースには目的に応じた様々な種類が存在します。現在最も広く普及しているリレーショナルデータベース（RDB）は、データを「表形式」で厳密に管理することに極めて優れています。会計データや在庫管理など、正確な集計を必要とする業務には欠かせない基盤です。</p>
+    
+    <p>一方で、本プロジェクトが採用する<strong>グラフデータベース（Neo4jなど）</strong>は、データそのものよりも、データ同士の<strong>「関係性（つながり）」</strong>をネットワーク状に表現・保存することに特化したデータベースです。散在する知見や、部品と不具合の複雑な因果関係を統合し、知識の繋がりとして直感的に辿る用途において真価を発揮します。</p>
+
+    <h2>2. グラフデータベースの基本構造</h2>
+    <p>グラフデータベースは、データを点と線で表現する「プロパティグラフモデル」という構造を採用しており、主に以下の3つの要素で構成されます。</p>
+
+    <ul>
+        <li><span class="highlight">ノード（Node）：</span> データの実体となる「点」です。製造業の文脈では、特定の「部品」「工程」「不具合現象」などがノードとして登録されます。</li>
+        <li><span class="highlight">エッジ（Edge）：</span> ノード同士の関係性を示す「線」です。方向性を持ち、「AがBの原因である」「CがDを構成している」といった意味と結びつきを表現します。</li>
+        <li><span class="highlight">プロパティ（Property）：</span> ノードやエッジに直接付与される「属性データ」です。例えば、部品ノードに対する「品番」や、エッジに対する「発生日時」などが該当します。</li>
+    </ul>
+
+    <!-- グラフ構造図 -->
+    <div class="graph-viz">
+        <!-- Node 1 -->
+        <div class="node-container">
+            <span class="node-label">ノード [クラス: 部品]</span>
+            <div class="node">モーターA</div>
+            <div class="property-container">
+                <span class="property-title">プロパティ</span>
+                <div class="property-box">
+                    <div class="property-row">
+                        <span class="property-key">品番:</span>
+                        <span>MTR-001</span>
+                    </div>
+                    <div class="property-row">
+                        <span class="property-key">仕入先:</span>
+                        <span>X社</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Edge -->
+        <div class="edge-container">
+            <span class="edge-title">エッジ [関係]</span>
+            <div class="edge-line"></div>
+            <div class="edge-label">～が原因である</div>
+            <div class="property-container" style="margin-top: 25px;">
+                <span class="property-title">プロパティ</span>
+                <div class="property-box" style="width: auto; min-width: 130px;">
+                    <div class="property-row">
+                        <span class="property-key">発生日:</span>
+                        <span>2024/05/10</span>
+                    </div>
+                    <div class="property-row">
+                        <span class="property-key">信頼度:</span>
+                        <span>高</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Node 2 -->
+        <div class="node-container">
+            <span class="node-label" style="color: #ef4444;">ノード [クラス: 不具合現象]</span>
+            <div class="node" style="border-color: #ef4444; background: #fef2f2; color: #b91c1c;">異常発熱</div>
+            <div class="property-container">
+                <span class="property-title">プロパティ</span>
+                <div class="property-box">
+                    <div class="property-row">
+                        <span class="property-key">重要度:</span>
+                        <span>Aランク</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="note">
+        ※ 第1章で整理した通り、文書から抽出された「主語 - 述語 - 目的語」のトリプレットが、まさにこの「ノード - エッジ - ノード」の構造にマッピングされて格納されます。
+    </div>
+
+    <h2>3. 製造業における導入メリット</h2>
+    <p>製品開発の現場において、グラフデータベースを情報基盤として活用することには、大きく2つの技術的優位性があります。</p>
+
+    <h3>① 高速なネットワーク探索（トレーサビリティの確保）</h3>
+    <p>製造業では、「ある不具合の根本原因を、複数の工程を遡って特定する」あるいは「特定の部品の設計変更が及ぼす影響範囲を、部品表（BOM）全体から洗い出す」といった、多段階の追跡作業（トレーサビリティ）が頻発します。</p>
+    <p>表形式のデータベースでこれを実現しようとすると、複数の表を何度も結合（JOIN）する必要があり、階層が深くなるほど処理が重く複雑になります。対してグラフデータベースは、データ間のつながりが最初から「物理的な経路」として結ばれて保持されているため、階層が深く複雑なネットワーク探索であっても、極めて高速に処理を実行できます。</p>
+
+    <h3>② スキーマの拡張性と柔軟性</h3>
+    <p>製品開発の過程では、新しい技術要素の導入、未知の不具合モードの発見、あるいは新しい書式のドキュメントフォーマットなど、管理すべき情報の種類が日々変化します。</p>
+    <p>グラフデータベースは、後から新しい種類のノード（点）やエッジ（線）を追加する際、既存のデータ構造やシステム全体に影響を与えずに柔軟に拡張できる特性を持っています。これにより、現場の変化に合わせて継続的に成長する知見データベースを構築することが可能になります。</p>
+</div>
+
+</body>
+</html>

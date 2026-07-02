@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>第1章：プロジェクトの全体像と用語の整理</title>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Noto Sans JP', sans-serif;
+            color: #333;
+            line-height: 1.6;
+            margin: 0;
+            padding: 40px;
+            background-color: #f9fafb;
+        }
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: #fff;
+            padding: 40px 60px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        }
+        h1 {
+            font-size: 28px;
+            color: #1e293b;
+            border-bottom: 3px solid #2563eb;
+            padding-bottom: 10px;
+            margin-bottom: 30px;
+        }
+        h2 {
+            font-size: 22px;
+            color: #2563eb;
+            margin-top: 40px;
+            margin-bottom: 20px;
+            border-left: 5px solid #2563eb;
+            padding-left: 15px;
+        }
+        h3 {
+            font-size: 18px;
+            color: #334155;
+            margin-top: 30px;
+            margin-bottom: 10px;
+        }
+        p, li {
+            font-size: 16px;
+            color: #475569;
+        }
+        ul, ol {
+            margin-bottom: 20px;
+        }
+        
+        /* Flowchart Styles */
+        .flowchart {
+            background-color: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 30px;
+            margin: 30px 0;
+        }
+        .flow-step {
+            margin-bottom: 30px;
+        }
+        .flow-step:last-child {
+            margin-bottom: 0;
+        }
+        .flow-title {
+            font-weight: bold;
+            color: #0f172a;
+            font-size: 16px;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+        }
+        .flow-title::before {
+            content: '■';
+            color: #2563eb;
+            margin-right: 8px;
+        }
+        .flow-row {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            padding-left: 20px;
+        }
+        .flow-box {
+            background: #fff;
+            border: 1px solid #cbd5e1;
+            padding: 10px 16px;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: bold;
+            color: #334155;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+            text-align: center;
+        }
+        .flow-box.llm {
+            background: #f0fdf4;
+            border-color: #86efac;
+            color: #166534;
+        }
+        .flow-box.primary {
+            background: #eff6ff;
+            border-color: #bfdbfe;
+            color: #1d4ed8;
+        }
+        .flow-arrow {
+            color: #94a3b8;
+            font-weight: bold;
+            font-size: 18px;
+        }
+        .flow-dependency {
+            font-size: 13px;
+            color: #64748b;
+            margin-left: 40px;
+            padding-left: 15px;
+            border-left: 2px dashed #cbd5e1;
+            margin-top: 5px;
+            margin-bottom: 10px;
+            display: flex;
+            flex-direction: column;
+        }
+        .flow-dependency span {
+            margin-bottom: 4px;
+        }
+
+        /* Table Styles */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+            margin-bottom: 30px;
+        }
+        th, td {
+            border: 1px solid #e2e8f0;
+            padding: 12px 16px;
+            text-align: left;
+        }
+        th {
+            background-color: #f1f5f9;
+            color: #1e293b;
+            font-weight: bold;
+        }
+        .highlight {
+            font-weight: bold;
+            color: #0f172a;
+        }
+        .note {
+            background-color: #f8fafc;
+            border-left: 4px solid #94a3b8;
+            padding: 15px;
+            margin: 20px 0;
+            color: #475569;
+            font-size: 15px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>第1章：プロジェクトの全体像と用語の整理</h1>
+    <p>本章では、これから進める知見伝承プロジェクトの全体フローを俯瞰し、以降の講義で共通して使用する専門用語の定義を揃えます。</p>
+
+    <h2>1. 知見伝承プロジェクトの全体フロー</h2>
+    <p>製品開発 of 現場には、ベテラン技術者の頭の中にある「暗黙知」や、不具合報告書・設計仕様書といった「既存の社内知見文書」が散在しています。本プロジェクトの目的は、これらを構造化し、誰もが検索・活用できるグラフデータベースへと統合することです。</p>
+    
+    <p>情報は、「概念の設計 (オントロジー設計)」「データの抽出 (トリプレット抽出)」「システムへの格納 (グラフDB格納)」のプロセスに沿って、以下の図に示す流れで段階的に構造化され、システムへと格納されていきます。</p>
+
+    <!-- 全体フロー図 -->
+    <div class="flowchart">
+        <!-- Step 1 -->
+        <div class="flow-step">
+            <div class="flow-title">概念の設計 (オントロジー設計)</div>
+            <div class="flow-row">
+                <div class="flow-box">既存文書</div>
+                <div class="flow-arrow">➔</div>
+                <div class="flow-box llm">LLM補助</div>
+                <div class="flow-arrow">➔</div>
+                <div class="flow-box primary">オントロジー設計<br><span style="font-size:12px; font-weight:normal;">(クラス/リレーション/プロパティ定義)</span></div>
+            </div>
+        </div>
+
+        <!-- Step 2 -->
+        <div class="flow-step">
+            <div class="flow-title">データの抽出 (インスタンス定義)</div>
+            <div class="flow-dependency">
+                <span>オントロジー設計</span>
+                <span>↓</span>
+            </div>
+            <div class="flow-row">
+                <div class="flow-box">既存文書</div>
+                <div class="flow-arrow">➔</div>
+                <div class="flow-box llm">LLM補助</div>
+                <div class="flow-arrow">➔</div>
+                <div class="flow-box primary">インスタンス</div>
+            </div>
+        </div>
+
+        <!-- Step 3 -->
+        <div class="flow-step">
+            <div class="flow-title">データの抽出 (トリプレット抽出)</div>
+            <div class="flow-dependency">
+                <span>オントロジー設計 / インスタンス</span>
+                <span>↓</span>
+            </div>
+            <div class="flow-row">
+                <div class="flow-box">既存文書</div>
+                <div class="flow-arrow">➔</div>
+                <div class="flow-box llm">LLM補助</div>
+                <div class="flow-arrow">➔</div>
+                <div class="flow-box primary">トリプレット</div>
+            </div>
+        </div>
+
+        <!-- Step 4 -->
+        <div class="flow-step">
+            <div class="flow-title">システムへの格納 (グラフDB格納)</div>
+            <div class="flow-row" style="margin-bottom: 10px;">
+                <div class="flow-box">オントロジー</div>
+                <div class="flow-arrow">➔</div>
+                <div class="flow-box primary">スキーマ設計</div>
+            </div>
+            <div class="flow-dependency" style="margin-left: 230px;">
+                <span>↓</span>
+            </div>
+            <div class="flow-row">
+                <div class="flow-box">トリプレット</div>
+                <div class="flow-arrow">➔</div>
+                <div class="flow-box primary">グラフデータベース格納</div>
+            </div>
+        </div>
+    </div>
+
+    <h2>2. 用語の対応表（フェーズごとの定義）</h2>
+    <p>プロジェクトを進めるにあたり、「概念の設計 (オントロジー設計)」「データの抽出 (トリプレット抽出)」「システムへの格納 (グラフDB格納)」という3つのフェーズを移行します。フェーズが変わると同じものを指す言葉が変わるため、以下の対応表で認識を統一します。</p>
+
+    <table>
+        <thead>
+            <tr>
+                <th>概念の設計 (オントロジー設計)</th>
+                <th>データの抽出 (トリプレット抽出)</th>
+                <th>システムへの格納 (グラフDB格納)</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><strong>オントロジー</strong></td>
+                <td>抽出用スキーマ</td>
+                <td><strong>スキーマ</strong></td>
+            </tr>
+            <tr>
+                <td><strong>インスタンス</strong></td>
+                <td>主語 / 目的語</td>
+                <td><strong>ノード</strong></td>
+            </tr>
+            <tr>
+                <td><strong>リレーション</strong></td>
+                <td>述語 (関係)</td>
+                <td><strong>エッジ</strong></td>
+            </tr>
+            <tr>
+                <td><strong>属性</strong></td>
+                <td>具体的な値</td>
+                <td><strong>プロパティ</strong></td>
+            </tr>
+        </tbody>
+    </table>
+
+    <div class="note">
+        ※ グラフデータベースにおける「クラス」は、ノードの分類を示す「ラベル」として表現されます。
+    </div>
+
+    <h3>■ 「概念の設計 (オントロジー設計)」フェーズの用語</h3>
+    <ul>
+        <li><span class="highlight">オントロジー：</span> 知識を整理するための共通の語彙集・ルールの体系。</li>
+        <li><span class="highlight">クラス：</span> 概念の分類・型。（例：<code>[部品]</code>、<code>[不具合現象]</code>）</li>
+        <li><span class="highlight">インスタンス：</span> クラスに属する具体的な実体。（例：<code>「モーターA」</code>、<code>「異常発熱」</code>）</li>
+        <li><span class="highlight">リレーション：</span> インスタンス間のつながり。（例：<code>「～が原因である」</code>）</li>
+        <li><span class="highlight">属性：</span> インスタンスが持つ情報項目。（例：<code>「発生日時」</code>）</li>
+    </ul>
+
+    <h3>■ 「データの抽出 (トリプレット抽出)」・「システムへの格納 (グラフDB格納)」フェーズの用語</h3>
+    <ul>
+        <li><span class="highlight">トリプレット：</span> 文書から抽出された「主語 - 述語 - 目的語」の3項関係のデータ。</li>
+        <li><span class="highlight">ノード：</span> グラフDB上に格納された実体（点）。</li>
+        <li><span class="highlight">エッジ：</span> グラフDB上でノード同士を結ぶ関係性（線）。</li>
+        <li><span class="highlight">プロパティ：</span> ノードやエッジに付与される具体的な値（メタデータ）。</li>
+    </ul>
+</div>
+
+</body>
+</html>

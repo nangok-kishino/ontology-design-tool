@@ -2,11 +2,11 @@
 
 import { cn } from "@/lib/utils"
 import {
-  LayoutDashboard, Boxes, GitBranch, FileInput, Database, FolderOpen,
+  LayoutDashboard, Boxes, GitBranch, FileInput, Database, FolderOpen, BookOpen,
 } from "lucide-react"
 import { useProject } from "@/app/project-context"
 
-export type ScreenId = "dashboard" | "review" | "classes" | "relations" | "instances"
+export type ScreenId = "dashboard" | "review" | "classes" | "relations" | "instances" | "ontology-info"
 
 type NavItem = { id: ScreenId; label: string; icon: React.ElementType }
 type NavGroup = { label: string; items: NavItem[] }
@@ -119,6 +119,28 @@ export function Sidebar({
           </nav>
         </>
       )}
+
+      {/* オントロジーについて（常時表示・下部固定） */}
+      <div className={cn("mx-3 border-t border-white/[0.06]", !currentProject && "mt-auto")} />
+      <div className="px-3 py-3">
+        <button
+          onClick={() => onNavigate("ontology-info")}
+          className={cn(
+            "flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-sm transition-colors",
+            active === "ontology-info"
+              ? "bg-white/10 font-medium text-white"
+              : "text-zinc-300 hover:bg-white/5 hover:text-white",
+          )}
+        >
+          <BookOpen
+            className={cn(
+              "h-4 w-4 shrink-0",
+              active === "ontology-info" ? "text-indigo-400" : "text-zinc-400",
+            )}
+          />
+          <span>オントロジーについて</span>
+        </button>
+      </div>
     </aside>
   )
 }

@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>第4章：オントロジーからトリプレット抽出、そしてグラフDB格納へのデータフロー</title>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Noto Sans JP', sans-serif;
+            color: #333;
+            line-height: 1.6;
+            margin: 0;
+            padding: 40px;
+            background-color: #f9fafb;
+        }
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: #fff;
+            padding: 40px 60px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        }
+        h1 {
+            font-size: 28px;
+            color: #1e293b;
+            border-bottom: 3px solid #2563eb;
+            padding-bottom: 10px;
+            margin-bottom: 30px;
+        }
+        h2 {
+            font-size: 22px;
+            color: #2563eb;
+            margin-top: 40px;
+            margin-bottom: 20px;
+            border-left: 5px solid #2563eb;
+            padding-left: 15px;
+        }
+        h3 {
+            font-size: 18px;
+            color: #334155;
+            margin-top: 30px;
+            margin-bottom: 10px;
+        }
+        p, li {
+            font-size: 16px;
+            color: #475569;
+        }
+        ul, ol {
+            margin-bottom: 20px;
+        }
+        .highlight {
+            font-weight: bold;
+            color: #0f172a;
+        }
+        .note {
+            background-color: #f8fafc;
+            border-left: 4px solid #94a3b8;
+            padding: 15px;
+            margin: 20px 0;
+            color: #475569;
+            font-size: 15px;
+        }
+
+        /* Diagrams Styling */
+        .flow-viz {
+            background-color: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 30px;
+            margin: 30px 0;
+        }
+        .viz-title {
+            font-size: 14px;
+            font-weight: bold;
+            color: #475569;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        /* 1. Extraction Process Diagram */
+        .extract-flow {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            align-items: center;
+        }
+        .source-text-box {
+            background: #fff;
+            border: 1px solid #cbd5e1;
+            padding: 15px 20px;
+            border-radius: 6px;
+            font-size: 14px;
+            width: 100%;
+            max-width: 650px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.02);
+        }
+        .source-text-box code {
+            color: #0f172a;
+            font-weight: bold;
+            background: #f1f5f9;
+            padding: 2px 6px;
+            border-radius: 4px;
+        }
+        .flow-arrow-down {
+            color: #94a3b8;
+            font-size: 18px;
+            font-weight: bold;
+            text-align: center;
+            margin: 5px 0;
+        }
+        .flow-arrow-down::after {
+            content: '▼';
+        }
+        .llm-human-box {
+            display: flex;
+            gap: 15px;
+            width: 100%;
+            max-width: 650px;
+        }
+        .partner-box {
+            flex: 1;
+            padding: 12px;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: bold;
+            text-align: center;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+        }
+        .partner-box.ai {
+            background: #f0fdf4;
+            border: 1px solid #86efac;
+            color: #166534;
+        }
+        .partner-box.human {
+            background: #eff6ff;
+            border: 1px solid #bfdbfe;
+            color: #1d4ed8;
+        }
+        .triplet-box-group {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            width: 100%;
+            max-width: 650px;
+        }
+        .triplet-element {
+            flex: 1;
+            background: #1e293b;
+            color: #fff;
+            padding: 12px;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: bold;
+            text-align: center;
+        }
+
+        /* 2. Mapping Table & Graph Diagram */
+        .mapping-container {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 20px;
+            margin-top: 20px;
+        }
+        .mapping-column {
+            flex: 1.2;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .mapping-card {
+            background: #fff;
+            border: 1px solid #e2e8f0;
+            padding: 12px 15px;
+            border-radius: 6px;
+            font-size: 14px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .mapping-arrow {
+            font-size: 16px;
+            color: #2563eb;
+            font-weight: bold;
+            padding: 0 10px;
+        }
+        .mapping-dest {
+            background: #eff6ff;
+            border: 1px solid #bfdbfe;
+            color: #1d4ed8;
+            font-weight: bold;
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>第4章：オントロジーからトリプレット抽出、そしてグラフDB格納へのデータフロー</h1>
+    <p>本章では、第3章で設計した「概念の設計 (オントロジー設計)」を用いて、既存の技術文書から「データの抽出 (トリプレット抽出)」を行い、最終的に「システムへの格納 (グラフDB格納)」を完了するまでの一連のデータフローを体系的に理解します。</p>
+
+    <h2>1. データの抽出（トリプレット抽出）：情報の分解と構造化</h2>
+    <p>社内文書などの非構造化テキストから知見を抽出する際、定義されたオントロジー設計（クラス、リレーション、属性の定義ルール）に従って情報を整理します。</p>
+    <p>このデータ化の最小単位を<strong>トリプレット（Triplet：3つ組）</strong>と呼び、すべての知見を「主語（Subject） - 述語（Predicate） - 目的語（Object）」の関係に分解して抽出します。</p>
+
+    <!-- トリプレット抽出プロセス図 -->
+    <div class="flow-viz">
+        <div class="viz-title">【テキスト文書からのトリプレット抽出プロセス】</div>
+        <div class="extract-flow">
+            <div class="source-text-box">
+                <strong>元テキスト：</strong><br>
+                「過去の実験において、<code>モーターA</code>を連続稼働させたところ、許容温度を超えて<code>異常発熱</code>する現象が発生した。」
+            </div>
+            <div class="flow-arrow-down"></div>
+            <div class="llm-human-box">
+                <div class="partner-box ai">【LLM（AI）の補助】<br>オントロジー設計に適合するトリプレット候補を高速に抽出</div>
+                <div class="partner-box human">【ドメインエンジニアの判断】<br>抽出された候補の技術的妥当性を検証・承認（Human-in-the-Loop）</div>
+            </div>
+            <div class="flow-arrow-down"></div>
+            <div class="triplet-box-group">
+                <div class="triplet-element" style="background-color: #2563eb;">主語 [インスタンス]<br>「モーターA」</div>
+                <div class="triplet-element" style="background-color: #475569;">述語 [リレーション]<br>「～が原因である」</div>
+                <div class="triplet-element" style="background-color: #ef4444;">目的語 [インスタンス]<br>「異常発熱」</div>
+            </div>
+        </div>
+    </div>
+
+    <h3>■ LLMの補助と「Human-in-the-Loop（人間の介在）」</h3>
+    <p>数千から数万ページに及ぶ社内知見文書からトリプレットを手作業で抽出することは現実的ではありません。そこで、LLM（大規模言語モデル）に定義済みの「オントロジー（抽出用スキーマ）」を指示し、合致するトリプレット候補を自動抽出させます。</p>
+    <p>ただし、AIが誤った依存関係（ハルシネーション）を紡ぎ出す可能性があるため、最終的な判定や採否の決定は、ドメイン知識を持つエンジニア（人間）が確認・承認を行います。この連携を<strong>Human-in-the-Loop</strong>と呼び、ナレッジグラフの信頼性を担保する実務上極めて重要な運用スキームです。</p>
+
+    <h2>2. システムへの格納（グラフDB格納）：データベースへの登録とマッピング</h2>
+    <p>承認されたトリプレットおよび具体的な値は、「システムへの格納 (グラフDB格納)」プロセスにおいて、グラフデータベース（Neo4jなど）に登録されます。第1章で確認した「用語の対応表」に基づき、以下のように正確にマッピングされます。</p>
+
+    <!-- マッピング対応関係図 -->
+    <div class="flow-viz">
+        <div class="viz-title">【トリプレットデータからグラフDBへのマッピング】</div>
+        <div class="mapping-container">
+            <div class="mapping-column">
+                <div style="font-size: 13px; font-weight: bold; color: #475569; text-align: center; margin-bottom: 5px;">データの抽出（トリプレット抽出）</div>
+                <div class="mapping-card">
+                    <span>主語／目的語 インスタンス</span>
+                    <span class="mapping-arrow">➔</span>
+                    <span class="mapping-dest">ノード (Node)</span>
+                </div>
+                <div class="mapping-card">
+                    <span>述語 リレーション</span>
+                    <span class="mapping-arrow">➔</span>
+                    <span class="mapping-dest">エッジ (Edge)</span>
+                </div>
+                <div class="mapping-card">
+                    <span>具体的な値 (属性値)</span>
+                    <span class="mapping-arrow">➔</span>
+                    <span class="mapping-dest">プロパティ (Property)</span>
+                </div>
+            </div>
+            
+            <div style="width: 2px; height: 120px; background: #cbd5e1; margin: 0 10px;"></div>
+
+            <div class="mapping-column" style="flex: 1.1;">
+                <div style="font-size: 13px; font-weight: bold; color: #475569; text-align: center; margin-bottom: 5px;">システムへの格納（グラフDB格納）</div>
+                <div style="border: 1px solid #cbd5e1; background: #fff; padding: 15px; border-radius: 6px; font-size: 13px; color: #475569;">
+                    <ul style="margin: 0; padding-left: 15px;">
+                        <li style="margin-bottom: 8px;"><strong>スキーマ：</strong> 概念設計で構築したオントロジー（クラス、リレーション、属性定義）を、システム上のデータベース制約ルールとして定義・強制適用します。</li>
+                        <li style="margin-bottom: 8px;"><strong>ノード：</strong> 抽出された「モーターA」「異常発熱」という具体的なインスタンスを、個別のノード（点データ）としてデータベースへ登録・作成します。</li>
+                        <li style="margin-bottom: 0;"><strong>エッジ：</strong> 登録したノード間を、抽出された「～が原因である」というリレーションに基づき、有向エッジ（関係性を示す矢印の線）としてデータベース上で論理的につなぎ込みます。</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <h3>■ ナレッジグラフ構築の技術的メリット</h3>
+    <p>このようにトリプレットを適切にマッピングしてデータベースに登録していくことにより、個別文書の枠組みを越えて、組織の「ナレッジグラフ」が形成されます。</p>
+    <ul>
+        <li><span class="highlight">知見の結合：</span> 文書Aに書かれていた「モーターAの不具合」と、文書Bに書かれていた「モーターAの設計変更履歴」が同一のノードで結びつけられるため、別々の報告書を横断した原因調査が可能になります。</li>
+        <li><span class="highlight">高速な原因追求：</span> 関係性の繋がりそのものがグラフデータベースに登録されているため、数クリック、または数行の検索クエリ（Cypherクエリなど）によって、多段階に連鎖する原因究明を効率的に導き出せます。</li>
+    </ul>
+
+    <div class="note">
+        ※ 「概念の設計 (オントロジー設計)」で定めたルールが、「データの抽出 (トリプレット抽出)」を経て、ここでようやく「システムへの格納 (グラフDB格納)」により、実際に稼働する知見検索システムとして具体化されます。
+    </div>
+</div>
+
+</body>
+</html>

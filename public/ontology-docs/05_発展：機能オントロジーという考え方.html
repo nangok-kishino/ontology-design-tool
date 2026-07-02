@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>第5章：発展：機能オントロジーという考え方</title>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Noto Sans JP', sans-serif;
+            color: #333;
+            line-height: 1.6;
+            margin: 0;
+            padding: 40px;
+            background-color: #f9fafb;
+        }
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: #fff;
+            padding: 40px 60px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        }
+        h1 {
+            font-size: 28px;
+            color: #1e293b;
+            border-bottom: 3px solid #2563eb;
+            padding-bottom: 10px;
+            margin-bottom: 30px;
+        }
+        h2 {
+            font-size: 22px;
+            color: #2563eb;
+            margin-top: 40px;
+            margin-bottom: 20px;
+            border-left: 5px solid #2563eb;
+            padding-left: 15px;
+        }
+        h3 {
+            font-size: 18px;
+            color: #334155;
+            margin-top: 30px;
+            margin-bottom: 10px;
+        }
+        p, li {
+            font-size: 16px;
+            color: #475569;
+        }
+        ul, ol {
+            margin-bottom: 20px;
+        }
+        .highlight {
+            font-weight: bold;
+            color: #0f172a;
+        }
+        .intro-lead-box {
+            background-color: #eff6ff;
+            border-left: 5px solid #2563eb;
+            padding: 20px;
+            margin-bottom: 35px;
+            border-radius: 0 8px 8px 0;
+            font-size: 16px;
+            font-weight: bold;
+            color: #1e40af;
+            line-height: 1.7;
+        }
+        .note {
+            background-color: #f8fafc;
+            border-left: 4px solid #94a3b8;
+            padding: 15px;
+            margin: 20px 0;
+            color: #475569;
+            font-size: 15px;
+        }
+        .column-box {
+            background-color: #f8fafc;
+            border-left: 4px solid #475569;
+            padding: 18px;
+            margin: 25px 0;
+            border-radius: 0 6px 6px 0;
+        }
+        .column-title {
+            font-weight: bold;
+            color: #334155;
+            font-size: 15px;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        /* Diagrams Styling */
+        .diagram-container {
+            background-color: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 30px;
+            margin: 30px 0;
+        }
+        .diagram-title {
+            font-size: 14px;
+            font-weight: bold;
+            color: #475569;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        /* 1. S-V vs S-V-O Comparison Diagram */
+        .comparison-layout {
+            display: flex;
+            gap: 20px;
+        }
+        .comparison-col {
+            flex: 1;
+            background: #fff;
+            border: 1px solid #cbd5e1;
+            border-radius: 6px;
+            padding: 20px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.02);
+        }
+        .comp-header {
+            font-weight: bold;
+            font-size: 15px;
+            color: #1e293b;
+            border-bottom: 2px solid #e2e8f0;
+            padding-bottom: 8px;
+            margin-bottom: 15px;
+            text-align: center;
+        }
+        .comp-formula {
+            background: #f1f5f9;
+            font-family: monospace;
+            font-weight: bold;
+            font-size: 14px;
+            padding: 6px 12px;
+            border-radius: 4px;
+            text-align: center;
+            color: #334155;
+            margin-bottom: 15px;
+        }
+        .comp-example {
+            font-size: 14px;
+            color: #475569;
+            line-height: 1.8;
+        }
+        .comp-example span.part {
+            font-weight: bold;
+            color: #2563eb;
+            background: #eff6ff;
+            padding: 2px 4px;
+            border-radius: 3px;
+        }
+
+        /* 2. Reification 3-Tier Diagram */
+        .reification-tree {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 15px;
+        }
+        .ref-box {
+            background: #eff6ff;
+            border: 2px solid #3b82f6;
+            color: #1d4ed8;
+            font-weight: bold;
+            padding: 12px 20px;
+            border-radius: 6px;
+            font-size: 14px;
+            text-align: center;
+            width: 100%;
+            max-width: 340px;
+            box-shadow: 0 2px 4px rgba(59,130,246,0.05);
+            z-index: 2;
+        }
+        .ref-box.method {
+            background: #f0fdf4;
+            border-color: #22c55e;
+            color: #15803d;
+        }
+        .ref-box.sub-fn {
+            background: #fdf2f8;
+            border-color: #ec4899;
+            color: #be185d;
+        }
+        .ref-relation-box {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            position: relative;
+            width: 100%;
+        }
+        .ref-line {
+            width: 2px;
+            height: 30px;
+            background-color: #cbd5e1;
+            position: relative;
+        }
+        .ref-line::after {
+            content: '';
+            position: absolute;
+            bottom: -5px;
+            left: -4px;
+            border-left: 5px solid transparent;
+            border-right: 5px solid transparent;
+            border-top: 6px solid #cbd5e1;
+        }
+        .ref-relation-label {
+            font-size: 11px;
+            color: #64748b;
+            font-weight: bold;
+            background: #f8fafc;
+            padding: 0 8px;
+            position: absolute;
+            top: 5px;
+            z-index: 3;
+        }
+        .sub-fn-container {
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            width: 100%;
+        }
+        .and-connector-line {
+            width: 100%;
+            height: 2px;
+            background: #cbd5e1;
+            margin: 10px 0;
+            position: relative;
+        }
+        .and-label {
+            font-size: 10px;
+            font-weight: bold;
+            color: #64748b;
+            background: #f8fafc;
+            border: 1px solid #cbd5e1;
+            padding: 2px 6px;
+            border-radius: 4px;
+            position: absolute;
+            top: -10px;
+            left: 50%;
+            transform: translateX(-50%);
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>第5章：発展：機能オントロジーという考え方</h1>
+    
+    <!-- 冒頭に配置する重要メッセージ -->
+    <div class="intro-lead-box">
+        ※ 機能オントロジーは、物理的なモノのつながりにとどまらず、技術者が設計時に繰り返している「目的（S-V-O）・手段（S-V-O）・原理（方式）」の論理的な判断プロセスをシステム化・継承するための強力な進化形アプローチです。
+    </div>
+
+    <h2>1. 物理的構成の記述から「設計意図」の記述へ</h2>
+    <p>これまでの講義（第1章〜第4章）では、過去の知見文書から「何がどのように構成されているか」「不具合事象がどの部品に起因しているか」といった、客観的な事実（構造や現象）を抽出してデータベース化する手法を学びました。</p>
+    <p>しかし、技術伝承において極めて重要な知見は、「どのような物理配置になっているか（What）」だけではなく、<strong>「なぜその物理配置や部品を採用したのか（Why / How）」という設計者の『意図』</strong>にあります。設計の意図やメカニズムを計算機に解釈・推論させるための、工学的に厳密な知識表現モデルが機能オントロジーです。</p>
+
+    <div class="column-box">
+        <div class="column-title">💡 補足：メタモデルとは？</div>
+        <p style="margin: 0; font-size: 14px; color: #334155;">
+            データベース上にどのようなルールでデータを配置するかという「ルールそのものの設計図（スキーマを定義するための上位のルール）」を工学的に<strong>メタモデル</strong>と呼びます。本章で解説する「機能オントロジー」は、技術者の意図を漏れなく格納するために、グラフDBの上にこのメタモデルを適用するアプローチです。
+        </p>
+    </div>
+
+    <h2>2. 「機能」の厳密な定義：振る舞いと機能の論理的分離</h2>
+    <p>コンピュータに設計の「意図」を誤解なく解釈させるため、機能オントロジーでは、単なる物理現象としての「振る舞い」と、目的を持った「機能」を厳格に定義して区別します。すべての「機能」は、一貫して<strong>主語（S：作用を及ぼす実体） - 目的語（O：作用を受ける対象物：オペランド） - 述語（V：作用・動作）</strong>のS-V-O形式で表現されるルールを持ちます。</p>
+
+    <ul>
+        <li><span class="highlight">振る舞い（Behavior）：</span> 設計者の意図を含まない、客観的な物理現象そのものです。「主語（S） - 述語（V）」のS-V形式で記述します。</li>
+        <li><span class="highlight">機能（Function）：</span> 物理現象に対して、設計者が特定の目的を付与した作用を指します。作用を直接受ける対象物（<strong>オペランド：Operand</strong>）を必ず明示し、S-V-O形式で記述します。</li>
+    </ul>
+
+    <!-- 振る舞いと機能の比較図 -->
+    <div class="diagram-container">
+        <div class="diagram-title">【振る舞い（現象）と機能（意図）の定義比較：S-V型とS-V-O型の一貫性】</div>
+        <div class="comparison-layout">
+            <div class="comparison-col">
+                <div class="comp-header">振る舞い（現象）</div>
+                <div class="comp-formula">主語 (S) ➔ 述語 (V) [S-V]</div>
+                <div class="comp-example">
+                    <strong>記述の構成要素：</strong><br>
+                    ・主語 (S)：<span class="part">「電熱線」</span><br>
+                    ・述語 (V)：<span class="part">「発熱する」</span><br>
+                    <hr style="border:none; border-top:1px solid #cbd5e1; margin:10px 0;">
+                    <strong>【記述例】</strong><br>
+                    「<span class="highlight">電熱線 (S)</span> が、<span class="highlight">発熱する (V)</span>」<br>
+                    <span style="font-size:13px; color:#64748b;">※意図のない、単なる客観的な物理現象。</span>
+                </div>
+            </div>
+            <div class="comparison-col">
+                <div class="comp-header" style="color:#2563eb;">機能（設計意図）</div>
+                <div class="comp-formula" style="background:#eff6ff; color:#1d4ed8;">主語 (S) ➔ 目的語 (O) ➔ 述語 (V) [S-V-O]</div>
+                <div class="comp-example">
+                    <strong>記述の構成要素：</strong><br>
+                    ・主語 (S)：<span class="part">「ヒーター」</span><br>
+                    ・目的語 (O)：<span class="part">「空気」</span>（オペランド）<br>
+                    ・述語 (V)：<span class="part">「加熱する」</span><br>
+                    <hr style="border:none; border-top:1px solid #cbd5e1; margin:10px 0;">
+                    <strong>【記述例】</strong><br>
+                    「<span class="highlight">ヒーター (S)</span> が、<span class="highlight">空気 (O)</span> を、<span class="highlight">加熱する (V)</span>」<br>
+                    <span style="font-size:13px; color:#64748b;">※設計者が「空気を温める」という明確な目的を付与。</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <h2>3. 方式をノード（点）にする理由と「実体化」の考え方</h2>
+    <p>「なぜその手段を採用したのか」という設計の根拠（物理原理）をデータベースに格納する場合、目的の機能と手段（サブ機能）を直接線（エッジ）で結びつけることには限界があります。関係性を示す線（エッジ）には、複雑な属性（プロパティ）をたくさん持たせることがシステム構造上難しいためです。</p>
+    <p>そこで、機能オントロジーでは、目的と手段の間に、物理法則や動作メカニズムを表現する<strong>「機能実現方式（Way of achievement）」</strong>という概念を定義し、これを独立したノード（点）として作成します。このように、関係性そのものを独立したオブジェクト（クラス）に格上げして扱うアプローチを、工学用語で<strong>実体化（Reification）</strong>と呼びます。</p>
+
+    <div class="column-box">
+        <div class="column-title">💡 補足：実体化（Reification）のメリット</div>
+        <p style="margin: 0; font-size: 14px; color: #334155;">
+            関係性を「エッジ（線）」のままにせず「ノード（点）」に格上げ（実体化）することで、その関係に付随する「ジュール熱の法則」といった物理法則名や、「適用温度限界」などの制約条件を、データベース内に具体的な値（プロパティ）として登録できるようになります。
+        </p>
+    </div>
+
+    <h2>4. 既存のオントロジー資産をベースにした機能記述への展開</h2>
+    <p>ここまで学んだ「機能記述のルール（S-V-O）」と「実現方式の実体化」を踏まえると、前章までに構築してきた『部品』や『不具合現象』のオントロジーが、機能オントロジーを定義する上でいかに強力な土台になるかが理解できます。</p>
+    
+    <p>これまでに定義してきた個別実体のオントロジーは、機能オントロジーを記述する際の構成部品として、そっくりそのままマッピング・再利用することができます。</p>
+    
+    <ul>
+        <li>前章までに構築したナレッジグラフ上の<code>[部品]</code>インスタンス（例：「モーターA」「ヒーター」など）は、機能オントロジーにおける作用の及ぼし手である<strong>「主語（S）」</strong>へと格上げされます。</li>
+        <li>同じく前章までに定義した、作用を受ける物質やエネルギー、さらには<code>[不具合現象]</code>などを引き起こす対象物質のインスタンスは、機能の<strong>「目的語（O：オペランド）」</strong>としてそのままマッピングされます。</li>
+    </ul>
+    
+    <p>このように、既存の静的な製品構成モデルの知見資産を一切無駄にすることなく、その上に「方式」や「機能（S-V-O）」の動的論理スキーマを美しく重ね合わせるだけで、ナレッジグラフを『設計意図の推論支援』が可能なインテリジェントモデルへとスムーズにステップアップさせることができます。</p>
+
+    <!-- 3層構造のスキーマ図 -->
+    <div class="diagram-container">
+        <div class="diagram-title">【S-V-O型で統一された機能オントロジー3層スキーマと既存資産の再利用】</div>
+        <div class="reification-tree">
+            <!-- Level 1: Purpose Function -->
+            <div class="ref-box">
+                <span style="font-size: 11px; font-weight: normal; display: block; color: #1d4ed8; margin-bottom: 2px;">目的機能 [S-V-O]</span>
+                ヒーター(S) が 空気(O) を 加熱する(V)<br>
+                <span style="font-size:10px; font-weight:normal; color:#475569;">※既存の「部品ノード」を主語(S)として再利用</span>
+            </div>
+            
+            <!-- Relationship 1 -->
+            <div class="ref-relation-box">
+                <div class="ref-line"></div>
+                <span class="ref-relation-label">is-achieved-by (方式で実現される)</span>
+            </div>
+            
+            <!-- Level 2: Method (Reification) -->
+            <div class="ref-box method">
+                <span style="font-size: 11px; font-weight: normal; display: block; color: #15803d; margin-bottom: 2px;">機能実現方式 [実体化されたノード]</span>
+                電気熱変換方式<br>
+                <span style="font-size:11px; font-weight:normal; color:#475569;">(プロパティ: ジュール熱の法則 / 耐熱限界200℃)</span>
+            </div>
+            
+            <!-- Relationship 2 -->
+            <div class="ref-relation-box" style="width: 100%;">
+                <div class="ref-line"></div>
+                <span class="ref-relation-label">has-subfunction (手段として分解される)</span>
+                <div class="and-connector-line">
+                    <span class="and-label">AND関係</span>
+                </div>
+            </div>
+            
+            <!-- Level 3: Sub-functions -->
+            <div class="sub-fn-container">
+                <div class="ref-box sub-fn">
+                    <span style="font-size: 11px; font-weight: normal; display: block; color: #be185d; margin-bottom: 2px;">手段機能A [S-V-O]</span>
+                    電源(S) が 電熱線(O) を 通電する(V)
+                </div>
+                <div class="ref-box sub-fn">
+                    <span style="font-size: 11px; font-weight: normal; display: block; color: #be185d; margin-bottom: 2px;">手段機能B [S-V-O]</span>
+                    電熱線(S) が 空気(O) を 温める(V)<br>
+                    <span style="font-size:10px; font-weight:normal; color:#be185d;">※既存の「物質ノード」を目的語(O)として再利用</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <h2>5. 階層構造における「代替案（OR関係）」と「構成要素（AND関係）」の分離</h2>
+    <p>このS-V-Oの型を維持した3層構造を用いることで、データベースシステム全体の整合性を保ったまま、設計の論理的な分岐を正確に表現できます。</p>
+
+    <h3>■ 代替案の定義（OR関係：選択肢の広がり）</h3>
+    <p>1つの目的機能に対して、複数の「機能実現方式」を接続して登録できます。「ヒーター (S) が、空気 (O) を、加熱する (V)」という目的機能に対して、上記の「電気熱変換方式」のほか、「ガス燃焼方式」などの方式ノードが並列に繋がります。これは、ある設計要求を満たすための複数の<strong>代替案（OR関係の選択肢）</strong>を意味します。</p>
+
+    <h3>■ 構成要素の定義（AND関係：必須条件）</h3>
+    <p>特定の方式を選択した場合、それを物理的に成立させるために必要な手段機能（サブ機能）は、上の図解に示した通り<strong>論理積（AND関係）</strong>として扱われます。手段機能A（通電する）と手段機能B（温める）の双方が揃って、はじめて「電気熱変換方式」が成立することを論理的に保証します。</p>
+
+    <h2>6. 次世代の設計支援システムへの応用</h2>
+    <p>この機能オントロジーの枠組みを「概念の設計 (オントロジー設計)」フェーズとしてシステムに定義し、LLMなどの情報抽出を組み合わせて「データの抽出 (トリプレット抽出)」「システムへの格納 (グラフDB格納)」を自動化できれば、次世代の高度な設計支援AI（ナレッジベース、GraphRAGなど）の実現へと繋がります。</p>
+    
+    <p>例えば、「防錆システム (S) が、鉄鋼部品 (O) を、防錆する (V)」という要求を受けたAIは、単にキーワードの一致する過去の仕様書を提示するだけでなく、「防錆方式（ORの選択肢）」のオントロジー階層を自律的に探索し、過去にその部品では使われていなかった防錆原理（例：防錆油を塗布する手段ではなく、電気的な防蝕を適用する手段）を、設計意図と物理的な制約を論理的にトレースした上で、合理的な代替案として設計者に提案することが可能になります。</p>
+</div>
+
+</body>
+</html>
