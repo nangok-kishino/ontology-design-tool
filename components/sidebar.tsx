@@ -1,8 +1,10 @@
 "use client"
 
+import { useEffect, useState } from "react"
+import { useRouter } from "next/navigation"
 import { cn } from "@/lib/utils"
 import {
-  LayoutDashboard, Boxes, GitBranch, FileInput, Database, FolderOpen, BookOpen,
+  LayoutDashboard, Boxes, GitBranch, FileInput, Database, FolderOpen, BookOpen, LogOut,
 } from "lucide-react"
 import { useProject } from "@/app/project-context"
 
@@ -40,6 +42,21 @@ export function Sidebar({
   onNavigate: (id: ScreenId) => void
 }) {
   const { currentProject, clearCurrentProject } = useProject()
+  const router = useRouter()
+  const [email, setEmail] = useState<string | null>(null)
+
+  useEffect(() => {
+    fetch("/api/auth/me")
+      .then((res) => res.json())
+      .then((data: { email: string }) => setEmail(data.email || null))
+      .catch(() => setEmail(null))
+  }, [])
+
+  const handleLogout = async () => {
+    await fetch("/api/auth/logout", { method: "POST" })
+    router.push("/login")
+    router.refresh()
+  }
 
   return (
     <aside className="flex h-screen w-60 flex-col border-r border-white/[0.06] bg-zinc-950 text-neutral-100">
@@ -142,6 +159,23 @@ export function Sidebar({
             )}
           />
           <span>オントロジーについて</span>
+        </button>
+      </div>
+
+      {/* ログイン情報・ログアウト（常時表示・最下部） */}
+      <div className="mx-3 border-t border-white/[0.06]" />
+      <div className="px-3 py-3">
+        {email && (
+          <p className="truncate px-2.5 pb-1.5 text-[11px] text-zinc-500" title={email}>
+            {email}
+          </p>
+        )}
+        <button
+          onClick={handleLogout}
+          className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-sm text-zinc-300 transition-colors hover:bg-white/5 hover:text-white"
+        >
+          <LogOut className="h-4 w-4 shrink-0 text-zinc-400" />
+          <span>ログアウト</span>
         </button>
       </div>
     </aside>
