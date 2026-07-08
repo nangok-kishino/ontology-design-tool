@@ -16,10 +16,12 @@ function AppContent() {
   const { currentProject, loading } = useProject()
   const [screen, setScreen] = useState<ScreenId>("dashboard")
   const [initialSelectId, setInitialSelectId] = useState<string | undefined>(undefined)
+  const [hasVisitedReview, setHasVisitedReview] = useState(false)
 
   const navigate = (s: ScreenId, id?: string) => {
     setInitialSelectId(id)
     setScreen(s)
+    if (s === "review") setHasVisitedReview(true)
   }
 
   return (
@@ -35,8 +37,12 @@ function AppContent() {
             {screen === "dashboard" && <DashboardScreen onNavigate={navigate} />}
             {screen === "classes" && <ClassesScreen initialSelectedId={initialSelectId} />}
             {screen === "relations" && <RelationsScreen initialSelectedId={initialSelectId} />}
-            {screen === "review" && <ReviewScreen />}
             {screen === "instances" && <InstancesScreen initialSelectedClassId={initialSelectId} />}
+            {hasVisitedReview && (
+              <div className={screen === "review" ? "h-full" : "hidden"}>
+                <ReviewScreen />
+              </div>
+            )}
           </>
         )}
       </main>
