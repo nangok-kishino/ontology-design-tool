@@ -27,7 +27,12 @@ import { useProject } from "@/app/project-context"
 import type { OntologyClass, OntologyRelation } from "@/lib/types"
 import { UploadCloud, FileText, Check, Sparkles, Loader2, Pencil } from "lucide-react"
 
-type CandidateStatus = "確認中" | "新規追加" | "統合済み" | "承認済み" | "却下" | "採用候補" | "本登録済み"
+type CandidateStatus = "確認中" | "新規追加" | "承認済み" | "却下" | "採用候補" | "本登録済み"
+
+const MODEL_OPTIONS = [
+  { id: "claude-opus-4-8", label: "Claude Opus 4.8", provider: "Anthropic" },
+  { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro", provider: "Google" },
+]
 
 type ClassCandidate = {
   id: string
@@ -44,9 +49,6 @@ type InstanceCandidate = {
   classId: string | null
   className: string
   proposedClassName: string
-  candidateType: "new" | "merge"
-  existingInstanceId: string | null
-  existingInstanceName: string
   pendingClassCandidateId?: string
   status: CandidateStatus
   saving: boolean
@@ -68,7 +70,6 @@ function StatusBadge({ status }: { status: CandidateStatus }) {
   const map: Record<CandidateStatus, string> = {
     確認中: "bg-muted text-muted-foreground",
     新規追加: "bg-emerald-100 text-emerald-700",
-    統合済み: "bg-blue-100 text-blue-700",
     承認済み: "bg-emerald-100 text-emerald-700",
     却下: "bg-red-100 text-red-700",
     採用候補: "bg-indigo-100 text-indigo-700",
@@ -93,6 +94,8 @@ export function ReviewScreen() {
   const [analyzing, setAnalyzing] = useState(false)
   const [analyzeError, setAnalyzeError] = useState<string | null>(null)
   const [analyzedFileName, setAnalyzedFileName] = useState<string | null>(null)
+  const [selectedModel, setSelectedModel] = useState(MODEL_OPTIONS[0].id)
+  const [analyzedModelLabel, setAnalyzedModelLabel] = useState<string | null>(null)
 
   const [classCands, setClassCands] = useState<ClassCandidate[]>([])
   const [editingClassNameId, setEditingClassNameId] = useState<string | null>(null)
@@ -113,6 +116,7 @@ export function ReviewScreen() {
     setFile(null)
     setAnalyzeError(null)
     setAnalyzedFileName(null)
+    setAnalyzedModelLabel(null)
     setClassCands([])
     setInstCands([])
     setRelCands([])
@@ -154,6 +158,7 @@ export function ReviewScreen() {
       const fd = new FormData()
       fd.append("file", file)
       fd.append("projectId", currentProject.id)
+      fd.append("model", selectedModel)
       const res = await fetch("/api/analyze", { method: "POST", body: fd })
       const data = await res.json()
       if (!res.ok) { setAnalyzeError(data.error ?? "解析に失敗しました"); return }
@@ -182,7 +187,7 @@ export function ReviewScreen() {
       setClassCands(classCandEntries)
       const classCandIdByName = new Map(classCandEntries.map((cc) => [cc.proposedClassName, cc.id]))
 
-      // 既存クラスに割当済み・統合候補 → インスタンス候補タブへ
+      // 既存クラスに割当済み → インスタンス候補タブへ
       const resolvedInstCands: InstanceCandidate[] = allInst
         .filter((i) => !i.isNewClass || !!i.classId)
         .map((i) => ({
@@ -191,9 +196,6 @@ export function ReviewScreen() {
           classId: i.classId ?? null,
           className: i.className ?? "",
           proposedClassName: i.className || i.suggestedClassName || "",
-          candidateType: i.candidateType ?? "new",
-          existingInstanceId: i.existingInstanceId ?? null,
-          existingInstanceName: i.existingInstanceName ?? "",
           status: "確認中" as CandidateStatus,
           saving: false,
         }))
@@ -207,9 +209,6 @@ export function ReviewScreen() {
           classId: null,
           className: "",
           proposedClassName: (i.newClassName ?? "").trim(),
-          candidateType: i.candidateType ?? "new",
-          existingInstanceId: i.existingInstanceId ?? null,
-          existingInstanceName: i.existingInstanceName ?? "",
           pendingClassCandidateId: classCandIdByName.get((i.newClassName ?? "").trim()),
           status: "確認中" as CandidateStatus,
           saving: false,
@@ -221,6 +220,7 @@ export function ReviewScreen() {
 
       // 解析成功後、ファイル指定エリアをクリアして解析結果側に表示を切り替える
       setAnalyzedFileName(file.name)
+      setAnalyzedModelLabel(MODEL_OPTIONS.find((m) => m.id === selectedModel)?.label ?? selectedModel)
       setFile(null)
       if (fileInputRef.current) fileInputRef.current.value = ""
     } catch {
@@ -282,13 +282,13 @@ export function ReviewScreen() {
   const toggleInstCandidateSelection = (id: string) => {
     setInstCands((p) =>
       p.map((c) => {
-        if (c.id !== id || c.status === "本登録済み" || c.status === "統合済み") return c
+        if (c.id !== id || c.status === "本登録済み") return c
         return { ...c, status: c.status === "採用候補" ? "確認中" : "採用候補" }
       })
     )
   }
 
-  // 採用候補となっているインスタンスをまとめて本登録（統合候補は統合済みにする）
+  // 採用候補となっているインスタンスをまとめて本登録
   const registerSelectedInstances = async () => {
     if (!currentProject) return
     const targets = instCands.filter((c) => c.status === "採用候補")
@@ -296,10 +296,6 @@ export function ReviewScreen() {
     setRegisteringInstances(true)
     try {
       for (const cand of targets) {
-        if (cand.candidateType === "merge") {
-          updateInst(cand.id, { status: "統合済み" })
-          continue
-        }
         if (!cand.classId) continue
         updateInst(cand.id, { saving: true })
         try {
@@ -385,13 +381,11 @@ export function ReviewScreen() {
 
         <p className="mb-6 text-sm text-muted-foreground">
           既存文書をLLMで解析して、クラス／リレーション／インスタンスを抽出します。
-          <br />
-          LLMにはGoogleの「Gemini 2.5 Pro」を利用しています。
         </p>
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">ファイル指定</CardTitle>
+            <CardTitle className="text-sm">ファイル指定</CardTitle>
           </CardHeader>
           <CardContent>
             <input
@@ -401,22 +395,54 @@ export function ReviewScreen() {
               className="hidden"
               onChange={(e) => handleFileChange(e.target.files?.[0] ?? null)}
             />
-            <div
-              className="flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-border bg-muted/40 px-6 py-10 text-center"
-              onDragOver={(e) => e.preventDefault()}
-              onDrop={(e) => { e.preventDefault(); handleFileChange(e.dataTransfer.files?.[0] ?? null) }}
-            >
-              <UploadCloud className="h-8 w-8 text-muted-foreground" />
-              <p className="mt-3 text-sm text-foreground">
-                {file
-                  ? <span className="inline-flex items-center gap-1.5 font-medium"><FileText className="h-4 w-4" />{file.name}</span>
-                  : "ここにファイルをドラッグ＆ドロップ"}
-              </p>
-              <p className="mt-1 text-xs text-muted-foreground">対応形式：PDF, TXT</p>
-              <Button size="sm" variant="outline" className="mt-4 bg-transparent"
-                onClick={() => fileInputRef.current?.click()}>
-                ファイルを選択
-              </Button>
+            <div className="flex items-stretch gap-6">
+              <div className="flex flex-1 flex-col">
+                <p className="mb-2 text-sm font-medium text-foreground">文書ファイル</p>
+                <div
+                  className="flex flex-1 flex-col items-center justify-center rounded-lg border-2 border-dashed border-border bg-muted/40 px-6 py-10 text-center"
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={(e) => { e.preventDefault(); handleFileChange(e.dataTransfer.files?.[0] ?? null) }}
+                >
+                  <UploadCloud className="h-8 w-8 text-muted-foreground" />
+                  <p className="mt-3 text-sm text-foreground">
+                    {file
+                      ? <span className="inline-flex items-center gap-1.5 font-medium"><FileText className="h-4 w-4" />{file.name}</span>
+                      : "ここにファイルをドラッグ＆ドロップ"}
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">対応形式：PDF, TXT</p>
+                  <Button size="sm" variant="outline" className="mt-4 bg-transparent"
+                    onClick={() => fileInputRef.current?.click()}>
+                    ファイルを選択
+                  </Button>
+                </div>
+              </div>
+
+              <div className="flex w-48 shrink-0 flex-col">
+                <p className="mb-2 text-sm font-medium text-foreground">解析モデル指定</p>
+                <div className="flex flex-1 flex-col gap-1.5">
+                  {MODEL_OPTIONS.map((m) => (
+                    <Button
+                      key={m.id}
+                      type="button"
+                      variant="outline"
+                      disabled={analyzing}
+                      className={
+                        "h-auto flex-1 flex-col items-center justify-center gap-1 whitespace-normal px-4 py-3 font-normal" +
+                        (selectedModel === m.id
+                          ? " border-indigo-600 bg-indigo-600 text-white hover:bg-indigo-700 hover:text-white"
+                          : " hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700")
+                      }
+                      onClick={() => setSelectedModel(m.id)}
+                    >
+                      <span className="flex items-center gap-1 text-xs opacity-80">
+                        {selectedModel === m.id && <Check className="h-3 w-3" />}
+                        {m.provider}
+                      </span>
+                      <span className="text-sm font-medium">{m.label}</span>
+                    </Button>
+                  ))}
+                </div>
+              </div>
             </div>
 
             {analyzeError && <p className="mt-3 text-sm text-destructive">{analyzeError}</p>}
@@ -444,6 +470,11 @@ export function ReviewScreen() {
                 {analyzedFileName && (
                   <span className="inline-flex items-center gap-1 text-xs font-normal text-muted-foreground">
                     <FileText className="h-3.5 w-3.5" />{analyzedFileName}
+                  </span>
+                )}
+                {analyzedModelLabel && (
+                  <span className="text-xs font-normal text-muted-foreground">
+                    利用モデル：{analyzedModelLabel}
                   </span>
                 )}
               </CardTitle>
@@ -721,7 +752,7 @@ export function ReviewScreen() {
                               registeringInstances ||
                               !instCands.some((c) => c.status === "採用候補") ||
                               instCands
-                                .filter((c) => c.status === "採用候補" && c.candidateType !== "merge")
+                                .filter((c) => c.status === "採用候補")
                                 .some((c) => !c.classId)
                             }
                             onClick={registerSelectedInstances}
@@ -744,7 +775,7 @@ export function ReviewScreen() {
                             </TableHeader>
                             <TableBody>
                               {instCands.map((c) => {
-                                const registered = c.status === "本登録済み" || c.status === "統合済み"
+                                const registered = c.status === "本登録済み"
                                 const selected = c.status === "採用候補"
                                 return (
                                   <TableRow key={c.id} className={registered ? "opacity-50" : ""}>
@@ -791,32 +822,22 @@ export function ReviewScreen() {
                                       )}
                                     </TableCell>
                                     <TableCell className="align-top">
-                                      {c.candidateType === "merge" ? (
-                                        <div className="space-y-1">
-                                          <div className="flex items-center gap-1.5">
-                                            <Badge className="bg-blue-100 text-blue-700 font-normal text-xs">統合候補</Badge>
-                                            <span className="text-sm font-medium text-foreground">{c.existingInstanceName}</span>
-                                          </div>
-                                          <p className="text-xs text-muted-foreground">既存インスタンスとの統合が提案されています</p>
-                                        </div>
-                                      ) : (
-                                        <Select value={c.classId ?? "__none__"} disabled={registered}
-                                          onValueChange={(v) => {
-                                            if (v === "__none__") { updateInst(c.id, { classId: null, className: "" }) }
-                                            else {
-                                              const cls = classes.find((x) => x.id === v)
-                                              updateInst(c.id, { classId: v, className: cls?.name ?? "" })
-                                            }
-                                          }}>
-                                          <SelectTrigger className="h-8 w-52">
-                                            <SelectValue>{c.classId ? c.className : "既存クラスから選択"}</SelectValue>
-                                          </SelectTrigger>
-                                          <SelectContent>
-                                            <SelectItem value="__none__">既存クラスから選択</SelectItem>
-                                            {classes.map((cls) => <SelectItem key={cls.id} value={cls.id}>{cls.name}</SelectItem>)}
-                                          </SelectContent>
-                                        </Select>
-                                      )}
+                                      <Select value={c.classId ?? "__none__"} disabled={registered}
+                                        onValueChange={(v) => {
+                                          if (v === "__none__") { updateInst(c.id, { classId: null, className: "" }) }
+                                          else {
+                                            const cls = classes.find((x) => x.id === v)
+                                            updateInst(c.id, { classId: v, className: cls?.name ?? "" })
+                                          }
+                                        }}>
+                                        <SelectTrigger className="h-8 w-52">
+                                          <SelectValue>{c.classId ? c.className : "既存クラスから選択"}</SelectValue>
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                          <SelectItem value="__none__">既存クラスから選択</SelectItem>
+                                          {classes.map((cls) => <SelectItem key={cls.id} value={cls.id}>{cls.name}</SelectItem>)}
+                                        </SelectContent>
+                                      </Select>
                                     </TableCell>
                                     <TableCell className="align-top pt-2">
                                       {c.pendingClassCandidateId ? (

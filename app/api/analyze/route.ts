@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from "next/server"
+import Anthropic from "@anthropic-ai/sdk"
 import { getContainer } from "@/lib/cosmos"
+
+const SYSTEM_INSTRUCTION =
+  "あなたはオントロジーエンジニアです。提供された文書と定義済みクラス・リレーション・登録済みインスタンスを参照し、以下を抽出してください。\n\n" +
+  "1. インスタンス候補：文書中の具体的な事例・対象・固有名詞のうち、【登録済みインスタンス】に一致・類似するものは除外し、新規性のあるものだけを列挙してください。既存クラスに割り当ててください（suggestedClassId と suggestedClassName を指定）。適切なクラスがない場合は isNewClass: true とし、新規クラス名と説明を提案してください。\n\n" +
+  "2. リレーション候補：文書が示唆するクラス間の関係で、【定義済みリレーション】に含まれない組み合わせのみを挙げてください。"
 
 const EXTRACT_FUNCTION = {
   name: "extract_ontology_candidates",
@@ -14,20 +20,13 @@ const EXTRACT_FUNCTION = {
           type: "object",
           properties: {
             name: { type: "string", description: "インスタンス候補名" },
-            candidateType: {
-              type: "string",
-              enum: ["new", "merge"],
-              description: "new: 新規インスタンス候補 / merge: 登録済みインスタンスとの統合候補",
-            },
-            suggestedClassId: { type: "string", description: "割当先の既存クラスID（candidateType=newの場合、なければ空文字）" },
+            suggestedClassId: { type: "string", description: "割当先の既存クラスID（なければ空文字）" },
             suggestedClassName: { type: "string", description: "割当先クラス名（既存または新規提案名）" },
-            isNewClass: { type: "boolean", description: "適切な既存クラスがなく新規クラス作成が必要ならtrue（candidateType=newの場合のみ）" },
+            isNewClass: { type: "boolean", description: "適切な既存クラスがなく新規クラス作成が必要ならtrue" },
             newClassName: { type: "string", description: "新規クラス名（isNewClass=trueの場合）" },
             newClassDescription: { type: "string", description: "新規クラスの説明（isNewClass=trueの場合、1〜2文）" },
-            existingInstanceId: { type: "string", description: "統合候補の登録済みインスタンスID（candidateType=mergeの場合）" },
-            existingInstanceName: { type: "string", description: "統合候補の登録済みインスタンス名（candidateType=mergeの場合）" },
           },
-          required: ["name", "candidateType", "suggestedClassName", "isNewClass"],
+          required: ["name", "suggestedClassName", "isNewClass"],
         },
       },
       relations: {
@@ -49,6 +48,49 @@ const EXTRACT_FUNCTION = {
     },
     required: ["instances", "relations"],
   },
+}
+
+async function callGemini(model: string, systemInstruction: string, userContent: string) {
+  const apiKey = process.env.GEMINI_API_KEY
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        system_instruction: { parts: [{ text: systemInstruction }] },
+        contents: [{ role: "user", parts: [{ text: userContent }] }],
+        tools: [{ function_declarations: [EXTRACT_FUNCTION] }],
+        tool_config: {
+          function_calling_config: { mode: "ANY", allowed_function_names: [EXTRACT_FUNCTION.name] },
+        },
+      }),
+    }
+  )
+  if (!res.ok) throw new Error(`Gemini API error ${res.status}: ${await res.text()}`)
+  const json = await res.json()
+  const part = (json.candidates?.[0]?.content?.parts ?? []).find((p: any) => p.functionCall)
+  if (!part?.functionCall) throw new Error("解析結果を取得できませんでした（Gemini）")
+  return part.functionCall.args
+}
+
+async function callAnthropic(model: string, systemInstruction: string, userContent: string) {
+  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+  const msg = await anthropic.messages.create({
+    model,
+    max_tokens: 8192,
+    system: systemInstruction,
+    tools: [{
+      name: EXTRACT_FUNCTION.name,
+      description: EXTRACT_FUNCTION.description,
+      input_schema: EXTRACT_FUNCTION.parameters as any,
+    }],
+    tool_choice: { type: "tool", name: EXTRACT_FUNCTION.name },
+    messages: [{ role: "user", content: userContent }],
+  })
+  const toolUse = msg.content.find((b) => b.type === "tool_use")
+  if (!toolUse || toolUse.type !== "tool_use") throw new Error("解析結果を取得できませんでした（Claude）")
+  return toolUse.input as any
 }
 
 export async function POST(request: NextRequest) {
@@ -83,7 +125,6 @@ export async function POST(request: NextRequest) {
 
     const classIdMap = new Map<string, string>(classes.map((c: any) => [c.id, c.name]))
     const validClassIds = new Set<string>(classes.map((c: any) => c.id))
-    const validInstanceIds = new Set<string>(instances.map((i: any) => i.id))
     const relations = relationsRaw.map((r: any) =>
       r.classPairs ? r : { ...r, classPairs: [{ sourceClassId: r.sourceClassId, targetClassId: r.targetClassId }] }
     )
@@ -124,68 +165,26 @@ export async function POST(request: NextRequest) {
         }).join("\n")
       : "（登録済みインスタンスなし）"
 
-    // LLM解析（Gemini API）
-    const apiKey = process.env.GEMINI_API_KEY
-    const geminiRes = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=${apiKey}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          system_instruction: {
-            parts: [{
-              text:
-                "あなたはオントロジーエンジニアです。提供された文書と定義済みクラス・リレーション・登録済みインスタンスを参照し、以下を抽出してください。\n\n" +
-                "1. インスタンス候補：文書中の具体的な事例・対象・固有名詞を列挙し、次のように分類してください。\n" +
-                "   - 【登録済みインスタンス】と同一または類似するものは candidateType: \"merge\" とし、existingInstanceId と existingInstanceName を指定してください。\n" +
-                "   - 新規と判断したものは candidateType: \"new\" とし、既存クラスに割り当ててください（suggestedClassId と suggestedClassName を指定）。\n" +
-                "   - 適切なクラスがない場合は isNewClass: true とし、新規クラス名と説明を提案してください。\n\n" +
-                "2. リレーション候補：文書が示唆するクラス間の関係で、【定義済みリレーション】に含まれない組み合わせのみを挙げてください。",
-            }],
-          },
-          contents: [{
-            role: "user",
-            parts: [{
-              text:
-                `【定義済みクラス】\n${classListText}\n\n` +
-                `【定義済みリレーション】（これらと重複しない候補のみ提案してください）\n${relListText}\n\n` +
-                `【登録済みインスタンス】（これらと照合し、同一・類似のものは candidateType: "merge" にしてください）\n${instanceListText}\n\n` +
-                `【文書】\n${text.slice(0, 12000)}`,
-            }],
-          }],
-          tools: [{ function_declarations: [EXTRACT_FUNCTION] }],
-          tool_config: {
-            function_calling_config: {
-              mode: "ANY",
-              allowed_function_names: ["extract_ontology_candidates"],
-            },
-          },
-        }),
-      }
-    )
+    // LLM解析（ユーザーが選択したモデルに応じてプロバイダーを振り分け）
+    const model = (formData.get("model") as string | null) ?? "claude-opus-4-8"
+    const userContent =
+      `【定義済みクラス】\n${classListText}\n\n` +
+      `【定義済みリレーション】（これらと重複しない候補のみ提案してください）\n${relListText}\n\n` +
+      `【登録済みインスタンス】（これらと同一・類似のものは候補に含めないでください）\n${instanceListText}\n\n` +
+      `【文書】\n${text.slice(0, 12000)}`
 
-    if (!geminiRes.ok) {
-      const errBody = await geminiRes.text()
-      throw new Error(`Gemini API error ${geminiRes.status}: ${errBody}`)
-    }
+    const rawResult = model.startsWith("claude-")
+      ? await callAnthropic(model, SYSTEM_INSTRUCTION, userContent)
+      : await callGemini(model, SYSTEM_INSTRUCTION, userContent)
 
-    const responseJson = await geminiRes.json()
-    const part = (responseJson.candidates?.[0]?.content?.parts ?? []).find((p: any) => p.functionCall)
-    if (!part?.functionCall) {
-      return NextResponse.json({ error: "解析結果を取得できませんでした" }, { status: 500 })
-    }
-
-    const result = part.functionCall.args as {
+    const result = rawResult as {
       instances: Array<{
         name: string
-        candidateType?: "new" | "merge"
         suggestedClassId?: string
         suggestedClassName: string
         isNewClass: boolean
         newClassName?: string
         newClassDescription?: string
-        existingInstanceId?: string
-        existingInstanceName?: string
       }>
       relations: Array<{
         sourceClassId?: string
@@ -201,8 +200,6 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       instances: (result.instances ?? []).map((inst, i) => {
-        const candidateType = inst.candidateType ?? "new"
-
         let classId: string | null = null
         let className = ""
         if (inst.suggestedClassId && validClassIds.has(inst.suggestedClassId)) {
@@ -216,29 +213,14 @@ export async function POST(request: NextRequest) {
           }
         }
 
-        let existingInstanceId = inst.existingInstanceId ?? null
-        let existingInstanceName = inst.existingInstanceName ?? ""
-        if (candidateType === "merge" && existingInstanceId && !validInstanceIds.has(existingInstanceId)) {
-          const matchByName = instances.find((i: any) => i.name === existingInstanceName)
-          if (matchByName) {
-            existingInstanceId = matchByName.id
-            existingInstanceName = matchByName.name
-          } else {
-            existingInstanceId = null
-          }
-        }
-
         return {
           id: `ic-${now}-${i}`,
           name: inst.name,
           classId,
           className,
-          isNewClass: candidateType === "new" && (inst.isNewClass || !classId),
+          isNewClass: inst.isNewClass || !classId,
           newClassName: inst.newClassName ?? (inst.isNewClass ? inst.suggestedClassName : ""),
           newClassDescription: inst.newClassDescription ?? "",
-          candidateType,
-          existingInstanceId,
-          existingInstanceName,
           status: "確認中",
           saving: false,
         }
@@ -265,10 +247,9 @@ export async function POST(request: NextRequest) {
     })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    const geminiKey = process.env.GEMINI_API_KEY
     const debug = {
-      apiKeySet: !!geminiKey,
-      apiKeyPrefix: geminiKey?.slice(0, 8) ?? "(unset)",
+      geminiKeySet: !!process.env.GEMINI_API_KEY,
+      anthropicKeySet: !!process.env.ANTHROPIC_API_KEY,
     }
     console.error("POST /api/analyze:", { message, ...debug })
     return NextResponse.json({ error: `解析に失敗しました: ${message}`, debug }, { status: 500 })

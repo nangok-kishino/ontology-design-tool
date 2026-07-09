@@ -571,7 +571,7 @@ export function RelationsScreen({ initialSelectedId }: { initialSelectedId?: str
                           {editPairs.map((pair, i) => (
                             <div key={i} className="flex items-center gap-2">
                               <Select value={pair.sourceClassId || "__none__"}
-                                onValueChange={(v) => updateEditPair(i, "sourceClassId", v === "__none__" ? "" : v)}>
+                                onValueChange={(v) => updateEditPair(i, "sourceClassId", v && v !== "__none__" ? v : "")}>
                                 <SelectTrigger className="flex-1">
                                   <SelectValue>{pair.sourceClassId ? className(pair.sourceClassId) : "始点クラス"}</SelectValue>
                                 </SelectTrigger>
@@ -583,7 +583,7 @@ export function RelationsScreen({ initialSelectedId }: { initialSelectedId?: str
                               </Select>
                               <ArrowRight className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
                               <Select value={pair.targetClassId || "__none__"}
-                                onValueChange={(v) => updateEditPair(i, "targetClassId", v === "__none__" ? "" : v)}>
+                                onValueChange={(v) => updateEditPair(i, "targetClassId", v && v !== "__none__" ? v : "")}>
                                 <SelectTrigger className="flex-1">
                                   <SelectValue>{pair.targetClassId ? className(pair.targetClassId) : "終点クラス"}</SelectValue>
                                 </SelectTrigger>
@@ -685,7 +685,7 @@ export function RelationsScreen({ initialSelectedId }: { initialSelectedId?: str
                 {newPairs.map((pair, i) => (
                   <div key={i} className="flex items-center gap-2">
                     <Select value={pair.sourceClassId || "__none__"}
-                      onValueChange={(v) => updateNewPair(i, "sourceClassId", v === "__none__" ? "" : v)}>
+                      onValueChange={(v) => updateNewPair(i, "sourceClassId", v && v !== "__none__" ? v : "")}>
                       <SelectTrigger className="flex-1">
                         <SelectValue>{pair.sourceClassId ? className(pair.sourceClassId) : "始点クラス"}</SelectValue>
                       </SelectTrigger>
@@ -697,7 +697,7 @@ export function RelationsScreen({ initialSelectedId }: { initialSelectedId?: str
                     </Select>
                     <ArrowRight className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
                     <Select value={pair.targetClassId || "__none__"}
-                      onValueChange={(v) => updateNewPair(i, "targetClassId", v === "__none__" ? "" : v)}>
+                      onValueChange={(v) => updateNewPair(i, "targetClassId", v && v !== "__none__" ? v : "")}>
                       <SelectTrigger className="flex-1">
                         <SelectValue>{pair.targetClassId ? className(pair.targetClassId) : "終点クラス"}</SelectValue>
                       </SelectTrigger>
