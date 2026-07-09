@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getContainer } from "@/lib/cosmos"
+import { getPrincipalName } from "@/lib/auth"
 import { checkProjectAccess } from "@/lib/project-access"
 import type { OntologyClass } from "@/lib/types"
 
@@ -36,6 +37,7 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
       nameEn: body.nameEn !== undefined ? body.nameEn : (existing.nameEn ?? ""),
       description: body.description ?? existing.description,
       parentId: body.parentId !== undefined ? body.parentId : existing.parentId,
+      updatedBy: getPrincipalName(request),
       updatedAt: new Date().toISOString(),
     }
     const { resource } = await container.item(id, id).replace(updated)

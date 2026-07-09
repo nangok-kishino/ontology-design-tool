@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getContainer } from "@/lib/cosmos"
+import { getPrincipalName } from "@/lib/auth"
 import { checkProjectAccess } from "@/lib/project-access"
 import type { OntologyRelation } from "@/lib/types"
 
@@ -39,6 +40,7 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
       description: body.description ?? existing.description,
       classPairs: body.classPairs ?? existing.classPairs,
       parentRelationId: body.parentRelationId !== undefined ? body.parentRelationId : existing.parentRelationId,
+      updatedBy: getPrincipalName(request),
       updatedAt: new Date().toISOString(),
     }
     const { resource } = await container.item(id, id).replace(updated)

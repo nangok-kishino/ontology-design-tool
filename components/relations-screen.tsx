@@ -42,17 +42,17 @@ import {
   executeRelationsImport,
   type RelationExportItem,
 } from "@/lib/import-export"
-import { ArrowRight, Plus, Pencil, Trash2, Loader2, X, AlertTriangle, Info, Lock, Download, Upload, FileText, Tags } from "lucide-react"
+import { ArrowRight, Plus, Pencil, Trash2, Loader2, X, AlertTriangle, Info, Download, Upload, FileText, Tags } from "lucide-react"
 import { useProject } from "@/app/project-context"
 
 type AttrSectionKey = "project" | "own"
 
-const SYSTEM_ATTRS = [
-  { name: "登録日", dataType: "日付", required: "必須", description: "レコードが初めて登録された日付（システム自動付与）" },
-  { name: "登録者", dataType: "文字列", required: "必須", description: "レコードを最初に登録したユーザー（システム自動付与）" },
-  { name: "更新日", dataType: "日付", required: "必須", description: "レコードが最後に更新された日付（システム自動付与）" },
-  { name: "更新者", dataType: "文字列", required: "必須", description: "レコードを最後に更新したユーザー（システム自動付与）" },
-] as const
+function formatDateTime(iso: string | undefined): string {
+  if (!iso) return "—"
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return "—"
+  return d.toLocaleString("ja-JP", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })
+}
 
 export function RelationsScreen({ initialSelectedId }: { initialSelectedId?: string }) {
   const { currentProject, loading: projectLoading } = useProject()
@@ -349,12 +349,17 @@ export function RelationsScreen({ initialSelectedId }: { initialSelectedId?: str
     }
   }
 
+  // 初回訪問（未選択）時は先頭のリレーションを自動選択する。再訪問時は前回の選択を維持する
+  useEffect(() => {
+    if (loading || selectedId || relations.length === 0) return
+    setSelectedId(relations[0].id)
+  }, [loading, selectedId, relations.length])
+
   const selected = relations.find((r) => r.id === selectedId)
   const className = (id: string | null) => id ? (classes.find((c) => c.id === id)?.name ?? "不明") : "—"
 
   const renderAttrSection = (title: string, attrs: OntologyAttribute[], section: AttrSectionKey) => {
-    const isProject = section === "project"
-    const hasRows = isProject || attrs.length > 0
+    const hasRows = attrs.length > 0
     return (
       <div className="space-y-2">
         <div className="flex items-center justify-between">
@@ -380,24 +385,6 @@ export function RelationsScreen({ initialSelectedId }: { initialSelectedId?: str
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {isProject && SYSTEM_ATTRS.map((s) => (
-                  <TableRow key={`sys-${s.name}`} className="bg-muted/20">
-                    <TableCell className="font-medium text-foreground">
-                      <div className="flex items-center gap-1.5">
-                        <Lock className="h-3 w-3 shrink-0 text-muted-foreground/60" />
-                        <span>{s.name}</span>
-                        <Tooltip content={s.description}>
-                          <Info className="h-3.5 w-3.5 cursor-help text-muted-foreground/50 transition-colors hover:text-muted-foreground" />
-                        </Tooltip>
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">{s.dataType}</TableCell>
-                    <TableCell>
-                      <Badge variant="default" className="font-normal">{s.required}</Badge>
-                    </TableCell>
-                    <TableCell />
-                  </TableRow>
-                ))}
                 {attrs.map((a) => (
                   <TableRow key={a.id}>
                     <TableCell className="font-medium text-foreground">
@@ -551,8 +538,12 @@ export function RelationsScreen({ initialSelectedId }: { initialSelectedId?: str
             </div>
 
             <div className="flex-1 overflow-auto px-6 py-6 space-y-8">
+                <p className="text-xs text-muted-foreground">
+                  登録日 {formatDateTime(selected.createdAt)}　登録者 {selected.createdBy || "—"}　更新日 {formatDateTime(selected.updatedAt)}　更新者 {selected.updatedBy || "—"}
+                </p>
+
                 {/* 基本情報 */}
-                <div className="space-y-5 max-w-xl">
+                <div className="space-y-5">
                   <SectionHeader icon={FileText} title="基本情報" />
                   {isEditing ? (
                     <>

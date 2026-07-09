@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import { createPortal } from "react-dom"
 import {
   Dialog,
@@ -318,7 +318,6 @@ function SortableInstRow({
         </button>
       </TableCell>
       <TableCell className="font-medium text-foreground">{inst.name}</TableCell>
-      <TableCell className="text-sm text-muted-foreground">{inst.updatedAt || "—"}</TableCell>
     </TableRow>
   )
 }
@@ -370,6 +369,9 @@ export function InstancesScreen({ initialSelectedClassId }: { initialSelectedCla
   const [deleteTarget, setDeleteTarget] = useState<OntologyInstance | null>(null)
   const [deleting, setDeleting] = useState(false)
 
+  // クラス（または未分類）ごとに最後に選択したインスタンスIDを記憶する
+  const lastInstanceByClassRef = useRef<Record<string, string>>({})
+
   // インポート/エクスポート
   const [showImport, setShowImport] = useState(false)
   const [exporting, setExporting] = useState(false)
@@ -394,19 +396,75 @@ export function InstancesScreen({ initialSelectedClassId }: { initialSelectedCla
     }
   }, [currentProject?.id])
 
-  const fetchInstances = useCallback(async (classId: string) => {
+  const fetchDetailAttrs = useCallback(async (cls: OntologyClass | null, allClasses: OntologyClass[]) => {
+    if (!cls || !currentProject) {
+      setDetailAttrGroups({ project: [], inherited: [], own: [], parentName: "" })
+      return
+    }
+    setLoadingDetailAttrs(true)
+    try {
+      const [projData, ownData] = await Promise.all([
+        fetch(`/api/attributes?targetId=${currentProject.id}`).then((r) => r.json()),
+        fetch(`/api/attributes?targetId=${cls.id}`).then((r) => r.json()),
+      ])
+      let inherited: OntologyAttribute[] = []
+      let parentName = ""
+      if (cls.parentId) {
+        const parentCls = allClasses.find((c) => c.id === cls.parentId)
+        parentName = parentCls?.name ?? ""
+        const parentData = await fetch(`/api/attributes?targetId=${cls.parentId}`).then((r) => r.json())
+        inherited = Array.isArray(parentData) ? parentData : []
+      }
+      setDetailAttrGroups({
+        project: Array.isArray(projData) ? projData : [],
+        inherited,
+        own: Array.isArray(ownData) ? ownData : [],
+        parentName,
+      })
+    } catch (err) {
+      console.error(err)
+    } finally {
+      setLoadingDetailAttrs(false)
+    }
+  }, [currentProject?.id])
+
+  // インスタンスを選択状態にし、そのクラス（またはUNCLASSIFIED）の「最後に選択したインスタンス」として記憶する
+  const selectInstance = useCallback((inst: OntologyInstance, key: string) => {
+    setSelectedInst(inst)
+    setDetailName(inst.name)
+    setDetailClassId(inst.classId)
+    setDetailAttrValues(inst.attributes ?? {})
+    const cls = inst.classId ? classes.find((c) => c.id === inst.classId) ?? null : null
+    fetchDetailAttrs(cls, classes)
+    lastInstanceByClassRef.current[key] = inst.id
+  }, [classes, fetchDetailAttrs])
+
+  // 記憶されているインスタンスがあれば復元し、なければ先頭のインスタンスを選択する
+  const applyRememberedSelection = useCallback((key: string, data: OntologyInstance[]) => {
+    const rememberedId = lastInstanceByClassRef.current[key]
+    const remembered = rememberedId ? data.find((i) => i.id === rememberedId) : undefined
+    const next = remembered ?? data[0]
+    if (next) {
+      selectInstance(next, key)
+    } else {
+      setSelectedInst(null)
+    }
+  }, [selectInstance])
+
+  const fetchInstances = useCallback(async (classId: string, autoSelect = false) => {
     setLoadingInstances(true)
     try {
       const data: OntologyInstance[] = await fetch(`/api/instances?classId=${classId}`).then((r) => r.json())
       data.sort((a, b) => (a.order ?? Number.MAX_SAFE_INTEGER) - (b.order ?? Number.MAX_SAFE_INTEGER))
       setInstances(data)
       setInstanceCounts((prev) => ({ ...prev, [classId]: data.length }))
+      if (autoSelect) applyRememberedSelection(classId, data)
     } catch (err) {
       console.error(err)
     } finally {
       setLoadingInstances(false)
     }
-  }, [])
+  }, [applyRememberedSelection])
 
   const fetchAllCounts = useCallback(async (classList: OntologyClass[], projectId: string) => {
     setLoadingCounts(true)
@@ -441,7 +499,7 @@ export function InstancesScreen({ initialSelectedClassId }: { initialSelectedCla
     }
   }, [])
 
-  const fetchUnclassifiedInstances = useCallback(async (allClasses: OntologyClass[], projectId: string) => {
+  const fetchUnclassifiedInstances = useCallback(async (allClasses: OntologyClass[], projectId: string, autoSelect = false) => {
     setLoadingInstances(true)
     try {
       const [nullData, projectData] = await Promise.all([
@@ -459,12 +517,13 @@ export function InstancesScreen({ initialSelectedClassId }: { initialSelectedCla
       combined.sort((a, b) => (a.order ?? Number.MAX_SAFE_INTEGER) - (b.order ?? Number.MAX_SAFE_INTEGER))
       setInstances(combined)
       setInstanceCounts((prev) => ({ ...prev, [UNCLASSIFIED]: combined.length }))
+      if (autoSelect) applyRememberedSelection(UNCLASSIFIED, combined)
     } catch (err) {
       console.error(err)
     } finally {
       setLoadingInstances(false)
     }
-  }, [])
+  }, [applyRememberedSelection])
 
   const fetchAttrs = useCallback(async (cls: OntologyClass, projectId: string, allClasses: OntologyClass[]) => {
     setLoadingAttrs(true)
@@ -494,39 +553,15 @@ export function InstancesScreen({ initialSelectedClassId }: { initialSelectedCla
     }
   }, [])
 
-  const fetchDetailAttrs = useCallback(async (cls: OntologyClass | null, allClasses: OntologyClass[]) => {
-    if (!cls || !currentProject) {
-      setDetailAttrGroups({ project: [], inherited: [], own: [], parentName: "" })
-      return
-    }
-    setLoadingDetailAttrs(true)
-    try {
-      const [projData, ownData] = await Promise.all([
-        fetch(`/api/attributes?targetId=${currentProject.id}`).then((r) => r.json()),
-        fetch(`/api/attributes?targetId=${cls.id}`).then((r) => r.json()),
-      ])
-      let inherited: OntologyAttribute[] = []
-      let parentName = ""
-      if (cls.parentId) {
-        const parentCls = allClasses.find((c) => c.id === cls.parentId)
-        parentName = parentCls?.name ?? ""
-        const parentData = await fetch(`/api/attributes?targetId=${cls.parentId}`).then((r) => r.json())
-        inherited = Array.isArray(parentData) ? parentData : []
-      }
-      setDetailAttrGroups({
-        project: Array.isArray(projData) ? projData : [],
-        inherited,
-        own: Array.isArray(ownData) ? ownData : [],
-        parentName,
-      })
-    } catch (err) {
-      console.error(err)
-    } finally {
-      setLoadingDetailAttrs(false)
-    }
-  }, [currentProject?.id])
-
   // === effects ===
+
+  // プロジェクトが切り替わったら選択状態をリセットする（別プロジェクトの選択を持ち込まない）
+  useEffect(() => {
+    setSelectedClass(null)
+    setIsUnclassifiedSelected(false)
+    setSelectedInst(null)
+    lastInstanceByClassRef.current = {}
+  }, [currentProject?.id])
 
   useEffect(() => { fetchClasses() }, [currentProject?.id])
   useEffect(() => {
@@ -542,12 +577,19 @@ export function InstancesScreen({ initialSelectedClassId }: { initialSelectedCla
       }
     }
   }, [initialSelectedClassId, classes.length])
+  // 初回訪問（未選択）時は先頭のクラスを自動選択する。再訪問時は前回の選択を維持する
+  useEffect(() => {
+    if (initialSelectedClassId) return
+    if (selectedClass || isUnclassifiedSelected) return
+    const first = buildTree(classes)[0]
+    if (first) handleSelectClass(first)
+  }, [classes, initialSelectedClassId, selectedClass, isUnclassifiedSelected])
   useEffect(() => {
     if (isUnclassifiedSelected && currentProject) {
-      fetchUnclassifiedInstances(classes, currentProject.id)
+      fetchUnclassifiedInstances(classes, currentProject.id, true)
       setAttrGroups({ project: [], inherited: [], own: [], parentName: "" })
     } else if (selectedClass && currentProject) {
-      fetchInstances(selectedClass.id)
+      fetchInstances(selectedClass.id, true)
       fetchAttrs(selectedClass, currentProject.id, classes)
     } else {
       setInstances([])
@@ -572,12 +614,8 @@ export function InstancesScreen({ initialSelectedClassId }: { initialSelectedCla
   }
 
   const handleSelectInst = (inst: OntologyInstance) => {
-    setSelectedInst(inst)
-    setDetailName(inst.name)
-    setDetailClassId(inst.classId)
-    setDetailAttrValues(inst.attributes ?? {})
-    const cls = inst.classId ? classes.find((c) => c.id === inst.classId) ?? null : null
-    fetchDetailAttrs(cls, classes)
+    const key = isUnclassifiedSelected ? UNCLASSIFIED : (selectedClass?.id ?? UNCLASSIFIED)
+    selectInstance(inst, key)
   }
 
   const openAdd = () => {
@@ -747,7 +785,7 @@ export function InstancesScreen({ initialSelectedClassId }: { initialSelectedCla
         {/* 左ペイン：クラス選択 */}
         <div className="flex flex-col border-r border-border bg-card">
           <div className="px-4 py-3">
-            <h2 className="text-sm font-semibold text-foreground">クラス選択</h2>
+            <h2 className="text-sm font-semibold text-foreground">クラス</h2>
           </div>
           <div className="flex-1 overflow-auto p-2">
             {loadingClasses ? (
@@ -792,71 +830,67 @@ export function InstancesScreen({ initialSelectedClassId }: { initialSelectedCla
           </div>
         </div>
 
-        {/* 中央＋詳細パネルエリア */}
+        {/* インスタンス一覧＋詳細パネルエリア */}
         {(selectedClass || isUnclassifiedSelected) ? (
-          <div className="relative flex flex-col overflow-hidden">
+          <div className="flex overflow-hidden">
             {/* インスタンス一覧 */}
-            <div className="flex items-center justify-between px-6 py-3">
-              <h2 className="text-base font-semibold text-foreground">{currentLabel}</h2>
-              {canAdd && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-8 gap-1.5 bg-transparent"
-                  onClick={openAdd}
-                  disabled={loadingAttrs}
-                >
-                  <Plus className="h-3.5 w-3.5" />追加
-                </Button>
-              )}
+            <div className="flex flex-1 flex-col overflow-hidden border-r border-border">
+              <div className="flex items-center justify-between px-6 py-3">
+                <h2 className="text-base font-semibold text-foreground">{currentLabel}のインスタンス一覧</h2>
+                {canAdd && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-8 gap-1.5 bg-transparent"
+                    onClick={openAdd}
+                    disabled={loadingAttrs}
+                  >
+                    <Plus className="h-3.5 w-3.5" />追加
+                  </Button>
+                )}
+              </div>
+
+              <div className="flex-1 overflow-auto px-6 pb-6">
+                {loadingInstances ? (
+                  <div className="flex h-32 items-center justify-center text-muted-foreground">
+                    <Loader2 className="h-5 w-5 animate-spin" />
+                  </div>
+                ) : instances.length === 0 ? (
+                  <p className="py-12 text-center text-sm text-muted-foreground">
+                    インスタンスが登録されていません
+                  </p>
+                ) : (
+                  <div className="overflow-x-auto rounded-lg border border-border">
+                    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                      <SortableContext items={instances.map((i) => i.id)} strategy={verticalListSortingStrategy}>
+                        <Table>
+                          <TableHeader>
+                            <TableRow className="bg-muted/50 hover:bg-muted/50">
+                              <TableHead className="w-8 px-2" />
+                              <TableHead className="font-semibold text-foreground">インスタンス名</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {instances.map((inst) => (
+                              <SortableInstRow
+                                key={inst.id}
+                                inst={inst}
+                                isSelected={selectedInst?.id === inst.id}
+                                onClick={() => handleSelectInst(inst)}
+                              />
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </SortableContext>
+                    </DndContext>
+                  </div>
+                )}
+              </div>
             </div>
 
-            <div className="flex-1 overflow-auto px-6 pb-6">
-              {loadingInstances ? (
-                <div className="flex h-32 items-center justify-center text-muted-foreground">
-                  <Loader2 className="h-5 w-5 animate-spin" />
-                </div>
-              ) : instances.length === 0 ? (
-                <p className="py-12 text-center text-sm text-muted-foreground">
-                  インスタンスが登録されていません
-                </p>
-              ) : (
-                <div className="overflow-x-auto rounded-lg border border-border">
-                  <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-                    <SortableContext items={instances.map((i) => i.id)} strategy={verticalListSortingStrategy}>
-                      <Table>
-                        <TableHeader>
-                          <TableRow className="bg-muted/50 hover:bg-muted/50">
-                            <TableHead className="w-8 px-2" />
-                            <TableHead className="font-semibold text-foreground">インスタンス名</TableHead>
-                            <TableHead className="w-32 font-semibold text-foreground">更新日</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {instances.map((inst) => (
-                            <SortableInstRow
-                              key={inst.id}
-                              inst={inst}
-                              isSelected={selectedInst?.id === inst.id}
-                              onClick={() => handleSelectInst(inst)}
-                            />
-                          ))}
-                        </TableBody>
-                      </Table>
-                    </SortableContext>
-                  </DndContext>
-                </div>
-              )}
-            </div>
-
-            {/* 詳細パネル（右からスライドイン） */}
-            <div
-              className={cn(
-                "absolute right-0 top-0 h-full w-96 border-l border-border bg-card shadow-2xl flex flex-col transition-transform duration-200 ease-in-out",
-                selectedInst ? "translate-x-0" : "translate-x-full",
-              )}
-            >
-              {selectedInst && (
+            {/* 詳細パネル（固定） */}
+            <div className="flex w-96 shrink-0 flex-col overflow-hidden bg-card">
+              {selectedInst ? (
                 <>
                   {/* ヘッダー：インスタンス名 + 閉じるボタン */}
                   <div className="flex items-center gap-2 border-b border-border px-4 py-3">
@@ -878,28 +912,9 @@ export function InstancesScreen({ initialSelectedClassId }: { initialSelectedCla
 
                   {/* 本体（スクロール可） */}
                   <div className="flex-1 space-y-5 overflow-y-auto px-4 py-4">
-                    {/* システム属性（読み取り専用） */}
-                    <div className="space-y-2">
-                      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">システム属性</p>
-                      <div className="grid grid-cols-2 gap-x-4 gap-y-3 rounded-lg bg-muted/30 px-3 py-3 text-sm">
-                        <div>
-                          <p className="text-xs text-muted-foreground">登録日</p>
-                          <p className="mt-0.5 font-medium">{selectedInst.registeredAt || "—"}</p>
-                        </div>
-                        <div>
-                          <p className="text-xs text-muted-foreground">登録者</p>
-                          <p className="mt-0.5 font-medium">{selectedInst.registeredBy || "—"}</p>
-                        </div>
-                        <div>
-                          <p className="text-xs text-muted-foreground">更新日</p>
-                          <p className="mt-0.5 font-medium">{selectedInst.updatedAt || "—"}</p>
-                        </div>
-                        <div>
-                          <p className="text-xs text-muted-foreground">更新者</p>
-                          <p className="mt-0.5 font-medium">{selectedInst.updatedBy || "—"}</p>
-                        </div>
-                      </div>
-                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      登録日 {selectedInst.registeredAt || "—"}　登録者 {selectedInst.registeredBy || "—"}　更新日 {selectedInst.updatedAt || "—"}　更新者 {selectedInst.updatedBy || "—"}
+                    </p>
 
                     {/* クラス */}
                     <div className="space-y-1.5">
@@ -978,6 +993,10 @@ export function InstancesScreen({ initialSelectedClassId }: { initialSelectedCla
                     </Button>
                   </div>
                 </>
+              ) : (
+                <div className="flex flex-1 items-center justify-center px-4 text-center text-sm text-muted-foreground">
+                  インスタンスを選択してください
+                </div>
               )}
             </div>
           </div>

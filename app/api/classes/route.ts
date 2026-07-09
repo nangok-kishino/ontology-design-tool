@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getContainer } from "@/lib/cosmos"
+import { getPrincipalName } from "@/lib/auth"
 import { checkProjectAccess } from "@/lib/project-access"
 import type { OntologyClass } from "@/lib/types"
 
@@ -39,6 +40,7 @@ export async function POST(request: NextRequest) {
       if ("error" in access) return access.error
     }
     const now = new Date().toISOString()
+    const actor = getPrincipalName(request)
     const item: OntologyClass = {
       id: crypto.randomUUID(),
       projectId: body.projectId,
@@ -46,6 +48,8 @@ export async function POST(request: NextRequest) {
       nameEn: body.nameEn ?? "",
       description: body.description ?? "",
       parentId: body.parentId ?? null,
+      createdBy: actor,
+      updatedBy: actor,
       createdAt: now,
       updatedAt: now,
     }

@@ -16,11 +16,17 @@ function AppContent() {
   const { currentProject, loading } = useProject()
   const [screen, setScreen] = useState<ScreenId>("dashboard")
   const [initialSelectId, setInitialSelectId] = useState<string | undefined>(undefined)
+  const [hasVisitedClasses, setHasVisitedClasses] = useState(false)
+  const [hasVisitedRelations, setHasVisitedRelations] = useState(false)
+  const [hasVisitedInstances, setHasVisitedInstances] = useState(false)
   const [hasVisitedReview, setHasVisitedReview] = useState(false)
 
   const navigate = (s: ScreenId, id?: string) => {
     setInitialSelectId(id)
     setScreen(s)
+    if (s === "classes") setHasVisitedClasses(true)
+    if (s === "relations") setHasVisitedRelations(true)
+    if (s === "instances") setHasVisitedInstances(true)
     if (s === "review") setHasVisitedReview(true)
   }
 
@@ -35,9 +41,21 @@ function AppContent() {
         ) : (
           <>
             {screen === "dashboard" && <DashboardScreen onNavigate={navigate} />}
-            {screen === "classes" && <ClassesScreen initialSelectedId={initialSelectId} />}
-            {screen === "relations" && <RelationsScreen initialSelectedId={initialSelectId} />}
-            {screen === "instances" && <InstancesScreen initialSelectedClassId={initialSelectId} />}
+            {hasVisitedClasses && (
+              <div className={screen === "classes" ? "h-full" : "hidden"}>
+                <ClassesScreen initialSelectedId={initialSelectId} />
+              </div>
+            )}
+            {hasVisitedRelations && (
+              <div className={screen === "relations" ? "h-full" : "hidden"}>
+                <RelationsScreen initialSelectedId={initialSelectId} />
+              </div>
+            )}
+            {hasVisitedInstances && (
+              <div className={screen === "instances" ? "h-full" : "hidden"}>
+                <InstancesScreen initialSelectedClassId={initialSelectId} />
+              </div>
+            )}
             {hasVisitedReview && (
               <div className={screen === "review" ? "h-full" : "hidden"}>
                 <ReviewScreen />

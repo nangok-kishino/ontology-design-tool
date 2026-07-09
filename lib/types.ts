@@ -18,6 +18,8 @@ export type OntologyClass = {
   nameEn?: string
   description: string
   parentId: string | null
+  createdBy?: string
+  updatedBy?: string
   createdAt: string
   updatedAt: string
 }
@@ -35,6 +37,8 @@ export type OntologyRelation = {
   description: string
   classPairs: ClassPair[]
   parentRelationId: string | null
+  createdBy?: string
+  updatedBy?: string
   createdAt: string
   updatedAt: string
 }
