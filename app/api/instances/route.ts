@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getContainer } from "@/lib/cosmos"
 import { getPrincipalName } from "@/lib/auth"
+import { checkProjectAccess } from "@/lib/project-access"
 import type { OntologyInstance } from "@/lib/types"
 
 const CONTAINER = "instances"
@@ -11,6 +12,11 @@ export async function GET(request: NextRequest) {
     const classId = searchParams.get("classId")
     const projectId = searchParams.get("projectId")
     const container = await getContainer(CONTAINER)
+
+    if (projectId) {
+      const access = await checkProjectAccess(request, projectId)
+      if ("error" in access) return access.error
+    }
 
     if (classId === "unclassified") {
       const { resources } = await container.items
@@ -52,6 +58,10 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
+    if (body.projectId) {
+      const access = await checkProjectAccess(request, body.projectId)
+      if ("error" in access) return access.error
+    }
     const now = new Date().toISOString().split("T")[0]
     const actor = getPrincipalName(request)
     const item: OntologyInstance = {

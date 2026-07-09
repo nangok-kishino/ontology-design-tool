@@ -4,9 +4,10 @@ import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { cn } from "@/lib/utils"
 import {
-  LayoutDashboard, Boxes, GitBranch, FileInput, Database, FolderOpen, BookOpen, LogOut,
+  LayoutDashboard, Boxes, GitBranch, FileInput, Database, FolderOpen, BookOpen, LogOut, Lock, Settings,
 } from "lucide-react"
 import { useProject } from "@/app/project-context"
+import { ProjectSettingsDialog } from "@/components/project-settings-dialog"
 
 export type ScreenId = "dashboard" | "review" | "classes" | "relations" | "instances" | "ontology-info"
 
@@ -44,6 +45,7 @@ export function Sidebar({
   const { currentProject, clearCurrentProject } = useProject()
   const router = useRouter()
   const [email, setEmail] = useState<string | null>(null)
+  const [showProjectSettings, setShowProjectSettings] = useState(false)
 
   useEffect(() => {
     fetch("/api/auth/me")
@@ -77,16 +79,28 @@ export function Sidebar({
           プロジェクト
         </p>
         {currentProject ? (
-          <div className="flex items-center justify-between rounded-md px-2 py-2">
-            <div className="flex min-w-0 items-center gap-2">
-              <FolderOpen className="h-3.5 w-3.5 shrink-0 text-zinc-300" />
-              <span className="truncate text-sm font-medium text-zinc-100">{currentProject.name}</span>
+          <div className="space-y-1">
+            <div className="flex items-center justify-between rounded-md px-2 py-2">
+              <div className="flex min-w-0 items-center gap-1.5">
+                <FolderOpen className="h-3.5 w-3.5 shrink-0 text-zinc-300" />
+                <span className="truncate text-sm font-medium text-zinc-100">{currentProject.name}</span>
+                {currentProject.allowedDomains && currentProject.allowedDomains.length > 0 && (
+                  <Lock className="h-3 w-3 shrink-0 text-zinc-400" aria-label="限定公開プロジェクト" />
+                )}
+              </div>
+              <button
+                onClick={clearCurrentProject}
+                className="ml-2 shrink-0 text-[11px] text-zinc-400 transition-colors hover:text-zinc-100"
+              >
+                変更
+              </button>
             </div>
             <button
-              onClick={clearCurrentProject}
-              className="ml-2 shrink-0 text-[11px] text-zinc-400 transition-colors hover:text-zinc-100"
+              onClick={() => setShowProjectSettings(true)}
+              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[11px] text-zinc-400 transition-colors hover:bg-white/5 hover:text-zinc-100"
             >
-              変更
+              <Settings className="h-3 w-3 shrink-0" />
+              プロジェクト設定
             </button>
           </div>
         ) : (
@@ -178,6 +192,8 @@ export function Sidebar({
           <span>ログアウト</span>
         </button>
       </div>
+
+      <ProjectSettingsDialog open={showProjectSettings} onOpenChange={setShowProjectSettings} />
     </aside>
   )
 }

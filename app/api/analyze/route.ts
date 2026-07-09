@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import Anthropic from "@anthropic-ai/sdk"
 import { getContainer } from "@/lib/cosmos"
+import { checkProjectAccess } from "@/lib/project-access"
 
 const SYSTEM_INSTRUCTION =
   "あなたはオントロジーエンジニアです。提供された文書と定義済みクラス・リレーション・登録済みインスタンスを参照し、以下を抽出してください。\n\n" +
@@ -101,6 +102,9 @@ export async function POST(request: NextRequest) {
 
     if (!file) return NextResponse.json({ error: "ファイルが見つかりません" }, { status: 400 })
     if (!projectId) return NextResponse.json({ error: "projectIdが必要です" }, { status: 400 })
+
+    const access = await checkProjectAccess(request, projectId)
+    if ("error" in access) return access.error
 
     // 既存クラス・リレーションをDBから取得
     const [classContainer, relContainer, instContainer] = await Promise.all([

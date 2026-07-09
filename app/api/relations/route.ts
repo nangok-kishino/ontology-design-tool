@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getContainer } from "@/lib/cosmos"
+import { checkProjectAccess } from "@/lib/project-access"
 import type { OntologyRelation } from "@/lib/types"
 
 const CONTAINER = "relations"
@@ -14,6 +15,8 @@ export async function GET(request: NextRequest) {
       r.classPairs ? r : { ...r, classPairs: [{ sourceClassId: r.sourceClassId, targetClassId: r.targetClassId }] }
 
     if (projectId) {
+      const access = await checkProjectAccess(request, projectId)
+      if ("error" in access) return access.error
       const { resources } = await container.items
         .query<any>({
           query: "SELECT * FROM c WHERE c.projectId = @projectId",
@@ -34,6 +37,10 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
+    if (body.projectId) {
+      const access = await checkProjectAccess(request, body.projectId)
+      if ("error" in access) return access.error
+    }
     const now = new Date().toISOString()
     const item: OntologyRelation = {
       id: crypto.randomUUID(),

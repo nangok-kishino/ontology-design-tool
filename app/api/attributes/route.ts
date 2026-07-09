@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getContainer } from "@/lib/cosmos"
+import { checkProjectAccess } from "@/lib/project-access"
 import type { OntologyAttribute } from "@/lib/types"
 
 const CONTAINER = "attributes"
@@ -31,6 +32,10 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
+    if (body.projectId) {
+      const access = await checkProjectAccess(request, body.projectId)
+      if ("error" in access) return access.error
+    }
     const now = new Date().toISOString()
     const item: OntologyAttribute = {
       id: crypto.randomUUID(),

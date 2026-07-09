@@ -4,6 +4,9 @@ export type Project = {
   id: string
   name: string
   description: string
+  // 閲覧可能ドメイン一覧（空/未設定＝ドメイン制限なしのパブリックプロジェクト）
+  allowedDomains?: string[]
+  createdBy?: string
   createdAt: string
   updatedAt: string
 }

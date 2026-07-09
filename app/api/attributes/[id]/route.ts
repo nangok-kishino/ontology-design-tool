@@ -1,15 +1,18 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getContainer } from "@/lib/cosmos"
+import { checkProjectAccess } from "@/lib/project-access"
 import type { OntologyAttribute } from "@/lib/types"
 
 const CONTAINER = "attributes"
 
-export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params
     const container = await getContainer(CONTAINER)
     const { resource } = await container.item(id, id).read<OntologyAttribute>()
     if (!resource) return NextResponse.json({ error: "見つかりません" }, { status: 404 })
+    const access = await checkProjectAccess(request, resource.projectId)
+    if ("error" in access) return access.error
     return NextResponse.json(resource)
   } catch (error: any) {
     if (error?.code === 404) return NextResponse.json({ error: "見つかりません" }, { status: 404 })
@@ -25,6 +28,8 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
     const container = await getContainer(CONTAINER)
     const { resource: existing } = await container.item(id, id).read<OntologyAttribute>()
     if (!existing) return NextResponse.json({ error: "見つかりません" }, { status: 404 })
+    const access = await checkProjectAccess(request, existing.projectId)
+    if ("error" in access) return access.error
     const updated: OntologyAttribute = {
       ...existing,
       name: body.name ?? existing.name,
@@ -43,10 +48,14 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
   }
 }
 
-export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function DELETE(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params
     const container = await getContainer(CONTAINER)
+    const { resource: existing } = await container.item(id, id).read<OntologyAttribute>()
+    if (!existing) return NextResponse.json({ error: "見つかりません" }, { status: 404 })
+    const access = await checkProjectAccess(request, existing.projectId)
+    if ("error" in access) return access.error
     await container.item(id, id).delete()
     return new NextResponse(null, { status: 204 })
   } catch (error: any) {
