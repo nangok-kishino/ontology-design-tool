@@ -68,8 +68,8 @@ export function Sidebar({
           <Boxes className="h-4 w-4 text-white" />
         </div>
         <div className="leading-tight">
-          <p className="text-sm font-semibold tracking-tight text-white">オントロジー設計</p>
-          <p className="text-[11px] text-zinc-400">オントロジー設計支援ツール</p>
+          <p className="text-sm font-semibold tracking-tight text-white">Graph Navi</p>
+          <p className="text-[11px] text-zinc-400">ナレッジグラフ構築支援ツール</p>
         </div>
       </div>
 
@@ -179,17 +179,13 @@ export function Sidebar({
       {/* ログイン情報・ログアウト（常時表示・最下部） */}
       <div className="mx-3 border-t border-white/[0.06]" />
       <div className="px-3 py-3">
-        {email && (
-          <p className="truncate px-2.5 pb-1.5 text-[11px] text-zinc-500" title={email}>
-            {email}
-          </p>
-        )}
         <button
           onClick={handleLogout}
-          className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-sm text-zinc-300 transition-colors hover:bg-white/5 hover:text-white"
+          title="クリックしてログアウト"
+          className="flex w-full items-center justify-between gap-2 rounded-md bg-white px-2.5 py-2 text-sm font-medium text-zinc-900 shadow-sm transition-colors hover:bg-zinc-100"
         >
-          <LogOut className="h-4 w-4 shrink-0 text-zinc-400" />
-          <span>ログアウト</span>
+          <span className="truncate" title={email ?? undefined}>{email ?? "ログアウト"}</span>
+          <LogOut className="h-4 w-4 shrink-0 text-zinc-500" />
         </button>
       </div>
 

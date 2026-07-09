@@ -9,7 +9,7 @@ const geistMono = Geist_Mono({
 })
 
 export const metadata: Metadata = {
-  title: 'オントロジー設計支援ツール',
+  title: 'ナレッジグラフ構築支援ツール',
   description: '製造業の知識継承のためのオントロジー設計支援ツール',
   generator: 'v0.app',
   icons: {
