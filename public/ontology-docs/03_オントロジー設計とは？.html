@@ -152,6 +152,69 @@
             margin: 10px 0;
             text-align: center;
         }
+
+        /* 3. Relation Design Visuals */
+        .relation-viz-row {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 15px;
+            margin: 15px 0;
+        }
+        .relation-class-node {
+            background: #0f172a;
+            color: #fff;
+            font-weight: bold;
+            padding: 8px 16px;
+            border-radius: 4px;
+            font-size: 13px;
+            min-width: 100px;
+            text-align: center;
+        }
+        .relation-arrow-line {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            font-size: 11px;
+            color: #475569;
+            font-weight: bold;
+            min-width: 120px;
+            position: relative;
+        }
+        .relation-arrow-line::after {
+            content: '➔';
+            font-size: 16px;
+            color: #2563eb;
+            margin-top: -2px;
+        }
+        .relation-arrow-line.bi-directional::after {
+            content: '➔';
+            display: none;
+        }
+        .relation-arrow-line.bi-directional::before {
+            content: '◀ ➔';
+            font-size: 14px;
+            color: #94a3b8;
+            letter-spacing: -2px;
+        }
+        .badge-wrong {
+            background-color: #fecaca;
+            color: #991b1b;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: bold;
+            margin-left: 5px;
+        }
+        .badge-right {
+            background-color: #d1fae5;
+            color: #065f46;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: bold;
+            margin-left: 5px;
+        }
     </style>
 </head>
 <body>
@@ -175,7 +238,51 @@
         <li><span class="highlight">属性（Attribute）：</span> 各クラスが持つべき「付随データ項目の型」の定義です。 （例：<code>[不具合現象]</code>クラスには<code>「発生日時」</code>という項目を持たせる、という定義）</li>
     </ul>
 
-    <h2>3. オントロジーの適用対象：インスタンスとは</h2>
+    <h2>3. リレーション（関係性）設計の3大ルール</h2>
+    <p>オントロジー設計において、クラス同士をつなぐ「リレーション」の定義は、ナレッジグラフの検索精度を左右する極めて重要な工程です。ドメインエンジニアがリレーションの共通ルールを定める際、必ず考慮すべき3つの設計ルールがあります。</p>
+
+    <h3>① 有向性（矢印の向き）の定義</h3>
+    <p>グラフDBにおけるリレーションは、必ず<strong>始点（主語）から終点（目的語）への方向（有向性）</strong>を持ちます。向きが変わると文脈の意味が全く変わってしまうため、ルール設計の時点で矢印の方向とラベル（述語）の関係を固定する必要があります。</p>
+
+    <div class="ontology-viz">
+        <div class="viz-title">【リレーションの有向性の違い】</div>
+        <div class="relation-viz-row">
+            <div class="relation-class-node">[部品]</div>
+            <div class="relation-arrow-line">～が構成部品である</div>
+            <div class="relation-class-node">[製品]</div>
+            <span class="badge-right">正</span>
+        </div>
+        <div class="relation-viz-row">
+            <div class="relation-class-node">[製品]</div>
+            <div class="relation-arrow-line">～が構成部品である</div>
+            <div class="relation-class-node">[部品]</div>
+            <span class="badge-wrong">誤</span>
+        </div>
+    </div>
+    <p style="font-size: 14px; color: #64748b; text-align: center; margin-top: -10px; margin-bottom: 20px;">
+        ※「部品が、製品を構成する」のは正しいですが、逆向きに同じラベルを適用すると「製品が、部品を構成する」となり、意味が破綻します。
+    </p>
+
+    <h3>② 関係性の多重度（接続ルール）</h3>
+    <p>あるクラスのインスタンスと、別のクラスのインスタンスが「いくつずつ接続され得るか」という対応関係のルール（多重度）を制限します。これにより、データ抽出時の矛盾を防ぎます。</p>
+    <ul>
+        <li><span class="highlight">1 対 1（One-to-One）：</span> 1つのノードに必ず1つだけ対応する関係。 （例：<code>[製品] ➔ (has_serial_number) ➔ [シリアル番号]</code>）</li>
+        <li><span class="highlight">1 対 多（One-to-Many）：</span> 1つのノードに複数のノードが紐づく関係。 （例：<code>[製品] ➔ (has_part) ➔ [部品]</code> ※1つの製品は複数の部品を持つ）</li>
+        <li><span class="highlight">多 対 多（Many-to-Many）：</span> 互いに複数ずつ結びつき合う関係。 （例：<code>[部品] ➔ (has_defect) ➔ [不具合現象]</code> ※ある部品は様々な不具合を起こし、その不具合は他の様々な部品でも起こり得る）</li>
+    </ul>
+
+    <h3>③ 関係性の分類（階層関係と非階層関係）</h3>
+    <p>リレーションは、知識の骨組みとなる<strong>「階層関係（縦のつながり）」</strong>と、事象の流れや物理的関連性を表す<strong>「非階層関係（横のつながり）」</strong>に明確に分かれます。</p>
+    <ul>
+        <li><span class="highlight">階層関係（構造的関係）：</span> 
+            システムに知識を分類・継承させるためのリレーションです。これには、本章後半で解説する<code>is-a</code>（～は～の一種である）関係や、<code>part-of / has-part</code>（構成・部分関係）が該当します。
+        </li>
+        <li><span class="highlight">非階層関係（ドメイン関係）：</span> 
+            業務特有の因果関係や使われ方を表すリレーションです。 <code>causes</code>（～が原因である）、<code>controls</code>（～を制御する）、<code>measures</code>（～を計測する）といった「動詞的」な意味合いを持ちます。
+        </li>
+    </ul>
+
+    <h2>4. オントロジーの適用対象：インスタンスとは</h2>
     <p>オントロジーが「ルール（設計図）」であるのに対し、そのルールを既存文書などの実データに適用して得られる、具体的な「モノやコト」の実体を<strong>インスタンス（Instance）</strong>と呼びます。これは後続の「データの抽出」フェーズで抽出される、具体的なデータそのものです。</p>
 
     <ul>
@@ -199,8 +306,8 @@
         </div>
     </div>
 
-    <h2>4. 知識の体系化（is-a関係による分類構造）</h2>
-    <p>オントロジー設計において、概念（クラス）を整理するための強力な手段が<strong>is-a関係</strong>（～は～の一種である）です。
+    <h2>5. 知識の体系化（is-a関係による分類構造）</h2>
+    <p>3章の第3節で触れた階層関係の中でも、概念（クラス）を整理するための最も強力な手段が<strong>is-a関係</strong>（～は～の一種である）です。
     `is-a` 関係を用いることで、クラスを大分類から中分類、小分類へと、階層的に体系化して整理することができます。</p>
 
     <!-- is-a関係の階層構造図 -->
@@ -226,7 +333,7 @@
         <li>新しく「クラック（亀裂）」という事象を追加する際、それが「破損」の一種（is-a）であるとクラス体系に定義するだけで、既存のデータベースシステムに美しく統合される。</li>
     </ul>
 
-    <h2>5. ドメインエンジニア（人間）が主導する重要性</h2>
+    <h2>6. ドメインエンジニア（人間）が主導する重要性</h2>
     <p>オントロジー（ルール）を設計するにあたって、最も重要なポイントは、<strong>「業務を一番理解している現場のエンジニア（ドメインエンジニア）が主体となって共通ルールを決める」</strong>という点です。</p>
     <p>どのようなクラスを作り、それらをどのような関係性で結ぶべきかという判断には、開発業務の実務で培われた文脈が不可欠です。LLMなどのAIは、既存文書から「このような概念が抽出できます」と候補を提案することはできますが、その設計や厳密な定義、合意形成は人間でなければ行えません。</p>
     
