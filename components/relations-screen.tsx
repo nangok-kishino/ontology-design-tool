@@ -54,7 +54,7 @@ function formatDateTime(iso: string | undefined): string {
   return d.toLocaleString("ja-JP", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })
 }
 
-export function RelationsScreen({ initialSelectedId }: { initialSelectedId?: string }) {
+export function RelationsScreen({ initialSelectedId, active }: { initialSelectedId?: string; active?: boolean }) {
   const { currentProject, loading: projectLoading } = useProject()
   const [relations, setRelations] = useState<OntologyRelation[]>([])
   const [classes, setClasses] = useState<OntologyClass[]>([])
@@ -70,7 +70,6 @@ export function RelationsScreen({ initialSelectedId }: { initialSelectedId?: str
   const [adding, setAdding] = useState(false)
 
   // 編集モード
-  const [isEditing, setIsEditing] = useState(false)
   const [editName, setEditName] = useState("")
   const [editNameEn, setEditNameEn] = useState("")
   const [editDesc, setEditDesc] = useState("")
@@ -149,6 +148,15 @@ export function RelationsScreen({ initialSelectedId }: { initialSelectedId?: str
     }
   }, [initialSelectedId, relations.length])
 
+  // この画面が表示状態になったら再取得する（画面はマウント維持されるため、
+  // 文書取込みでリレーションを本登録した結果などを反映するのに必要）
+  useEffect(() => {
+    if (active && currentProject) {
+      fetchRelations()
+      fetchClasses()
+    }
+  }, [active, currentProject?.id, fetchRelations, fetchClasses])
+
   const fetchAllAttrs = useCallback(async (relationId: string, projectId: string) => {
     setLoadingAttrs(true)
     try {
@@ -164,10 +172,17 @@ export function RelationsScreen({ initialSelectedId }: { initialSelectedId?: str
   }, [])
 
   useEffect(() => {
-    setIsEditing(false)
     if (!selectedId || !currentProject) {
       setProjectAttrs([]); setOwnAttrs([])
       return
+    }
+    // 常時編集可のため、選択のたびに編集フィールドを対象リレーションで初期化する
+    const rel = relations.find((r) => r.id === selectedId)
+    if (rel) {
+      setEditName(rel.name)
+      setEditNameEn(rel.nameEn ?? "")
+      setEditDesc(rel.description ?? "")
+      setEditPairs(rel.classPairs ?? [])
     }
     fetchAllAttrs(selectedId, currentProject.id)
   }, [selectedId, currentProject?.id])
@@ -207,15 +222,6 @@ export function RelationsScreen({ initialSelectedId }: { initialSelectedId?: str
   const updateEditPair = (i: number, field: keyof ClassPair, val: string) =>
     setEditPairs(p => p.map((pair, j) => j === i ? { ...pair, [field]: val } : pair))
 
-  const startEdit = () => {
-    if (!selected) return
-    setEditName(selected.name)
-    setEditNameEn(selected.nameEn ?? "")
-    setEditDesc(selected.description)
-    setEditPairs(selected.classPairs ?? [])
-    setIsEditing(true)
-  }
-
   const handleSave = async () => {
     if (!editName.trim() || !selected || editPairs.length === 0 || editPairs.some(p => !p.sourceClassId || !p.targetClassId)) return
     setSaving(true)
@@ -231,7 +237,6 @@ export function RelationsScreen({ initialSelectedId }: { initialSelectedId?: str
         }),
       })
       await fetchRelations()
-      setIsEditing(false)
     } finally {
       setSaving(false)
     }
@@ -357,6 +362,22 @@ export function RelationsScreen({ initialSelectedId }: { initialSelectedId?: str
 
   const selected = relations.find((r) => r.id === selectedId)
   const className = (id: string | null) => id ? (classes.find((c) => c.id === id)?.name ?? "不明") : "—"
+  // 参照先クラスが削除された（存在しない）／未設定の端点を「不明」とみなす
+  const classMissing = (id: string | null | undefined) => !id || !classes.some((c) => c.id === id)
+  // classPairs のいずれかの端点が不明なら、定義が不完全なリレーション
+  const relationIncomplete = (r: OntologyRelation) =>
+    (r.classPairs ?? []).length === 0 ||
+    (r.classPairs ?? []).some((p) => classMissing(p.sourceClassId) || classMissing(p.targetClassId))
+
+  // 保存ボタンの妥当性・変更検知
+  const relValid = editName.trim() !== "" && editPairs.length > 0 &&
+    !editPairs.some((p) => !p.sourceClassId || !p.targetClassId)
+  const relDirty = !!selected && (
+    editName !== selected.name ||
+    editNameEn !== (selected.nameEn ?? "") ||
+    editDesc !== (selected.description ?? "") ||
+    JSON.stringify(editPairs) !== JSON.stringify(selected.classPairs ?? [])
+  )
 
   const renderAttrSection = (title: string, attrs: OntologyAttribute[], section: AttrSectionKey) => {
     const hasRows = attrs.length > 0
@@ -443,17 +464,17 @@ export function RelationsScreen({ initialSelectedId }: { initialSelectedId?: str
           <Upload className="h-3.5 w-3.5" />インポート
         </Button>
       </TopBar>
-      <div className="grid flex-1 overflow-hidden" style={{ gridTemplateColumns: "260px 1fr" }}>
-        {/* 左ペイン */}
-        <div className="flex flex-col border-r border-border bg-card">
-          <div className="flex items-center justify-between px-4 py-3">
-            <h2 className="text-sm font-semibold text-foreground">リレーション一覧</h2>
+      <div className="flex flex-1 overflow-hidden">
+        {/* 一覧（表） */}
+        <div className="flex flex-1 flex-col overflow-hidden border-r border-border">
+          <div className="flex items-center justify-between px-6 py-3">
+            <h2 className="text-base font-semibold text-foreground">リレーション一覧</h2>
             <Button size="sm" variant="outline" className="h-8 gap-1.5 bg-transparent"
               onClick={() => { setNewName(""); setNewNameEn(""); setNewDesc(""); setNewPairs([{ sourceClassId: "", targetClassId: "" }]); setShowAdd(true) }}>
               <Plus className="h-3.5 w-3.5" />追加
             </Button>
           </div>
-          <div className="flex-1 overflow-auto p-2">
+          <div className="flex-1 overflow-auto px-6 pb-6">
             {loading ? (
               <div className="flex h-32 items-center justify-center text-muted-foreground">
                 <Loader2 className="h-5 w-5 animate-spin" />
@@ -463,175 +484,143 @@ export function RelationsScreen({ initialSelectedId }: { initialSelectedId?: str
                 {currentProject ? "リレーションが登録されていません" : "プロジェクトを選択してください"}
               </p>
             ) : (
-              relations.map((r) => {
-                const isSelected = selectedId === r.id
-                return (
-                  <button
-                    key={r.id}
-                    onClick={() => setSelectedId(r.id)}
-                    className={cn(
-                      "flex w-full flex-col gap-0.5 rounded-md px-3 py-2.5 text-left text-sm transition-colors",
-                      isSelected ? "bg-accent text-accent-foreground" : "hover:bg-muted",
-                    )}
-                  >
-                    <span className="font-medium text-foreground">{r.name}</span>
-                    {r.nameEn && <span className="text-xs text-muted-foreground">{r.nameEn}</span>}
-                    {(r.classPairs ?? []).map((p, i) => (
-                      <span key={i} className="flex items-center gap-1 text-xs text-muted-foreground">
-                        {className(p.sourceClassId)}
-                        <ArrowRight className="h-3 w-3" />
-                        {className(p.targetClassId)}
-                      </span>
-                    ))}
-                  </button>
-                )
-              })
+              <div className="overflow-x-auto rounded-lg border border-border">
+                <Table className="table-fixed">
+                  <TableHeader>
+                    <TableRow className="bg-muted/50 hover:bg-muted/50">
+                      <TableHead className="w-[45%] font-semibold text-foreground">リレーション名</TableHead>
+                      <TableHead className="w-[55%] font-semibold text-foreground">始点 → 終点クラス</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {relations.map((r) => {
+                      const isSel = selectedId === r.id
+                      const pairs = r.classPairs ?? []
+                      const first = pairs[0]
+                      return (
+                        <TableRow
+                          key={r.id}
+                          className={cn(
+                            "cursor-pointer transition-colors",
+                            isSel
+                              ? "bg-indigo-100 hover:bg-indigo-100 dark:bg-indigo-950/50 dark:hover:bg-indigo-950/50"
+                              : "hover:bg-muted/50",
+                          )}
+                          onClick={() => setSelectedId(r.id)}
+                        >
+                          <TableCell className="align-top">
+                            <span className="flex items-center gap-1 font-medium text-foreground">
+                              <span className="truncate" title={r.name}>{r.name}</span>
+                              {relationIncomplete(r) && (
+                                <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-500" />
+                              )}
+                            </span>
+                            {r.nameEn && <span className="block truncate text-xs text-muted-foreground">{r.nameEn}</span>}
+                          </TableCell>
+                          <TableCell className="align-top text-sm text-muted-foreground">
+                            {first ? (
+                              <span className="flex items-center gap-1">
+                                <span className={cn("truncate", classMissing(first.sourceClassId) && "font-medium text-amber-600 dark:text-amber-500")}>
+                                  {className(first.sourceClassId)}
+                                </span>
+                                <ArrowRight className="h-3 w-3 shrink-0" />
+                                <span className={cn("truncate", classMissing(first.targetClassId) && "font-medium text-amber-600 dark:text-amber-500")}>
+                                  {className(first.targetClassId)}
+                                </span>
+                                {pairs.length > 1 && <span className="shrink-0 text-xs">+{pairs.length - 1}</span>}
+                              </span>
+                            ) : "—"}
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
             )}
           </div>
         </div>
 
-        {/* 右ペイン */}
-        {selected ? (
-          <div className="flex flex-col overflow-hidden">
-            <div className="flex items-center justify-between px-6 py-3">
-              <div className="flex items-center gap-2">
-                <h2 className="text-base font-semibold text-foreground">{selected.name}</h2>
-                <span className="flex items-center gap-1 text-sm text-muted-foreground">
-                  {(selected.classPairs ?? []).slice(0, 1).map((p, i) => (
-                    <span key={i} className="flex items-center gap-1">
-                      <span>{className(p.sourceClassId)}</span>
-                      <ArrowRight className="h-3.5 w-3.5" />
-                      <span>{className(p.targetClassId)}</span>
+        {/* 詳細（常に編集可・固定パネル） */}
+        <div className="flex w-[30rem] shrink-0 flex-col overflow-hidden bg-card">
+          {selected ? (
+            <>
+              <div className="flex-1 space-y-6 overflow-y-auto px-4 py-4">
+                {relationIncomplete(selected) && (
+                  <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2.5 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                    <span>
+                      始点または終点のクラスが未設定、または削除されており（「不明」と表示）、このリレーション定義は不完全です。始点・終点クラスを設定し直してください。
                     </span>
-                  ))}
-                  {(selected.classPairs ?? []).length > 1 && (
-                    <span className="ml-1 text-xs">+{selected.classPairs.length - 1}</span>
-                  )}
-                </span>
-              </div>
-              <div className="flex gap-2">
-                {isEditing ? (
-                  <>
-                    <Button size="sm" variant="outline" className="h-8 gap-1.5 bg-transparent"
-                      onClick={() => setIsEditing(false)}>
-                      <X className="h-3.5 w-3.5" />キャンセル
-                    </Button>
-                    <Button size="sm" className="h-8 gap-1.5"
-                      onClick={handleSave} disabled={!editName.trim() || editPairs.length === 0 || editPairs.some(p => !p.sourceClassId || !p.targetClassId) || saving}>
-                      {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-                      {saving ? "保存中..." : "保存"}
-                    </Button>
-                  </>
-                ) : (
-                  <>
-                    <Button size="sm" variant="outline" className="h-8 gap-1.5 bg-transparent" onClick={startEdit}>
-                      <Pencil className="h-3.5 w-3.5" />編集
-                    </Button>
-                    <Button size="sm" variant="outline"
-                      className="h-8 gap-1.5 bg-transparent text-destructive hover:text-destructive"
-                      onClick={() => setShowDelete(true)}>
-                      <Trash2 className="h-3.5 w-3.5" />削除
-                    </Button>
-                  </>
+                  </div>
                 )}
-              </div>
-            </div>
-
-            <div className="flex-1 overflow-auto px-6 py-6 space-y-8">
-                <p className="text-xs text-muted-foreground">
-                  登録日 {formatDateTime(selected.createdAt)}　登録者 {selected.createdBy || "—"}　更新日 {formatDateTime(selected.updatedAt)}　更新者 {selected.updatedBy || "—"}
-                </p>
 
                 {/* 基本情報 */}
-                <div className="space-y-5">
+                <section className="space-y-3">
                   <SectionHeader icon={FileText} title="基本情報" />
-                  {isEditing ? (
-                    <>
+                  <div className="space-y-3">
+                    <div className="space-y-0.5 text-xs text-muted-foreground">
+                      <p>登録日 {formatDateTime(selected.createdAt)}{selected.createdBy ? `（${selected.createdBy}）` : ""}</p>
+                      <p>更新日 {formatDateTime(selected.updatedAt)}{selected.updatedBy ? `（${selected.updatedBy}）` : ""}</p>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-sm font-medium">リレーション名（日本語名） <span className="text-destructive">*</span></Label>
+                      <Input value={editName} onChange={(e) => setEditName(e.target.value)} className="h-8" placeholder="例：引き起こす" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-sm font-medium">リレーション名（英語名）</Label>
+                      <Input value={editNameEn} onChange={(e) => setEditNameEn(e.target.value)} className="h-8" placeholder="例：causes" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-sm font-medium">始点・終点クラスのペア <span className="text-destructive">*</span></Label>
                       <div className="space-y-2">
-                        <Label>リレーション名 <span className="text-destructive">*</span></Label>
-                        <Input value={editName} onChange={(e) => setEditName(e.target.value)} />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>英語名</Label>
-                        <Input value={editNameEn} onChange={(e) => setEditNameEn(e.target.value)}
-                          placeholder="例：causes" />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>始点・終点クラスのペア <span className="text-destructive">*</span></Label>
-                        <div className="space-y-2">
-                          {editPairs.map((pair, i) => (
-                            <div key={i} className="flex items-center gap-2">
-                              <Select value={pair.sourceClassId || "__none__"}
-                                onValueChange={(v) => updateEditPair(i, "sourceClassId", v && v !== "__none__" ? v : "")}>
-                                <SelectTrigger className="flex-1">
-                                  <SelectValue>{pair.sourceClassId ? className(pair.sourceClassId) : "始点クラス"}</SelectValue>
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {classes.map((c) => (
-                                    <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                              <ArrowRight className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
-                              <Select value={pair.targetClassId || "__none__"}
-                                onValueChange={(v) => updateEditPair(i, "targetClassId", v && v !== "__none__" ? v : "")}>
-                                <SelectTrigger className="flex-1">
-                                  <SelectValue>{pair.targetClassId ? className(pair.targetClassId) : "終点クラス"}</SelectValue>
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {classes.map((c) => (
-                                    <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                              {editPairs.length > 1 && (
-                                <Button size="icon" variant="ghost" className="h-8 w-8 flex-shrink-0 text-muted-foreground"
-                                  onClick={() => removeEditPair(i)}>
-                                  <X className="h-4 w-4" />
-                                </Button>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                        <Button size="sm" variant="outline" className="gap-1 bg-transparent"
-                          onClick={addEditPair}>
-                          <Plus className="h-3.5 w-3.5" />
-                          ペアを追加
-                        </Button>
-                      </div>
-                      <div className="space-y-2">
-                        <Label>説明</Label>
-                        <Textarea rows={4} value={editDesc} onChange={(e) => setEditDesc(e.target.value)} />
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <div className="space-y-1">
-                        <Label className="text-xs text-muted-foreground">リレーション名</Label>
-                        <p className="text-sm font-medium text-foreground">{selected.name}</p>
-                      </div>
-                      <div className="space-y-1">
-                        <Label className="text-xs text-muted-foreground">始点・終点クラスのペア</Label>
-                        {(selected.classPairs ?? []).map((p, i) => (
-                          <div key={i} className="flex items-center gap-2 text-sm text-foreground">
-                            <span>{className(p.sourceClassId)}</span>
-                            <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
-                            <span>{className(p.targetClassId)}</span>
+                        {editPairs.map((pair, i) => (
+                          <div key={i} className="flex items-center gap-2">
+                            <Select value={pair.sourceClassId || "__none__"}
+                              onValueChange={(v) => updateEditPair(i, "sourceClassId", v && v !== "__none__" ? v : "")}>
+                              <SelectTrigger className="h-8 flex-1">
+                                <SelectValue>{pair.sourceClassId ? className(pair.sourceClassId) : "始点クラス"}</SelectValue>
+                              </SelectTrigger>
+                              <SelectContent className="max-h-72 w-auto min-w-(--anchor-width) max-w-[22rem]">
+                                {classes.map((c) => (
+                                  <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            <ArrowRight className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
+                            <Select value={pair.targetClassId || "__none__"}
+                              onValueChange={(v) => updateEditPair(i, "targetClassId", v && v !== "__none__" ? v : "")}>
+                              <SelectTrigger className="h-8 flex-1">
+                                <SelectValue>{pair.targetClassId ? className(pair.targetClassId) : "終点クラス"}</SelectValue>
+                              </SelectTrigger>
+                              <SelectContent className="max-h-72 w-auto min-w-(--anchor-width) max-w-[22rem]">
+                                {classes.map((c) => (
+                                  <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            {editPairs.length > 1 && (
+                              <Button size="icon" variant="ghost" className="h-8 w-8 flex-shrink-0 text-muted-foreground"
+                                onClick={() => removeEditPair(i)}>
+                                <X className="h-4 w-4" />
+                              </Button>
+                            )}
                           </div>
                         ))}
                       </div>
-                      <div className="space-y-1">
-                        <Label className="text-xs text-muted-foreground">説明</Label>
-                        <p className="text-sm text-foreground whitespace-pre-wrap">
-                          {selected.description || "（説明なし）"}
-                        </p>
-                      </div>
-                    </>
-                  )}
-                </div>
+                      <Button size="sm" variant="outline" className="gap-1 bg-transparent" onClick={addEditPair}>
+                        <Plus className="h-3.5 w-3.5" />ペアを追加
+                      </Button>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-sm font-medium">説明</Label>
+                      <Textarea rows={4} value={editDesc} onChange={(e) => setEditDesc(e.target.value)} />
+                    </div>
+                  </div>
+                </section>
 
                 {/* 属性 */}
-                <div className="space-y-4">
+                <section className="space-y-4">
                   <SectionHeader icon={Tags} title="属性" />
                   {loadingAttrs ? (
                     <div className="flex h-20 items-center justify-center text-muted-foreground">
@@ -643,16 +632,30 @@ export function RelationsScreen({ initialSelectedId }: { initialSelectedId?: str
                       {renderAttrSection("リレーション固有属性", ownAttrs, "own")}
                     </div>
                   )}
-                </div>
+                </section>
+              </div>
+
+              {/* フッター：削除・保存 */}
+              <div className="flex items-center justify-between border-t border-border px-4 py-3">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="gap-1.5 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                  onClick={() => setShowDelete(true)}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />削除
+                </Button>
+                <Button size="sm" variant="success" onClick={handleSave} disabled={!relValid || saving || !relDirty}>
+                  {saving && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}保存
+                </Button>
+              </div>
+            </>
+          ) : (
+            <div className="flex flex-1 items-center justify-center px-4 text-center text-sm text-muted-foreground">
+              リレーションを選択してください
             </div>
-          </div>
-        ) : (
-          !loading && (
-            <div className="flex items-center justify-center text-muted-foreground">
-              <p className="text-sm">リレーションを選択してください</p>
-            </div>
-          )
-        )}
+          )}
+        </div>
       </div>
 
       {/* リレーション追加ダイアログ */}

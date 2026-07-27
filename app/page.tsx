@@ -43,22 +43,22 @@ function AppContent() {
             {screen === "dashboard" && <DashboardScreen onNavigate={navigate} />}
             {hasVisitedClasses && (
               <div className={screen === "classes" ? "h-full" : "hidden"}>
-                <ClassesScreen initialSelectedId={initialSelectId} />
+                <ClassesScreen initialSelectedId={initialSelectId} active={screen === "classes"} />
               </div>
             )}
             {hasVisitedRelations && (
               <div className={screen === "relations" ? "h-full" : "hidden"}>
-                <RelationsScreen initialSelectedId={initialSelectId} />
+                <RelationsScreen initialSelectedId={initialSelectId} active={screen === "relations"} />
               </div>
             )}
             {hasVisitedInstances && (
               <div className={screen === "instances" ? "h-full" : "hidden"}>
-                <InstancesScreen initialSelectedClassId={initialSelectId} />
+                <InstancesScreen initialSelectedClassId={initialSelectId} active={screen === "instances"} />
               </div>
             )}
             {hasVisitedReview && (
               <div className={screen === "review" ? "h-full" : "hidden"}>
-                <ReviewScreen />
+                <ReviewScreen active={screen === "review"} />
               </div>
             )}
           </>
