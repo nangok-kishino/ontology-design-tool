@@ -6,7 +6,12 @@ import { checkProjectAccess } from "@/lib/project-access"
 const SYSTEM_INSTRUCTION =
   "あなたはオントロジーエンジニアです。提供された文書と定義済みクラス・リレーション・登録済みインスタンスを参照し、以下を抽出してください。\n\n" +
   "1. インスタンス候補：文書中の具体的な事例・対象・固有名詞のうち、【登録済みインスタンス】に一致・類似するものは除外し、新規性のあるものだけを列挙してください。既存クラスに割り当ててください（suggestedClassId と suggestedClassName を指定）。適切なクラスがない場合は isNewClass: true とし、新規クラス名と説明を提案してください。\n\n" +
-  "2. リレーション候補：文書が示唆するクラス間の関係で、【定義済みリレーション】に含まれない組み合わせのみを挙げてください。"
+  "2. リレーション候補：クラス（種類・カテゴリ）どうしの関係を、汎用的で再利用可能な粒度で抽出してください。\n" +
+  "   - リレーション名は「始点クラス（主語）—述語—終点クラス（目的語）」の【述語部分だけ】を記述してください。主語となる始点クラスや、目的語となる終点クラスの名詞をリレーション名に含めてはいけません（それらは sourceClassName／targetClassName で別途表します）。\n" +
+  "   - リレーション名は簡潔な動詞句にしてください。良い例：「含む」「構成する」「搭載される」「評価される」「準拠する」「影響する」（格助詞を付けた「を含む」「に搭載される」なども可）。悪い例：「潤滑油の低粘度化が燃費・電費を向上させる」（主語・目的語・条件を含む）／「性能に影響する」（目的語の名詞『性能』を含む）。\n" +
+  "   - 特定の指標・数値・条件・形容表現を埋め込んだ文章的で過度に具体的な関係は避け、そのクラスの多くのインスタンスに一般的に当てはまる述語へ一般化してください。似た関係は無理に細分化せず1つにまとめてください。\n" +
+  "   - 始点・終点にはできる限り【定義済みクラス】を割り当て（sourceClassId／targetClassId にIDを指定）、該当する既存クラスが無い場合のみ新規クラス名を sourceClassName／targetClassName に記載してください。\n" +
+  "   - 【定義済みリレーション】と同一の組み合わせ（始点・終点・意味が一致）や、候補どうしで重複するものは除外し、必ず一意にしてください。"
 
 const EXTRACT_FUNCTION = {
   name: "extract_ontology_candidates",
@@ -38,7 +43,7 @@ const EXTRACT_FUNCTION = {
           properties: {
             sourceClassId: { type: "string", description: "始点クラスのID（既存クラスから。不明なら空文字）" },
             sourceClassName: { type: "string", description: "始点クラス名" },
-            relationName: { type: "string", description: "リレーション名（動詞句）" },
+            relationName: { type: "string", description: "リレーション名（述語部分のみの動詞句。始点クラス＝主語や終点クラス＝目的語の名詞は含めない。例：含む／搭載される／影響する）" },
             targetClassId: { type: "string", description: "終点クラスのID（既存クラスから。不明なら空文字）" },
             targetClassName: { type: "string", description: "終点クラス名" },
             description: { type: "string", description: "リレーションの説明（1〜2文）" },

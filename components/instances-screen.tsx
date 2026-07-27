@@ -29,7 +29,9 @@ import {
 } from "@/components/ui/select"
 import { TopBar } from "@/components/top-bar"
 import { ImportDialog } from "@/components/import-dialog"
+import { NameCheckDialog } from "@/components/name-check-dialog"
 import { cn } from "@/lib/utils"
+import { instanceStatus } from "@/lib/instance-status"
 import type { OntologyClass, OntologyInstance, OntologyAttribute } from "@/lib/types"
 import {
   buildInstancesYaml,
@@ -39,7 +41,8 @@ import {
   executeInstancesImport,
   type InstanceExportItem,
 } from "@/lib/import-export"
-import { ChevronDown, ChevronRight, Plus, Trash2, Loader2, Info, X, GripVertical, AlertTriangle, Download, Upload } from "lucide-react"
+import { ChevronDown, ChevronRight, Plus, Trash2, Loader2, Info, X, GripVertical, AlertTriangle, Download, Upload, Undo2, FileText, Tags } from "lucide-react"
+import { SectionHeader } from "@/components/section-header"
 import { useProject } from "@/app/project-context"
 import {
   DndContext,
@@ -290,6 +293,7 @@ function SortableInstRow({
   onClick: () => void
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: inst.id })
+  const isProvisional = instanceStatus(inst) === "provisional"
   const style: React.CSSProperties = {
     transform: CSS.Translate.toString(transform),
     transition,
@@ -303,7 +307,9 @@ function SortableInstRow({
       style={style}
       className={cn(
         "cursor-pointer transition-colors",
-        isSelected ? "bg-accent hover:bg-accent" : "hover:bg-muted/50",
+        isSelected
+          ? "bg-indigo-100 hover:bg-indigo-100 dark:bg-indigo-950/50 dark:hover:bg-indigo-950/50"
+          : "hover:bg-muted/50",
       )}
       onClick={onClick}
     >
@@ -317,7 +323,20 @@ function SortableInstRow({
           <GripVertical className="h-4 w-4" />
         </button>
       </TableCell>
-      <TableCell className="font-medium text-foreground">{inst.name}</TableCell>
+      <TableCell className={cn("font-medium", isProvisional ? "text-muted-foreground" : "text-foreground")}>
+        {inst.name}
+      </TableCell>
+      <TableCell className="w-28 pr-4 text-right">
+        {isProvisional ? (
+          <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300">
+            仮登録
+          </span>
+        ) : (
+          <span className="rounded-full border border-green-300 bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700 dark:border-green-800 dark:bg-green-950 dark:text-green-300">
+            本登録済
+          </span>
+        )}
+      </TableCell>
     </TableRow>
   )
 }
@@ -331,7 +350,7 @@ type AttrGroups = {
   parentName: string
 }
 
-export function InstancesScreen({ initialSelectedClassId }: { initialSelectedClassId?: string }) {
+export function InstancesScreen({ initialSelectedClassId, active }: { initialSelectedClassId?: string; active?: boolean }) {
   const { currentProject } = useProject()
 
   const [classes, setClasses] = useState<OntologyClass[]>([])
@@ -369,12 +388,20 @@ export function InstancesScreen({ initialSelectedClassId }: { initialSelectedCla
   const [deleteTarget, setDeleteTarget] = useState<OntologyInstance | null>(null)
   const [deleting, setDeleting] = useState(false)
 
+  // 統合済み（別名）— 選択中インスタンスに統合されたインスタンス
+  const [mergedChildren, setMergedChildren] = useState<OntologyInstance[]>([])
+  const [unmerging, setUnmerging] = useState<string | null>(null)
+
   // クラス（または未分類）ごとに最後に選択したインスタンスIDを記憶する
   const lastInstanceByClassRef = useRef<Record<string, string>>({})
 
   // インポート/エクスポート
   const [showImport, setShowImport] = useState(false)
   const [exporting, setExporting] = useState(false)
+
+  // 名寄せチェック
+  const [showNameCheck, setShowNameCheck] = useState(false)
+  const [provisionalCount, setProvisionalCount] = useState(0)
 
   // DnD sensors（8px 動かないと drag 開始しない → 行クリックと競合しない）
   const sensors = useSensors(
@@ -494,6 +521,8 @@ export function InstancesScreen({ initialSelectedClassId }: { initialSelectedCla
       )
       counts[UNCLASSIFIED] = nullInstances.length + orphaned.length
       setInstanceCounts(counts)
+      // 仮登録件数（プロジェクト全体、統合済みは projectData に含まれない）
+      setProvisionalCount(projectInstances.filter((i) => instanceStatus(i) === "provisional").length)
     } finally {
       setLoadingCounts(false)
     }
@@ -553,6 +582,15 @@ export function InstancesScreen({ initialSelectedClassId }: { initialSelectedCla
     }
   }, [])
 
+  const fetchMergedChildren = useCallback(async (canonicalId: string) => {
+    try {
+      const data: OntologyInstance[] = await fetch(`/api/instances?mergedInto=${canonicalId}`).then((r) => r.json())
+      setMergedChildren(Array.isArray(data) ? data : [])
+    } catch {
+      setMergedChildren([])
+    }
+  }, [])
+
   // === effects ===
 
   // プロジェクトが切り替わったら選択状態をリセットする（別プロジェクトの選択を持ち込まない）
@@ -564,6 +602,12 @@ export function InstancesScreen({ initialSelectedClassId }: { initialSelectedCla
   }, [currentProject?.id])
 
   useEffect(() => { fetchClasses() }, [currentProject?.id])
+  // この画面が表示状態になったら再取得する（画面はマウント維持されるため、
+  // 文書取込みでインスタンスを本登録した結果などを自動反映するのに必要）。
+  // fetchClasses が classes を更新することで、件数・一覧の再取得へ連鎖する。
+  useEffect(() => {
+    if (active && currentProject) fetchClasses()
+  }, [active, currentProject?.id, fetchClasses])
   useEffect(() => {
     if (classes.length > 0 && currentProject) fetchAllCounts(classes, currentProject.id)
   }, [classes, currentProject?.id])
@@ -597,7 +641,32 @@ export function InstancesScreen({ initialSelectedClassId }: { initialSelectedCla
     }
   }, [selectedClass?.id, currentProject?.id, attrRefreshKey, classes, isUnclassifiedSelected])
 
+  // 選択中インスタンスの統合済み（別名）を読み込む
+  useEffect(() => {
+    if (selectedInst) fetchMergedChildren(selectedInst.id)
+    else setMergedChildren([])
+  }, [selectedInst?.id, fetchMergedChildren])
+
   // === handlers ===
+
+  const handleUnmerge = async (child: OntologyInstance) => {
+    if (!currentProject || !selectedInst) return
+    setUnmerging(child.id)
+    try {
+      const res = await fetch("/api/instances/resolve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId: currentProject.id, action: "unmerge", instanceId: child.id }),
+      })
+      if (!res.ok) throw new Error()
+      await fetchMergedChildren(selectedInst.id)
+      await refreshAfterImport()
+    } catch {
+      alert("統合の解除に失敗しました")
+    } finally {
+      setUnmerging(null)
+    }
+  }
 
   const handleSelectClass = (cls: OntologyClass) => {
     setSelectedClass(cls)
@@ -644,6 +713,8 @@ export function InstancesScreen({ initialSelectedClassId }: { initialSelectedCla
       if (!res.ok) throw new Error()
       setShowAdd(false)
       await fetchInstances(selectedClass.id)
+      // 追加した新規インスタンスは仮登録で着地するため、仮登録件数（本登録ボタンの活性）を更新する
+      await fetchAllCounts(classes, currentProject.id)
     } catch {
       alert("インスタンスの追加に失敗しました")
     } finally {
@@ -675,7 +746,8 @@ export function InstancesScreen({ initialSelectedClassId }: { initialSelectedCla
       } else {
         await fetchInstances(selectedClass?.id ?? UNCLASSIFIED)
       }
-      if (detailClassId !== prevClassId && currentProject) {
+      // クラス変更に加え、name変更による仮登録差し戻しでも件数が変わるため常に更新する
+      if (currentProject) {
         await fetchAllCounts(classes, currentProject.id)
       }
     } catch {
@@ -697,6 +769,10 @@ export function InstancesScreen({ initialSelectedClassId }: { initialSelectedCla
         await fetchUnclassifiedInstances(classes, currentProject.id)
       } else {
         await fetchInstances(selectedClass?.id ?? UNCLASSIFIED)
+      }
+      // 仮登録インスタンスの削除で仮登録件数（本登録ボタンの活性）が変わるため更新する
+      if (currentProject) {
+        await fetchAllCounts(classes, currentProject.id)
       }
     } catch {
       alert("インスタンスの削除に失敗しました")
@@ -759,11 +835,38 @@ export function InstancesScreen({ initialSelectedClassId }: { initialSelectedCla
     }
   }
 
+  // 一覧が更新されたら詳細ペインの選択インスタンスも同期する
+  // （チェック＆本登録やインポートで status 等が変わった際に詳細表示を追随させる）
+  useEffect(() => {
+    if (!selectedInst) return
+    const fresh = instances.find((i) => i.id === selectedInst.id)
+    if (fresh && JSON.stringify(fresh) !== JSON.stringify(selectedInst)) {
+      setSelectedInst(fresh)
+    }
+  }, [instances])
+
   const hasMissingRequired = (attrs: OntologyAttribute[], values: Record<string, string>) =>
     attrs.some((a) => a.required === "必須" && !(values[a.id] ?? "").trim())
 
   const currentLabel = isUnclassifiedSelected ? "未分類" : selectedClass?.name ?? null
   const canAdd = !!selectedClass && !isUnclassifiedSelected
+  // チェック＆本登録は「現在選択中のクラス（または未分類）」の仮登録だけを対象にする
+  const nameCheckClassId = isUnclassifiedSelected ? UNCLASSIFIED : (selectedClass?.id ?? null)
+  const currentProvisionalCount = instances.filter((i) => instanceStatus(i) === "provisional").length
+
+  // 詳細パネルに変更があるか（保存ボタンの活性判定）
+  const detailDirty = !!selectedInst && (
+    detailName !== selectedInst.name ||
+    (detailClassId ?? null) !== (selectedInst.classId ?? null) ||
+    (() => {
+      const orig = selectedInst.attributes ?? {}
+      const keys = new Set([...Object.keys(orig), ...Object.keys(detailAttrValues)])
+      for (const k of keys) {
+        if ((orig[k] ?? "") !== (detailAttrValues[k] ?? "")) return true
+      }
+      return false
+    })()
+  )
   const tree = buildTree(classes)
   const unclassifiedCount = instanceCounts[UNCLASSIFIED] ?? 0
 
@@ -836,18 +939,29 @@ export function InstancesScreen({ initialSelectedClassId }: { initialSelectedCla
             {/* インスタンス一覧 */}
             <div className="flex flex-1 flex-col overflow-hidden border-r border-border">
               <div className="flex items-center justify-between px-6 py-3">
-                <h2 className="text-base font-semibold text-foreground">{currentLabel}のインスタンス一覧</h2>
-                {canAdd && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-8 gap-1.5 bg-transparent"
-                    onClick={openAdd}
-                    disabled={loadingAttrs}
-                  >
-                    <Plus className="h-3.5 w-3.5" />追加
-                  </Button>
-                )}
+                <div className="flex items-center gap-3">
+                  <h2 className="text-base font-semibold text-foreground">{currentLabel}のインスタンス一覧</h2>
+                  {canAdd && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-8 gap-1.5 bg-transparent"
+                      onClick={openAdd}
+                      disabled={loadingAttrs}
+                    >
+                      <Plus className="h-3.5 w-3.5" />追加
+                    </Button>
+                  )}
+                </div>
+                <Button
+                  variant="success"
+                  className="gap-1.5 text-sm"
+                  onClick={() => setShowNameCheck(true)}
+                  disabled={!currentProject || currentProvisionalCount === 0}
+                >
+                  チェック＆本登録
+                  {currentProvisionalCount > 0 && `（${currentProvisionalCount}件）`}
+                </Button>
               </div>
 
               <div className="flex-1 overflow-auto px-6 pb-6">
@@ -868,6 +982,7 @@ export function InstancesScreen({ initialSelectedClassId }: { initialSelectedCla
                             <TableRow className="bg-muted/50 hover:bg-muted/50">
                               <TableHead className="w-8 px-2" />
                               <TableHead className="font-semibold text-foreground">インスタンス名</TableHead>
+                              <TableHead className="w-28 pr-4 text-right font-semibold text-foreground">ステータス</TableHead>
                             </TableRow>
                           </TableHeader>
                           <TableBody>
@@ -889,87 +1004,133 @@ export function InstancesScreen({ initialSelectedClassId }: { initialSelectedCla
             </div>
 
             {/* 詳細パネル（固定） */}
-            <div className="flex w-96 shrink-0 flex-col overflow-hidden bg-card">
+            <div className="flex w-[30rem] shrink-0 flex-col overflow-hidden bg-card">
               {selectedInst ? (
                 <>
-                  {/* ヘッダー：インスタンス名 + 閉じるボタン */}
-                  <div className="flex items-center gap-2 border-b border-border px-4 py-3">
-                    <Input
-                      value={detailName}
-                      onChange={(e) => setDetailName(e.target.value)}
-                      className="h-8 flex-1 text-sm font-medium"
-                      placeholder="インスタンス名"
-                    />
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7 shrink-0"
-                      onClick={() => setSelectedInst(null)}
-                    >
-                      <X className="h-4 w-4" />
-                    </Button>
-                  </div>
-
                   {/* 本体（スクロール可） */}
-                  <div className="flex-1 space-y-5 overflow-y-auto px-4 py-4">
-                    <p className="text-xs text-muted-foreground">
-                      登録日 {selectedInst.registeredAt || "—"}　登録者 {selectedInst.registeredBy || "—"}　更新日 {selectedInst.updatedAt || "—"}　更新者 {selectedInst.updatedBy || "—"}
-                    </p>
-
-                    {/* クラス */}
-                    <div className="space-y-1.5">
-                      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">クラス</p>
-                      <Select
-                        value={detailClassId ?? UNCLASSIFIED}
-                        onValueChange={(v) => { if (v) handleDetailClassChange(v) }}
-                      >
-                        <SelectTrigger className="h-8 text-sm">
-                          <SelectValue>
-                            {detailClassId
-                              ? (classes.find((c) => c.id === detailClassId)?.name ?? "不明なクラス")
-                              : "未分類"}
-                          </SelectValue>
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value={UNCLASSIFIED}>未分類</SelectItem>
-                          {classes.map((cls) => (
-                            <SelectItem key={cls.id} value={cls.id}>{cls.name}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    {/* ユーザー定義属性 */}
-                    {loadingDetailAttrs ? (
-                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                        <Loader2 className="h-4 w-4 animate-spin" />属性を読み込み中…
-                      </div>
-                    ) : (
-                      <>
-                        <AttrSection
-                          title="プロジェクト共通属性"
-                          attrs={detailAttrGroups.project}
-                          values={detailAttrValues}
-                          onChange={(id, v) => setDetailAttrValues((prev) => ({ ...prev, [id]: v }))}
-                        />
-                        {detailAttrGroups.inherited.length > 0 && (
-                          <AttrSection
-                            title={`継承属性（${detailAttrGroups.parentName}）`}
-                            attrs={detailAttrGroups.inherited}
-                            values={detailAttrValues}
-                            onChange={(id, v) => setDetailAttrValues((prev) => ({ ...prev, [id]: v }))}
+                  <div className="flex-1 space-y-6 overflow-y-auto px-4 py-4">
+                    {/* 基本情報 */}
+                    <section className="space-y-3">
+                      <SectionHeader icon={FileText} title="基本情報" />
+                      <div className="space-y-3">
+                        {/* 登録・更新状況 */}
+                        <div className="space-y-0.5 text-xs text-muted-foreground">
+                          <p>登録日 {selectedInst.registeredAt || "—"}{selectedInst.registeredBy ? `（${selectedInst.registeredBy}）` : ""}</p>
+                          <p>更新日 {selectedInst.updatedAt || "—"}{selectedInst.updatedBy ? `（${selectedInst.updatedBy}）` : ""}</p>
+                        </div>
+                        {/* ステータス（インスタンス名などと同じフォント表現） */}
+                        <div className="space-y-1.5">
+                          <Label className="text-sm font-medium">ステータス</Label>
+                          <div>
+                            {instanceStatus(selectedInst) === "provisional" ? (
+                              <span className="inline-block rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300">
+                                仮登録
+                              </span>
+                            ) : (
+                              <span className="inline-block rounded-full border border-green-300 bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700 dark:border-green-800 dark:bg-green-950 dark:text-green-300">
+                                本登録済
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        {/* インスタンス名 */}
+                        <div className="space-y-1.5">
+                          <Label className="text-sm font-medium">インスタンス名 <span className="text-destructive">*</span></Label>
+                          <Input
+                            value={detailName}
+                            onChange={(e) => setDetailName(e.target.value)}
+                            className="h-8"
+                            placeholder="インスタンス名"
                           />
-                        )}
-                        <AttrSection
-                          title="クラス固有属性"
-                          attrs={detailAttrGroups.own}
-                          values={detailAttrValues}
-                          onChange={(id, v) => setDetailAttrValues((prev) => ({ ...prev, [id]: v }))}
-                        />
-                        {allDetailAttrs.length === 0 && (
-                          <p className="text-sm text-muted-foreground">このクラスには属性が設定されていません</p>
-                        )}
-                      </>
+                        </div>
+                        {/* 所属クラス */}
+                        <div className="space-y-1.5">
+                          <Label className="text-sm font-medium">所属クラス</Label>
+                          <Select
+                            value={detailClassId ?? UNCLASSIFIED}
+                            onValueChange={(v) => { if (v) handleDetailClassChange(v) }}
+                          >
+                            <SelectTrigger className="h-8 text-sm">
+                              <SelectValue>
+                                {detailClassId
+                                  ? (classes.find((c) => c.id === detailClassId)?.name ?? "不明なクラス")
+                                  : "未分類"}
+                              </SelectValue>
+                            </SelectTrigger>
+                            <SelectContent className="max-h-72 w-auto min-w-(--anchor-width) max-w-[22rem]">
+                              <SelectItem value={UNCLASSIFIED}>未分類</SelectItem>
+                              {classes.map((cls) => (
+                                <SelectItem key={cls.id} value={cls.id}>{cls.name}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+                    </section>
+
+                    {/* 属性 */}
+                    <section className="space-y-3">
+                      <SectionHeader icon={Tags} title="属性" />
+                      <div>
+                      {loadingDetailAttrs ? (
+                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                          <Loader2 className="h-4 w-4 animate-spin" />属性を読み込み中…
+                        </div>
+                      ) : allDetailAttrs.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">属性は設定されていません</p>
+                      ) : (
+                        <div className="space-y-3">
+                          {allDetailAttrs.map((attr) => (
+                            <div key={attr.id} className="space-y-1.5">
+                              <div className="flex items-center gap-1.5">
+                                <Label className="text-sm font-medium">
+                                  {attr.name}
+                                  {attr.required === "必須" && <span className="ml-0.5 text-destructive">*</span>}
+                                </Label>
+                                <span className="text-xs text-muted-foreground">（{dataTypeLabel(attr.dataType)}）</span>
+                                {attr.description && <InfoTooltip content={attr.description} />}
+                              </div>
+                              <AttrInput
+                                attr={attr}
+                                value={detailAttrValues[attr.id] ?? ""}
+                                onChange={(v) => setDetailAttrValues((prev) => ({ ...prev, [attr.id]: v }))}
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      </div>
+                    </section>
+
+                    {/* 統合済みインスタンス */}
+                    {mergedChildren.length > 0 && (
+                      <section className="space-y-2">
+                        <h3 className="text-sm font-semibold text-foreground">統合済みインスタンス</h3>
+                        <div className="space-y-2">
+                          {mergedChildren.map((c) => (
+                            <div
+                              key={c.id}
+                              className="flex items-center gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2.5"
+                            >
+                              <span className="flex-1 text-sm text-muted-foreground">{c.name}</span>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 gap-1 text-xs"
+                                disabled={unmerging === c.id}
+                                onClick={() => handleUnmerge(c)}
+                              >
+                                {unmerging === c.id ? (
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                ) : (
+                                  <Undo2 className="h-3.5 w-3.5" />
+                                )}
+                                統合解除
+                              </Button>
+                            </div>
+                          ))}
+                        </div>
+                      </section>
                     )}
                   </div>
 
@@ -985,8 +1146,9 @@ export function InstancesScreen({ initialSelectedClassId }: { initialSelectedCla
                     </Button>
                     <Button
                       size="sm"
+                      variant="success"
                       onClick={handleDetailSave}
-                      disabled={!detailName.trim() || savingDetail || hasMissingRequired(allDetailAttrs, detailAttrValues)}
+                      disabled={!detailName.trim() || savingDetail || hasMissingRequired(allDetailAttrs, detailAttrValues) || !detailDirty}
                     >
                       {savingDetail && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}
                       保存
@@ -1127,6 +1289,15 @@ export function InstancesScreen({ initialSelectedClassId }: { initialSelectedCla
           return { created: result.created, updated: result.updated, deleted: result.deleted }
         }}
         onImported={refreshAfterImport}
+      />
+
+      {/* ---- 名寄せチェック ---- */}
+      <NameCheckDialog
+        open={showNameCheck}
+        onOpenChange={setShowNameCheck}
+        projectId={currentProject?.id ?? null}
+        classId={nameCheckClassId}
+        onResolved={refreshAfterImport}
       />
     </div>
   )

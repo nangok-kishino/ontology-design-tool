@@ -1,8 +1,7 @@
 "use client"
 
-import { useState, useRef, useEffect } from "react"
+import { useState, useRef, useEffect, useCallback } from "react"
 import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -21,16 +20,17 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { Tooltip } from "@/components/ui/tooltip"
 import { TopBar } from "@/components/top-bar"
 import { useProject } from "@/app/project-context"
+import { cn } from "@/lib/utils"
 import type { OntologyClass, OntologyRelation } from "@/lib/types"
-import { UploadCloud, FileText, Check, Sparkles, Loader2, Pencil } from "lucide-react"
+import { UploadCloud, FileText, Check, Sparkles, Loader2, Pencil, RotateCw } from "lucide-react"
 
 type CandidateStatus = "確認中" | "新規追加" | "承認済み" | "却下" | "採用候補" | "本登録済み"
 
 const MODEL_OPTIONS = [
   { id: "claude-opus-4-8", label: "Claude Opus 4.8", provider: "Anthropic" },
+  { id: "claude-opus-5", label: "Claude Opus 5", provider: "Anthropic" },
   { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro", provider: "Google" },
 ]
 
@@ -68,14 +68,18 @@ type RelationCandidate = {
 
 function StatusBadge({ status }: { status: CandidateStatus }) {
   const map: Record<CandidateStatus, string> = {
-    確認中: "bg-muted text-muted-foreground",
-    新規追加: "bg-emerald-100 text-emerald-700",
-    承認済み: "bg-emerald-100 text-emerald-700",
-    却下: "bg-red-100 text-red-700",
-    採用候補: "bg-indigo-100 text-indigo-700",
-    本登録済み: "bg-slate-200 text-slate-600",
+    確認中: "border-border bg-muted text-muted-foreground",
+    新規追加: "border-green-300 bg-green-50 text-green-700 dark:border-green-800 dark:bg-green-950 dark:text-green-300",
+    承認済み: "border-green-300 bg-green-50 text-green-700 dark:border-green-800 dark:bg-green-950 dark:text-green-300",
+    却下: "border-red-300 bg-red-50 text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-300",
+    採用候補: "border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300",
+    本登録済み: "border-green-300 bg-green-50 text-green-700 dark:border-green-800 dark:bg-green-950 dark:text-green-300",
   }
-  return <Badge className={`font-normal ${map[status]}`}>{status}</Badge>
+  return (
+    <span className={`inline-block rounded-full border px-2 py-0.5 text-xs font-medium ${map[status]}`}>
+      {status}
+    </span>
+  )
 }
 
 function CountPill({ n }: { n: number }) {
@@ -86,9 +90,11 @@ function CountPill({ n }: { n: number }) {
   )
 }
 
-export function ReviewScreen() {
+export function ReviewScreen({ active }: { active?: boolean }) {
   const { currentProject } = useProject()
   const fileInputRef = useRef<HTMLInputElement>(null)
+  // 直近に解析したファイル（解析後は file を null にするため、再実行用に保持する）
+  const lastFileRef = useRef<File | null>(null)
 
   const [file, setFile] = useState<File | null>(null)
   const [analyzing, setAnalyzing] = useState(false)
@@ -109,6 +115,22 @@ export function ReviewScreen() {
   const [classes, setClasses] = useState<OntologyClass[]>([])
   const [existingRelations, setExistingRelations] = useState<OntologyRelation[]>([])
 
+  // 既存クラス・リレーションを取得する（解析結果は消さない）。
+  // 画面はマウント維持されるため、クラス管理等でクラスを追加した後に
+  // この画面へ戻った際も最新の選択肢を反映できるよう再取得に使う。
+  const fetchClassesAndRelations = useCallback(() => {
+    if (!currentProject) return
+    Promise.all([
+      fetch(`/api/classes?projectId=${currentProject.id}`).then((r) => r.json()),
+      fetch(`/api/relations?projectId=${currentProject.id}`).then((r) => r.json()),
+    ])
+      .then(([cls, rel]) => {
+        setClasses(Array.isArray(cls) ? cls : [])
+        setExistingRelations(Array.isArray(rel) ? rel : [])
+      })
+      .catch(() => {})
+  }, [currentProject?.id])
+
   useEffect(() => {
     if (!currentProject) return
 
@@ -123,16 +145,14 @@ export function ReviewScreen() {
     setEditingClassNameId(null)
     setEditingRelationNameId(null)
 
-    Promise.all([
-      fetch(`/api/classes?projectId=${currentProject.id}`).then((r) => r.json()),
-      fetch(`/api/relations?projectId=${currentProject.id}`).then((r) => r.json()),
-    ])
-      .then(([cls, rel]) => {
-        setClasses(Array.isArray(cls) ? cls : [])
-        setExistingRelations(Array.isArray(rel) ? rel : [])
-      })
-      .catch(() => {})
+    fetchClassesAndRelations()
   }, [currentProject?.id])
+
+  // この画面が表示状態になったらクラス・リレーションを再取得する
+  // （他画面でのクラス追加を始点・終点クラスの選択肢へ即時反映するため）
+  useEffect(() => {
+    if (active) fetchClassesAndRelations()
+  }, [active, fetchClassesAndRelations])
 
   const updateClassCand = (id: string, u: Partial<ClassCandidate>) =>
     setClassCands((p) => p.map((c) => (c.id === id ? { ...c, ...u } : c)))
@@ -147,16 +167,15 @@ export function ReviewScreen() {
     setAnalyzeError(null)
   }
 
-  const handleAnalyze = async () => {
-    if (!file || !currentProject) return
+  const handleAnalyze = async (reuseFile?: File) => {
+    const target = reuseFile ?? file
+    if (!target || !currentProject) return
     setAnalyzing(true)
     setAnalyzeError(null)
-    setClassCands([])
-    setInstCands([])
-    setRelCands([])
+    // 解析中も直前の結果は残しておき、成功時に差し替える（再実行の比較・スピナー表示のため）
     try {
       const fd = new FormData()
-      fd.append("file", file)
+      fd.append("file", target)
       fd.append("projectId", currentProject.id)
       fd.append("model", selectedModel)
       const res = await fetch("/api/analyze", { method: "POST", body: fd })
@@ -216,10 +235,24 @@ export function ReviewScreen() {
 
       setInstCands([...resolvedInstCands, ...pendingInstCands])
 
-      setRelCands(Array.isArray(data.relations) ? data.relations : [])
+      // リレーション候補：始点・終点・名称が一致する重複を除去する（特にGeminiで重複が出やすい）
+      const rawRels: any[] = Array.isArray(data.relations) ? data.relations : []
+      const seenRel = new Set<string>()
+      const dedupedRels = rawRels.filter((r) => {
+        const key = [
+          (r.sourceClassId || r.sourceClassName || "").trim().toLowerCase(),
+          (r.relationName || "").trim().toLowerCase(),
+          (r.targetClassId || r.targetClassName || "").trim().toLowerCase(),
+        ].join("|")
+        if (seenRel.has(key)) return false
+        seenRel.add(key)
+        return true
+      })
+      setRelCands(dedupedRels)
 
       // 解析成功後、ファイル指定エリアをクリアして解析結果側に表示を切り替える
-      setAnalyzedFileName(file.name)
+      lastFileRef.current = target
+      setAnalyzedFileName(target.name)
       setAnalyzedModelLabel(MODEL_OPTIONS.find((m) => m.id === selectedModel)?.label ?? selectedModel)
       setFile(null)
       if (fileInputRef.current) fileInputRef.current.value = ""
@@ -379,9 +412,24 @@ export function ReviewScreen() {
       <TopBar title="文書取込み" />
       <div className="flex-1 overflow-auto p-6">
 
-        <p className="mb-6 text-sm text-muted-foreground">
-          既存文書をLLMで解析して、クラス／リレーション／インスタンスを抽出します。
-        </p>
+        <div className="mb-6 flex items-start justify-between gap-4">
+          <p className="text-sm text-muted-foreground">
+            既存文書をLLMで解析して、クラス／リレーション／インスタンスを抽出します。
+          </p>
+          <div className="flex shrink-0 items-center gap-2">
+            <span className="whitespace-nowrap text-sm font-medium text-foreground">解析AIモデル（LLM）選択</span>
+            <Select value={selectedModel} onValueChange={(v) => { if (v) setSelectedModel(v) }} disabled={analyzing}>
+              <SelectTrigger className="h-9 w-44">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {MODEL_OPTIONS.map((m) => (
+                  <SelectItem key={m.id} value={m.id}>{m.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
 
         <Card>
           <CardHeader>
@@ -395,89 +443,74 @@ export function ReviewScreen() {
               className="hidden"
               onChange={(e) => handleFileChange(e.target.files?.[0] ?? null)}
             />
-            <div className="flex items-stretch gap-6">
-              <div className="flex flex-1 flex-col">
-                <p className="mb-2 text-sm font-medium text-foreground">文書ファイル</p>
+            <div className="flex items-stretch gap-4">
+              {/* D&D エリア（可変・広め） */}
+              <div className="min-w-0 flex-1">
                 <div
-                  className="flex flex-1 flex-col items-center justify-center rounded-lg border-2 border-dashed border-border bg-muted/40 px-6 py-10 text-center"
+                  className="flex h-full flex-col items-center justify-center rounded-lg border-2 border-dashed border-border bg-muted/40 px-6 py-6 text-center"
                   onDragOver={(e) => e.preventDefault()}
                   onDrop={(e) => { e.preventDefault(); handleFileChange(e.dataTransfer.files?.[0] ?? null) }}
                 >
-                  <UploadCloud className="h-8 w-8 text-muted-foreground" />
-                  <p className="mt-3 text-sm text-foreground">
+                  <UploadCloud className="h-7 w-7 text-muted-foreground" />
+                  <p className="mt-2 text-sm text-foreground">
                     {file
                       ? <span className="inline-flex items-center gap-1.5 font-medium"><FileText className="h-4 w-4" />{file.name}</span>
                       : "ここにファイルをドラッグ＆ドロップ"}
                   </p>
                   <p className="mt-1 text-xs text-muted-foreground">対応形式：PDF, TXT</p>
-                  <Button size="sm" variant="outline" className="mt-4 bg-transparent"
+                  <Button size="sm" variant="outline" className="mt-3 bg-transparent"
                     onClick={() => fileInputRef.current?.click()}>
                     ファイルを選択
                   </Button>
                 </div>
               </div>
 
-              <div className="flex w-48 shrink-0 flex-col">
-                <p className="mb-2 text-sm font-medium text-foreground">解析モデル指定</p>
-                <div className="flex flex-1 flex-col gap-1.5">
-                  {MODEL_OPTIONS.map((m) => (
-                    <Button
-                      key={m.id}
-                      type="button"
-                      variant="outline"
-                      disabled={analyzing}
-                      className={
-                        "h-auto flex-1 flex-col items-center justify-center gap-1 whitespace-normal px-4 py-3 font-normal" +
-                        (selectedModel === m.id
-                          ? " border-indigo-600 bg-indigo-600 text-white hover:bg-indigo-700 hover:text-white"
-                          : " hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700")
-                      }
-                      onClick={() => setSelectedModel(m.id)}
-                    >
-                      <span className="flex items-center gap-1 text-xs opacity-80">
-                        {selectedModel === m.id && <Check className="h-3 w-3" />}
-                        {m.provider}
-                      </span>
-                      <span className="text-sm font-medium">{m.label}</span>
-                    </Button>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            {analyzeError && <p className="mt-3 text-sm text-destructive">{analyzeError}</p>}
-
-            <div className="mt-6">
+              {/* 解析ボタン（テキストが折り返さない幅で固定） */}
               <Button
                 disabled={!file || analyzing || !currentProject}
-                className="w-full h-12 gap-3 text-base font-semibold text-white border-0 shadow-lg hover:opacity-90 transition-opacity disabled:opacity-50"
+                className="h-auto w-48 shrink-0 gap-2 self-stretch whitespace-nowrap border-0 text-base font-semibold text-white shadow-lg transition-opacity hover:opacity-90 disabled:opacity-50"
                 style={{ background: "linear-gradient(135deg, #be185d 0%, #7e22ce 50%, #4c1d95 100%)" }}
-                onClick={handleAnalyze}
+                onClick={() => handleAnalyze()}
               >
                 {analyzing
                   ? <><Loader2 className="h-5 w-5 animate-spin" />解析中...</>
                   : <><Sparkles className="h-5 w-5" />LLMで解析する</>}
               </Button>
             </div>
+
+            {analyzeError && <p className="mt-3 text-sm text-destructive">{analyzeError}</p>}
           </CardContent>
         </Card>
 
         {hasCandidates && (
           <Card className="mt-6">
             <CardHeader>
-              <CardTitle className="text-base flex items-center gap-2">
-                解析結果
-                {analyzedFileName && (
-                  <span className="inline-flex items-center gap-1 text-xs font-normal text-muted-foreground">
-                    <FileText className="h-3.5 w-3.5" />{analyzedFileName}
-                  </span>
-                )}
-                {analyzedModelLabel && (
-                  <span className="text-xs font-normal text-muted-foreground">
-                    利用モデル：{analyzedModelLabel}
-                  </span>
-                )}
-              </CardTitle>
+              <div className="flex items-center justify-between gap-2">
+                <CardTitle className="text-base flex items-center gap-2">
+                  解析結果
+                  {analyzedFileName && (
+                    <span className="inline-flex items-center gap-1 text-xs font-normal text-muted-foreground">
+                      <FileText className="h-3.5 w-3.5" />{analyzedFileName}
+                    </span>
+                  )}
+                  {analyzedModelLabel && (
+                    <span className="text-xs font-normal text-muted-foreground">
+                      利用モデル：{analyzedModelLabel}
+                    </span>
+                  )}
+                </CardTitle>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-8 shrink-0 gap-1.5 bg-transparent"
+                  title="同じファイルを、現在選択中のモデルでもう一度解析します"
+                  disabled={analyzing || !lastFileRef.current || !currentProject}
+                  onClick={() => { if (lastFileRef.current) handleAnalyze(lastFileRef.current) }}
+                >
+                  {analyzing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCw className="h-3.5 w-3.5" />}
+                  解析を再実行
+                </Button>
+              </div>
             </CardHeader>
             <CardContent>
               <Tabs defaultValue="classes">
@@ -493,12 +526,10 @@ export function ReviewScreen() {
                     ? <p className="py-4 text-center text-sm text-muted-foreground">クラス候補がありません</p>
                     : (
                       <>
-                        <div className="mb-3 flex items-center justify-between">
-                          <p className="text-xs text-muted-foreground">
-                            クラス名をクリックして採用候補に選び、まとめて本登録できます。
-                          </p>
+                        <div className="mb-3 flex items-center gap-3">
                           <Button
-                            className="gap-1.5 text-sm bg-indigo-600 text-white hover:bg-indigo-700 border-indigo-600"
+                            variant="success"
+                            className="gap-1.5 text-sm"
                             disabled={registeringClasses || classCands.every((c) => c.status !== "採用候補")}
                             onClick={registerSelectedClasses}
                           >
@@ -507,77 +538,105 @@ export function ReviewScreen() {
                             {classCands.some((c) => c.status === "採用候補") &&
                               `（${classCands.filter((c) => c.status === "採用候補").length}件）`}
                           </Button>
+                          <p className="text-xs text-muted-foreground">
+                            チェックを付けて採用候補に選び、まとめて本登録できます。鉛筆アイコンで名称・説明を編集できます。
+                          </p>
                         </div>
-                        <div className="rounded-lg border border-border">
-                          <Table>
+                        <div className="overflow-x-auto rounded-lg border border-border">
+                          <Table className="table-fixed">
                             <TableHeader>
-                              <TableRow>
-                                <TableHead className="w-48">提案クラス名</TableHead>
-                                <TableHead>説明</TableHead>
-                                <TableHead className="w-36">インスタンス候補</TableHead>
-                                <TableHead className="w-24">ステータス</TableHead>
+                              <TableRow className="bg-muted/50 hover:bg-muted/50">
+                                <TableHead className="w-16 text-center font-semibold text-foreground">採用</TableHead>
+                                <TableHead className="w-48 font-semibold text-foreground">提案クラス名</TableHead>
+                                <TableHead className="font-semibold text-foreground">説明</TableHead>
+                                <TableHead className="w-56 font-semibold text-foreground">インスタンス候補</TableHead>
+                                <TableHead className="w-24 font-semibold text-foreground">ステータス</TableHead>
                               </TableRow>
                             </TableHeader>
                             <TableBody>
                               {classCands.map((c) => {
                                 const registered = c.status === "本登録済み"
+                                const selected = c.status === "採用候補"
+                                const editing = editingClassNameId === c.id
                                 return (
-                                  <TableRow key={c.id} className={registered ? "opacity-50" : ""}>
-                                    <TableCell className="align-top">
-                                      {editingClassNameId === c.id ? (
+                                  <TableRow
+                                    key={c.id}
+                                    className={cn(
+                                      registered && "opacity-50",
+                                      selected && "bg-green-50/60 dark:bg-green-950/20",
+                                    )}
+                                  >
+                                    <TableCell className="align-top pt-3 text-center">
+                                      <button
+                                        type="button"
+                                        disabled={registered}
+                                        aria-label="採用候補に選ぶ"
+                                        onClick={() => toggleClassCandidateSelection(c.id)}
+                                        className={cn(
+                                          "inline-flex h-5 w-5 items-center justify-center rounded border transition-colors",
+                                          selected || registered
+                                            ? "border-green-600 bg-green-600 text-white"
+                                            : "cursor-pointer border-input hover:border-green-500",
+                                        )}
+                                      >
+                                        {(selected || registered) && <Check className="h-3.5 w-3.5" />}
+                                      </button>
+                                    </TableCell>
+                                    <TableCell className="align-top whitespace-normal">
+                                      <div className="flex items-start gap-1">
+                                        {editing ? (
+                                          <Input
+                                            className="h-8 flex-1"
+                                            autoFocus
+                                            value={c.proposedClassName}
+                                            onChange={(e) => updateClassCand(c.id, { proposedClassName: e.target.value })}
+                                            onKeyDown={(e) => { if (e.key === "Enter") setEditingClassNameId(null) }}
+                                          />
+                                        ) : (
+                                          <button
+                                            type="button"
+                                            disabled={registered}
+                                            onClick={() => toggleClassCandidateSelection(c.id)}
+                                            className={cn(
+                                              "flex-1 break-words py-1 text-left text-sm font-medium",
+                                              registered ? "cursor-default" : "cursor-pointer hover:text-green-700 dark:hover:text-green-400",
+                                            )}
+                                          >
+                                            {c.proposedClassName || "（未設定）"}
+                                          </button>
+                                        )}
+                                        {!registered && (
+                                          <button
+                                            type="button"
+                                            className="mt-1 shrink-0 text-muted-foreground hover:text-foreground"
+                                            aria-label={editing ? "編集を終了" : "名称・説明を編集"}
+                                            onClick={() => setEditingClassNameId(editing ? null : c.id)}
+                                          >
+                                            {editing ? <Check className="h-3.5 w-3.5" /> : <Pencil className="h-3.5 w-3.5" />}
+                                          </button>
+                                        )}
+                                      </div>
+                                    </TableCell>
+                                    <TableCell className="align-top whitespace-normal">
+                                      {editing ? (
                                         <Input
-                                          className="h-8"
-                                          autoFocus
-                                          value={c.proposedClassName}
-                                          onChange={(e) => updateClassCand(c.id, { proposedClassName: e.target.value })}
-                                          onBlur={() => setEditingClassNameId(null)}
+                                          className="h-8 text-sm"
+                                          value={c.proposedClassDescription}
+                                          onChange={(e) => updateClassCand(c.id, { proposedClassDescription: e.target.value })}
                                           onKeyDown={(e) => { if (e.key === "Enter") setEditingClassNameId(null) }}
                                         />
                                       ) : (
-                                        <div className="flex items-center gap-1">
-                                          <Button
-                                            type="button"
-                                            size="sm"
-                                            variant={registered ? "secondary" : "outline"}
-                                            className={
-                                              c.status === "採用候補"
-                                                ? "h-8 grow justify-start gap-1.5 font-normal border-indigo-600 bg-indigo-600 text-white hover:bg-indigo-700 hover:text-white"
-                                                : registered
-                                                ? "h-8 grow justify-start gap-1.5 font-normal"
-                                                : "h-8 grow justify-start gap-1.5 font-normal hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700"
-                                            }
-                                            disabled={registered}
-                                            onClick={() => toggleClassCandidateSelection(c.id)}
-                                          >
-                                            {c.status === "採用候補" && <Check className="h-3.5 w-3.5" />}
-                                            {c.proposedClassName || "（未設定）"}
-                                          </Button>
-                                          {!registered && (
-                                            <button
-                                              type="button"
-                                              className="shrink-0 text-muted-foreground hover:text-foreground"
-                                              aria-label="クラス名を編集"
-                                              onClick={() => setEditingClassNameId(c.id)}
-                                            >
-                                              <Pencil className="h-3.5 w-3.5" />
-                                            </button>
-                                          )}
-                                        </div>
+                                        <span className="block break-words py-1 text-sm text-muted-foreground">
+                                          {c.proposedClassDescription || "-"}
+                                        </span>
                                       )}
                                     </TableCell>
-                                    <TableCell className="align-top">
-                                      <Input className="h-8 text-sm" value={c.proposedClassDescription}
-                                        disabled={registered}
-                                        onChange={(e) => updateClassCand(c.id, { proposedClassDescription: e.target.value })} />
+                                    <TableCell className="align-top whitespace-normal pt-3">
+                                      <span className="block break-words text-sm text-muted-foreground">
+                                        {c.instanceNames.join("、")}
+                                      </span>
                                     </TableCell>
-                                    <TableCell className="align-top pt-2">
-                                      <Tooltip content={c.instanceNames.join("、")}>
-                                        <span className="block w-32 truncate text-sm text-muted-foreground">
-                                          {c.instanceNames.join("、")}
-                                        </span>
-                                      </Tooltip>
-                                    </TableCell>
-                                    <TableCell className="align-top pt-2">
+                                    <TableCell className="align-top pt-3">
                                       <StatusBadge status={c.status} />
                                     </TableCell>
                                   </TableRow>
@@ -596,14 +655,10 @@ export function ReviewScreen() {
                     ? <p className="py-4 text-center text-sm text-muted-foreground">リレーション候補がありません</p>
                     : (
                       <>
-                        <div className="mb-3 flex items-center justify-between">
-                          <p className="text-xs text-muted-foreground">
-                            リレーション名をクリックして採用候補に選び、始点・終点クラスを確定してから本登録できます。
-                            <br />
-                            本登録されていないクラスは、始点・終点クラスとして指定できません。
-                          </p>
+                        <div className="mb-3 flex items-center gap-3">
                           <Button
-                            className="gap-1.5 text-sm bg-indigo-600 text-white hover:bg-indigo-700 border-indigo-600"
+                            variant="success"
+                            className="gap-1.5 text-sm"
                             disabled={
                               registeringRelations ||
                               !relCands.some((c) => c.status === "採用候補") ||
@@ -618,110 +673,141 @@ export function ReviewScreen() {
                             {relCands.some((c) => c.status === "採用候補") &&
                               `（${relCands.filter((c) => c.status === "採用候補").length}件）`}
                           </Button>
+                          <p className="text-xs text-muted-foreground">
+                            チェックを付けて採用候補に選び、始点・終点クラスを確定してまとめて本登録できます。鉛筆アイコンで名称・説明を編集できます。
+                          </p>
                         </div>
-                        <div className="rounded-lg border border-border">
-                          <Table>
+                        <div className="overflow-x-auto rounded-lg border border-border">
+                          <Table className="table-fixed">
                             <TableHeader>
-                              <TableRow>
-                                <TableHead className="w-44">提案リレーション名</TableHead>
-                                <TableHead>説明</TableHead>
-                                <TableHead className="w-40">始点クラス</TableHead>
-                                <TableHead className="w-40">終点クラス</TableHead>
-                                <TableHead className="w-24">ステータス</TableHead>
+                              <TableRow className="bg-muted/50 hover:bg-muted/50">
+                                <TableHead className="w-16 text-center font-semibold text-foreground">採用</TableHead>
+                                <TableHead className="w-44 font-semibold text-foreground">提案リレーション名</TableHead>
+                                <TableHead className="font-semibold text-foreground">説明</TableHead>
+                                <TableHead className="w-36 font-semibold text-foreground">始点クラス</TableHead>
+                                <TableHead className="w-36 font-semibold text-foreground">終点クラス</TableHead>
+                                <TableHead className="w-24 font-semibold text-foreground">ステータス</TableHead>
                               </TableRow>
                             </TableHeader>
                             <TableBody>
                               {relCands.map((c) => {
                                 const registered = c.status === "本登録済み"
                                 const selected = c.status === "採用候補"
+                                const editing = editingRelationNameId === c.id
                                 return (
-                                  <TableRow key={c.id} className={registered ? "opacity-50" : ""}>
-                                    <TableCell className="align-top">
-                                      {editingRelationNameId === c.id ? (
+                                  <TableRow
+                                    key={c.id}
+                                    className={cn(
+                                      registered && "opacity-50",
+                                      selected && "bg-green-50/60 dark:bg-green-950/20",
+                                    )}
+                                  >
+                                    <TableCell className="align-top pt-3 text-center">
+                                      <button
+                                        type="button"
+                                        disabled={registered}
+                                        aria-label="採用候補に選ぶ"
+                                        onClick={() => toggleRelCandidateSelection(c.id)}
+                                        className={cn(
+                                          "inline-flex h-5 w-5 items-center justify-center rounded border transition-colors",
+                                          selected || registered
+                                            ? "border-green-600 bg-green-600 text-white"
+                                            : "cursor-pointer border-input hover:border-green-500",
+                                        )}
+                                      >
+                                        {(selected || registered) && <Check className="h-3.5 w-3.5" />}
+                                      </button>
+                                    </TableCell>
+                                    <TableCell className="align-top whitespace-normal">
+                                      <div className="flex items-start gap-1">
+                                        {editing ? (
+                                          <Input
+                                            className="h-8 flex-1"
+                                            autoFocus
+                                            value={c.relationName}
+                                            onChange={(e) => updateRel(c.id, { relationName: e.target.value })}
+                                            onKeyDown={(e) => { if (e.key === "Enter") setEditingRelationNameId(null) }}
+                                          />
+                                        ) : (
+                                          <button
+                                            type="button"
+                                            disabled={registered}
+                                            onClick={() => toggleRelCandidateSelection(c.id)}
+                                            className={cn(
+                                              "flex-1 break-words py-1 text-left text-sm font-medium",
+                                              registered ? "cursor-default" : "cursor-pointer hover:text-green-700 dark:hover:text-green-400",
+                                            )}
+                                          >
+                                            {c.relationName || "（未設定）"}
+                                          </button>
+                                        )}
+                                        {!registered && (
+                                          <button
+                                            type="button"
+                                            className="mt-1 shrink-0 text-muted-foreground hover:text-foreground"
+                                            aria-label={editing ? "編集を終了" : "名称・説明を編集"}
+                                            onClick={() => setEditingRelationNameId(editing ? null : c.id)}
+                                          >
+                                            {editing ? <Check className="h-3.5 w-3.5" /> : <Pencil className="h-3.5 w-3.5" />}
+                                          </button>
+                                        )}
+                                      </div>
+                                    </TableCell>
+                                    <TableCell className="align-top whitespace-normal">
+                                      {editing ? (
                                         <Input
-                                          className="h-8"
-                                          autoFocus
-                                          value={c.relationName}
-                                          onChange={(e) => updateRel(c.id, { relationName: e.target.value })}
-                                          onBlur={() => setEditingRelationNameId(null)}
+                                          className="h-8 text-sm"
+                                          value={c.description}
+                                          onChange={(e) => updateRel(c.id, { description: e.target.value })}
                                           onKeyDown={(e) => { if (e.key === "Enter") setEditingRelationNameId(null) }}
                                         />
                                       ) : (
-                                        <div className="flex items-center gap-1">
-                                          <Button
-                                            type="button"
-                                            size="sm"
-                                            variant={registered ? "secondary" : "outline"}
-                                            className={
-                                              selected
-                                                ? "h-8 grow justify-start gap-1.5 font-normal border-indigo-600 bg-indigo-600 text-white hover:bg-indigo-700 hover:text-white"
-                                                : registered
-                                                ? "h-8 grow justify-start gap-1.5 font-normal"
-                                                : "h-8 grow justify-start gap-1.5 font-normal hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700"
-                                            }
-                                            disabled={registered}
-                                            onClick={() => toggleRelCandidateSelection(c.id)}
-                                          >
-                                            {selected && <Check className="h-3.5 w-3.5" />}
-                                            {c.relationName || "（未設定）"}
-                                          </Button>
-                                          {!registered && (
-                                            <button
-                                              type="button"
-                                              className="shrink-0 text-muted-foreground hover:text-foreground"
-                                              aria-label="リレーション名を編集"
-                                              onClick={() => setEditingRelationNameId(c.id)}
-                                            >
-                                              <Pencil className="h-3.5 w-3.5" />
-                                            </button>
-                                          )}
-                                        </div>
+                                        <span className="block break-words py-1 text-sm text-muted-foreground">
+                                          {c.description || "-"}
+                                        </span>
                                       )}
                                     </TableCell>
                                     <TableCell className="align-top">
-                                      <Input className="h-8 text-sm" value={c.description}
-                                        disabled={registered}
-                                        onChange={(e) => updateRel(c.id, { description: e.target.value })} />
+                                      <Select value={c.sourceClassId ?? "__none__"} disabled={registered}
+                                        onValueChange={(v) => {
+                                          const cls = v === "__none__" ? null : classes.find((x) => x.id === v)
+                                          updateRel(c.id, {
+                                            sourceClassId: v === "__none__" ? null : v,
+                                            sourceClassName: cls?.name ?? "",
+                                            // 始点・終点クラスを自分で選んだら自動で採用候補にする
+                                            ...(v !== "__none__" ? { status: "採用候補" as CandidateStatus } : {}),
+                                          })
+                                        }}>
+                                        <SelectTrigger className="h-8 w-full">
+                                          <SelectValue>{c.sourceClassId ? c.sourceClassName : "選択"}</SelectValue>
+                                        </SelectTrigger>
+                                        <SelectContent className="max-h-72 w-auto min-w-(--anchor-width) max-w-[22rem]">
+                                          <SelectItem value="__none__">選択</SelectItem>
+                                          {classes.map((cls) => <SelectItem key={cls.id} value={cls.id}>{cls.name}</SelectItem>)}
+                                        </SelectContent>
+                                      </Select>
                                     </TableCell>
                                     <TableCell className="align-top">
-                                      {selected || registered ? (
-                                        <Select value={c.sourceClassId ?? "__none__"} disabled={registered}
-                                          onValueChange={(v) => {
-                                            const cls = v === "__none__" ? null : classes.find((x) => x.id === v)
-                                            updateRel(c.id, { sourceClassId: v === "__none__" ? null : v, sourceClassName: cls?.name ?? "" })
-                                          }}>
-                                          <SelectTrigger className="h-8">
-                                            <SelectValue>{c.sourceClassId ? c.sourceClassName : "選択"}</SelectValue>
-                                          </SelectTrigger>
-                                          <SelectContent>
-                                            <SelectItem value="__none__">選択</SelectItem>
-                                            {classes.map((cls) => <SelectItem key={cls.id} value={cls.id}>{cls.name}</SelectItem>)}
-                                          </SelectContent>
-                                        </Select>
-                                      ) : (
-                                        <span className="text-sm text-muted-foreground">{c.sourceClassName || "未設定"}</span>
-                                      )}
+                                      <Select value={c.targetClassId ?? "__none__"} disabled={registered}
+                                        onValueChange={(v) => {
+                                          const cls = v === "__none__" ? null : classes.find((x) => x.id === v)
+                                          updateRel(c.id, {
+                                            targetClassId: v === "__none__" ? null : v,
+                                            targetClassName: cls?.name ?? "",
+                                            // 始点・終点クラスを自分で選んだら自動で採用候補にする
+                                            ...(v !== "__none__" ? { status: "採用候補" as CandidateStatus } : {}),
+                                          })
+                                        }}>
+                                        <SelectTrigger className="h-8 w-full">
+                                          <SelectValue>{c.targetClassId ? c.targetClassName : "選択"}</SelectValue>
+                                        </SelectTrigger>
+                                        <SelectContent className="max-h-72 w-auto min-w-(--anchor-width) max-w-[22rem]">
+                                          <SelectItem value="__none__">選択</SelectItem>
+                                          {classes.map((cls) => <SelectItem key={cls.id} value={cls.id}>{cls.name}</SelectItem>)}
+                                        </SelectContent>
+                                      </Select>
                                     </TableCell>
-                                    <TableCell className="align-top">
-                                      {selected || registered ? (
-                                        <Select value={c.targetClassId ?? "__none__"} disabled={registered}
-                                          onValueChange={(v) => {
-                                            const cls = v === "__none__" ? null : classes.find((x) => x.id === v)
-                                            updateRel(c.id, { targetClassId: v === "__none__" ? null : v, targetClassName: cls?.name ?? "" })
-                                          }}>
-                                          <SelectTrigger className="h-8">
-                                            <SelectValue>{c.targetClassId ? c.targetClassName : "選択"}</SelectValue>
-                                          </SelectTrigger>
-                                          <SelectContent>
-                                            <SelectItem value="__none__">選択</SelectItem>
-                                            {classes.map((cls) => <SelectItem key={cls.id} value={cls.id}>{cls.name}</SelectItem>)}
-                                          </SelectContent>
-                                        </Select>
-                                      ) : (
-                                        <span className="text-sm text-muted-foreground">{c.targetClassName || "未設定"}</span>
-                                      )}
-                                    </TableCell>
-                                    <TableCell className="align-top pt-2">
+                                    <TableCell className="align-top pt-3">
                                       <StatusBadge status={c.status} />
                                     </TableCell>
                                   </TableRow>
@@ -740,14 +826,10 @@ export function ReviewScreen() {
                     ? <p className="py-4 text-center text-sm text-muted-foreground">インスタンス候補がありません</p>
                     : (
                       <>
-                        <div className="mb-3 flex items-center justify-between">
-                          <p className="text-xs text-muted-foreground">
-                            インスタンス名をクリックして採用候補に選び、まとめて本登録できます。
-                            <br />
-                            提案所属クラスが「クラス未登録」の場合、そのクラスをクラス候補タブで本登録するか、所属クラスに既存クラスを選び直すまでは本登録できません。
-                          </p>
+                        <div className="mb-3 flex items-center gap-3">
                           <Button
-                            className="gap-1.5 text-sm bg-indigo-600 text-white hover:bg-indigo-700 border-indigo-600"
+                            variant="success"
+                            className="gap-1.5 text-sm"
                             disabled={
                               registeringInstances ||
                               !instCands.some((c) => c.status === "採用候補") ||
@@ -762,64 +844,84 @@ export function ReviewScreen() {
                             {instCands.some((c) => c.status === "採用候補") &&
                               `（${instCands.filter((c) => c.status === "採用候補").length}件）`}
                           </Button>
+                          <p className="text-xs text-muted-foreground">
+                            チェックを付けて採用候補に選び、まとめて本登録できます。鉛筆アイコンで名称を編集できます。所属クラスが「クラス未登録」のものは、クラス候補タブで本登録するか既存クラスを選ぶまで本登録できません。
+                          </p>
                         </div>
-                        <div className="rounded-lg border border-border">
-                          <Table>
+                        <div className="overflow-x-auto rounded-lg border border-border">
+                          <Table className="table-fixed">
                             <TableHeader>
-                              <TableRow>
-                                <TableHead className="w-44">提案インスタンス名</TableHead>
-                                <TableHead className="w-56">所属クラス</TableHead>
-                                <TableHead className="w-44">提案所属クラス</TableHead>
-                                <TableHead className="w-24">ステータス</TableHead>
+                              <TableRow className="bg-muted/50 hover:bg-muted/50">
+                                <TableHead className="w-16 text-center font-semibold text-foreground">採用</TableHead>
+                                <TableHead className="w-48 font-semibold text-foreground">提案インスタンス名</TableHead>
+                                <TableHead className="w-56 font-semibold text-foreground">所属クラス</TableHead>
+                                <TableHead className="font-semibold text-foreground">提案所属クラス</TableHead>
+                                <TableHead className="w-24 font-semibold text-foreground">ステータス</TableHead>
                               </TableRow>
                             </TableHeader>
                             <TableBody>
                               {instCands.map((c) => {
                                 const registered = c.status === "本登録済み"
                                 const selected = c.status === "採用候補"
+                                const editing = editingInstanceNameId === c.id
                                 return (
-                                  <TableRow key={c.id} className={registered ? "opacity-50" : ""}>
-                                    <TableCell className="align-top">
-                                      {editingInstanceNameId === c.id ? (
-                                        <Input
-                                          className="h-8"
-                                          autoFocus
-                                          value={c.name}
-                                          onChange={(e) => updateInst(c.id, { name: e.target.value })}
-                                          onBlur={() => setEditingInstanceNameId(null)}
-                                          onKeyDown={(e) => { if (e.key === "Enter") setEditingInstanceNameId(null) }}
-                                        />
-                                      ) : (
-                                        <div className="flex items-center gap-1">
-                                          <Button
+                                  <TableRow
+                                    key={c.id}
+                                    className={cn(
+                                      registered && "opacity-50",
+                                      selected && "bg-green-50/60 dark:bg-green-950/20",
+                                    )}
+                                  >
+                                    <TableCell className="align-top pt-3 text-center">
+                                      <button
+                                        type="button"
+                                        disabled={registered}
+                                        aria-label="採用候補に選ぶ"
+                                        onClick={() => toggleInstCandidateSelection(c.id)}
+                                        className={cn(
+                                          "inline-flex h-5 w-5 items-center justify-center rounded border transition-colors",
+                                          selected || registered
+                                            ? "border-green-600 bg-green-600 text-white"
+                                            : "cursor-pointer border-input hover:border-green-500",
+                                        )}
+                                      >
+                                        {(selected || registered) && <Check className="h-3.5 w-3.5" />}
+                                      </button>
+                                    </TableCell>
+                                    <TableCell className="align-top whitespace-normal">
+                                      <div className="flex items-start gap-1">
+                                        {editing ? (
+                                          <Input
+                                            className="h-8 flex-1"
+                                            autoFocus
+                                            value={c.name}
+                                            onChange={(e) => updateInst(c.id, { name: e.target.value })}
+                                            onKeyDown={(e) => { if (e.key === "Enter") setEditingInstanceNameId(null) }}
+                                          />
+                                        ) : (
+                                          <button
                                             type="button"
-                                            size="sm"
-                                            variant={registered ? "secondary" : "outline"}
-                                            className={
-                                              selected
-                                                ? "h-8 grow justify-start gap-1.5 font-normal border-indigo-600 bg-indigo-600 text-white hover:bg-indigo-700 hover:text-white"
-                                                : registered
-                                                ? "h-8 grow justify-start gap-1.5 font-normal"
-                                                : "h-8 grow justify-start gap-1.5 font-normal hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700"
-                                            }
                                             disabled={registered}
                                             onClick={() => toggleInstCandidateSelection(c.id)}
+                                            className={cn(
+                                              "flex-1 break-words py-1 text-left text-sm font-medium",
+                                              registered ? "cursor-default" : "cursor-pointer hover:text-green-700 dark:hover:text-green-400",
+                                            )}
                                           >
-                                            {selected && <Check className="h-3.5 w-3.5" />}
                                             {c.name || "（未設定）"}
-                                          </Button>
-                                          {!registered && (
-                                            <button
-                                              type="button"
-                                              className="shrink-0 text-muted-foreground hover:text-foreground"
-                                              aria-label="インスタンス名を編集"
-                                              onClick={() => setEditingInstanceNameId(c.id)}
-                                            >
-                                              <Pencil className="h-3.5 w-3.5" />
-                                            </button>
-                                          )}
-                                        </div>
-                                      )}
+                                          </button>
+                                        )}
+                                        {!registered && (
+                                          <button
+                                            type="button"
+                                            className="mt-1 shrink-0 text-muted-foreground hover:text-foreground"
+                                            aria-label={editing ? "編集を終了" : "インスタンス名を編集"}
+                                            onClick={() => setEditingInstanceNameId(editing ? null : c.id)}
+                                          >
+                                            {editing ? <Check className="h-3.5 w-3.5" /> : <Pencil className="h-3.5 w-3.5" />}
+                                          </button>
+                                        )}
+                                      </div>
                                     </TableCell>
                                     <TableCell className="align-top">
                                       <Select value={c.classId ?? "__none__"} disabled={registered}
@@ -830,26 +932,28 @@ export function ReviewScreen() {
                                             updateInst(c.id, { classId: v, className: cls?.name ?? "" })
                                           }
                                         }}>
-                                        <SelectTrigger className="h-8 w-52">
+                                        <SelectTrigger className="h-8 w-full">
                                           <SelectValue>{c.classId ? c.className : "既存クラスから選択"}</SelectValue>
                                         </SelectTrigger>
-                                        <SelectContent>
+                                        <SelectContent className="max-h-72 w-auto min-w-(--anchor-width) max-w-[22rem]">
                                           <SelectItem value="__none__">既存クラスから選択</SelectItem>
                                           {classes.map((cls) => <SelectItem key={cls.id} value={cls.id}>{cls.name}</SelectItem>)}
                                         </SelectContent>
                                       </Select>
                                     </TableCell>
-                                    <TableCell className="align-top pt-2">
+                                    <TableCell className="align-top whitespace-normal pt-3">
                                       {c.pendingClassCandidateId ? (
-                                        <div className="flex items-center gap-1.5">
-                                          <Badge className="bg-slate-200 text-slate-600 font-normal text-xs">クラス未登録</Badge>
-                                          <span className="text-sm text-muted-foreground">{c.proposedClassName}</span>
+                                        <div className="flex items-start gap-1.5">
+                                          <span className="inline-block shrink-0 rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300">
+                                            クラス未登録
+                                          </span>
+                                          <span className="break-words text-sm text-muted-foreground">{c.proposedClassName}</span>
                                         </div>
                                       ) : (
-                                        <span className="text-sm text-muted-foreground">{c.proposedClassName || "-"}</span>
+                                        <span className="block break-words text-sm text-muted-foreground">{c.proposedClassName || "-"}</span>
                                       )}
                                     </TableCell>
-                                    <TableCell className="align-top pt-2">
+                                    <TableCell className="align-top pt-3">
                                       <StatusBadge status={c.status} />
                                     </TableCell>
                                   </TableRow>

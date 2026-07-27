@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from "next/server"
 import { getContainer } from "@/lib/cosmos"
 import { getPrincipalName } from "@/lib/auth"
 import { checkProjectAccess } from "@/lib/project-access"
-import type { OntologyInstance } from "@/lib/types"
+import { normalizeName } from "@/lib/normalize"
+import { instanceStatus } from "@/lib/instance-status"
+import type { InstanceStatus, OntologyInstance } from "@/lib/types"
 
 const CONTAINER = "instances"
 
@@ -32,11 +34,31 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
     const access = await checkProjectAccess(request, existing.projectId)
     if ("error" in access) return access.error
     const now = new Date().toISOString().split("T")[0]
+
+    const newName = body.name ?? existing.name
+    const newNormalized = normalizeName(newName)
+    const prevNormalized = existing.normalizedName ?? normalizeName(existing.name)
+
+    // status の決定:
+    //   1) 統合/取消などで明示指定があればそれに従う
+    //   2) 本登録済み（既存 confirmed）の名前が実質変更されたら仮登録へ差し戻す（判断点3）
+    //   3) それ以外は現状維持
+    let status: InstanceStatus = instanceStatus(existing)
+    if (body.status === "provisional" || body.status === "confirmed" || body.status === "merged") {
+      status = body.status
+    } else if (newNormalized !== prevNormalized && status === "confirmed") {
+      status = "provisional"
+    }
+
     const updated: OntologyInstance = {
       ...existing,
-      name: body.name ?? existing.name,
+      name: newName,
+      normalizedName: newNormalized,
       classId: "classId" in body ? (body.classId ?? null) : existing.classId,
       attributes: body.attributes !== undefined ? body.attributes : existing.attributes,
+      status,
+      mergedInto: "mergedInto" in body ? (body.mergedInto ?? null) : existing.mergedInto,
+      aliases: body.aliases !== undefined ? body.aliases : existing.aliases,
       updatedBy: getPrincipalName(request),
       updatedAt: now,
     }

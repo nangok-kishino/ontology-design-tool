@@ -42,7 +42,7 @@ import {
   executeClassesImport,
   type ClassExportItem,
 } from "@/lib/import-export"
-import { ChevronDown, ChevronRight, Plus, Pencil, Trash2, Loader2, X, AlertTriangle, Info, Download, Upload, FileText, Tags, Link2 } from "lucide-react"
+import { Plus, Pencil, Trash2, Loader2, AlertTriangle, Info, Download, Upload, FileText, Tags, Link2 } from "lucide-react"
 import { useProject } from "@/app/project-context"
 
 type TreeNode = OntologyClass & { children: TreeNode[] }
@@ -68,58 +68,7 @@ function buildTree(items: OntologyClass[]): TreeNode[] {
   return roots
 }
 
-function TreeItem({
-  node,
-  depth,
-  selectedId,
-  onSelect,
-}: {
-  node: TreeNode
-  depth: number
-  selectedId: string | null
-  onSelect: (id: string) => void
-}) {
-  const [open, setOpen] = useState(true)
-  const hasChildren = node.children.length > 0
-  const isSelected = selectedId === node.id
-
-  return (
-    <div>
-      <div
-        className={cn(
-          "flex cursor-pointer items-center gap-1 rounded-md py-1.5 pr-2 text-sm transition-colors",
-          isSelected ? "bg-accent font-medium text-accent-foreground" : "hover:bg-muted",
-        )}
-        style={{ paddingLeft: depth * 16 + 8 }}
-        onClick={() => onSelect(node.id)}
-      >
-        {hasChildren ? (
-          <button
-            onClick={(e) => { e.stopPropagation(); setOpen(!open) }}
-            className="flex h-4 w-4 items-center justify-center text-muted-foreground"
-          >
-            {open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-          </button>
-        ) : (
-          <span className="h-4 w-4" />
-        )}
-        <span className="flex flex-col">
-          <span>{node.name}</span>
-          {node.nameEn && <span className="text-xs text-muted-foreground">{node.nameEn}</span>}
-        </span>
-      </div>
-      {hasChildren && open && (
-        <div>
-          {node.children.map((child) => (
-            <TreeItem key={child.id} node={child} depth={depth + 1} selectedId={selectedId} onSelect={onSelect} />
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
-
-export function ClassesScreen({ initialSelectedId }: { initialSelectedId?: string }) {
+export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId?: string; active?: boolean }) {
   const { currentProject, loading: projectLoading } = useProject()
   const [classes, setClasses] = useState<OntologyClass[]>([])
   const [loading, setLoading] = useState(true)
@@ -133,8 +82,7 @@ export function ClassesScreen({ initialSelectedId }: { initialSelectedId?: strin
   const [newParentId, setNewParentId] = useState<string | null>(null)
   const [adding, setAdding] = useState(false)
 
-  // クラス編集モード
-  const [isEditing, setIsEditing] = useState(false)
+  // クラス編集（右詳細パネルで常時編集可）
   const [editName, setEditName] = useState("")
   const [editNameEn, setEditNameEn] = useState("")
   const [editDesc, setEditDesc] = useState("")
@@ -209,6 +157,11 @@ export function ClassesScreen({ initialSelectedId }: { initialSelectedId?: strin
     fetchClasses()
   }, [currentProject?.id, projectLoading])
 
+  // この画面が表示状態になったら再取得する（マウント維持のため、他画面での変更を反映）
+  useEffect(() => {
+    if (active && currentProject) fetchClasses()
+  }, [active, currentProject?.id, fetchClasses])
+
   useEffect(() => {
     if (initialSelectedId && classes.length > 0) {
       setSelectedId(initialSelectedId)
@@ -236,12 +189,18 @@ export function ClassesScreen({ initialSelectedId }: { initialSelectedId?: strin
   }, [])
 
   useEffect(() => {
-    setIsEditing(false)
     if (!selectedId || !currentProject) {
       setProjectAttrs([]); setInheritedAttrs([]); setOwnAttrs([])
       return
     }
     const cls = classes.find((c) => c.id === selectedId)
+    // 常時編集可のため、選択のたびに編集フィールドを対象クラスで初期化する
+    if (cls) {
+      setEditName(cls.name)
+      setEditNameEn(cls.nameEn ?? "")
+      setEditDesc(cls.description)
+      setEditParentId(cls.parentId)
+    }
     fetchAllAttrs(selectedId, cls?.parentId ?? null, currentProject.id)
   }, [selectedId, currentProject?.id])
 
@@ -270,15 +229,6 @@ export function ClassesScreen({ initialSelectedId }: { initialSelectedId?: strin
     }
   }
 
-  const startEdit = () => {
-    if (!selected) return
-    setEditName(selected.name)
-    setEditNameEn(selected.nameEn ?? "")
-    setEditDesc(selected.description)
-    setEditParentId(selected.parentId)
-    setIsEditing(true)
-  }
-
   const handleSave = async () => {
     if (!editName.trim() || !selected) return
     setSaving(true)
@@ -294,7 +244,6 @@ export function ClassesScreen({ initialSelectedId }: { initialSelectedId?: strin
         }),
       })
       await fetchClasses()
-      setIsEditing(false)
     } finally {
       setSaving(false)
     }
@@ -488,6 +437,16 @@ export function ClassesScreen({ initialSelectedId }: { initialSelectedId?: strin
 
   const tree = buildTree(classes)
 
+  // ツリーを深さ付きで平坦化（一覧テーブルのインデント表示用）
+  const flatClasses: { node: TreeNode; depth: number }[] = []
+  const walkTree = (nodes: TreeNode[], depth: number) => {
+    for (const n of nodes) {
+      flatClasses.push({ node: n, depth })
+      if (n.children.length) walkTree(n.children, depth + 1)
+    }
+  }
+  walkTree(tree, 0)
+
   // 初回訪問（未選択）時は先頭のクラスを自動選択する。再訪問時は前回の選択を維持する
   useEffect(() => {
     if (loading || selectedId || tree.length === 0) return
@@ -525,7 +484,32 @@ export function ClassesScreen({ initialSelectedId }: { initialSelectedId?: strin
     }
   }
 
-  const getClassName = (id: string) => classes.find((c) => c.id === id)?.name ?? id
+  const getClassName = (id: string) => classes.find((c) => c.id === id)?.name ?? "不明"
+
+  // 変更があるか（保存ボタンの活性判定）
+  const classDirty = !!selected && (
+    editName !== selected.name ||
+    editNameEn !== (selected.nameEn ?? "") ||
+    editDesc !== (selected.description ?? "") ||
+    (editParentId ?? null) !== (selected.parentId ?? null)
+  )
+
+  // 関連リレーション表のクラスセル（選択中クラスは強調、はみ出しは省略＋ホバーで全表示）
+  const renderRelClassCell = (id: string) => {
+    const name = getClassName(id)
+    const isSelf = !!selected && id === selected.id
+    return (
+      <span
+        title={name}
+        className={cn(
+          "block truncate",
+          isSelf ? "font-semibold text-indigo-700 dark:text-indigo-300" : "text-foreground",
+        )}
+      >
+        {name}
+      </span>
+    )
+  }
 
   const parentCandidates = classes.filter((c) => c.parentId === null && c.id !== selectedId)
   const addParentCandidates = classes.filter((c) => c.parentId === null)
@@ -621,138 +605,122 @@ export function ClassesScreen({ initialSelectedId }: { initialSelectedId?: strin
           <Upload className="h-3.5 w-3.5" />インポート
         </Button>
       </TopBar>
-      <div className="grid flex-1 overflow-hidden" style={{ gridTemplateColumns: "260px 1fr" }}>
-        {/* 左ペイン */}
-        <div className="flex flex-col border-r border-border bg-card">
-          <div className="flex items-center justify-between px-4 py-3">
-            <h2 className="text-sm font-semibold text-foreground">クラス一覧</h2>
+      <div className="flex flex-1 overflow-hidden">
+        {/* 一覧（表） */}
+        <div className="flex flex-1 flex-col overflow-hidden border-r border-border">
+          <div className="flex items-center justify-between px-6 py-3">
+            <h2 className="text-base font-semibold text-foreground">クラス一覧</h2>
             <Button size="sm" variant="outline" className="h-8 gap-1.5 bg-transparent"
               onClick={openAddDialog}>
               <Plus className="h-3.5 w-3.5" />クラスを追加
             </Button>
           </div>
-          <div className="flex-1 overflow-auto p-2">
+          <div className="flex-1 overflow-auto px-6 pb-6">
             {loading ? (
               <div className="flex h-32 items-center justify-center text-muted-foreground">
                 <Loader2 className="h-5 w-5 animate-spin" />
               </div>
-            ) : tree.length === 0 ? (
+            ) : flatClasses.length === 0 ? (
               <p className="p-4 text-center text-sm text-muted-foreground">
                 {currentProject ? "クラスが登録されていません" : "プロジェクトを選択してください"}
               </p>
             ) : (
-              tree.map((node) => (
-                <TreeItem key={node.id} node={node} depth={0} selectedId={selectedId} onSelect={setSelectedId} />
-              ))
+              <div className="overflow-x-auto rounded-lg border border-border">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="bg-muted/50 hover:bg-muted/50">
+                      <TableHead className="font-semibold text-foreground">クラス名</TableHead>
+                      <TableHead className="w-40 font-semibold text-foreground">親クラス</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {flatClasses.map(({ node, depth }) => {
+                      const isSel = selectedId === node.id
+                      const parent = node.parentId ? classes.find((c) => c.id === node.parentId) : null
+                      return (
+                        <TableRow
+                          key={node.id}
+                          className={cn(
+                            "cursor-pointer transition-colors",
+                            isSel
+                              ? "bg-indigo-100 hover:bg-indigo-100 dark:bg-indigo-950/50 dark:hover:bg-indigo-950/50"
+                              : "hover:bg-muted/50",
+                          )}
+                          onClick={() => setSelectedId(node.id)}
+                        >
+                          <TableCell className="font-medium text-foreground">
+                            <span className="flex items-start" style={{ paddingLeft: depth * 16 }}>
+                              {depth > 0 && <span className="mr-1 text-muted-foreground/70">└</span>}
+                              <span className="flex flex-col">
+                                <span>{node.name}</span>
+                                {node.nameEn && <span className="text-xs font-normal text-muted-foreground">{node.nameEn}</span>}
+                              </span>
+                            </span>
+                          </TableCell>
+                          <TableCell className="text-sm text-muted-foreground">{parent?.name ?? "—"}</TableCell>
+                        </TableRow>
+                      )
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
             )}
           </div>
         </div>
 
-        {/* 右ペイン */}
-        {selected ? (
-          <div className="flex flex-col overflow-hidden">
-            {/* ヘッダー */}
-            <div className="flex items-center justify-between px-6 py-3">
-              <h2 className="text-base font-semibold text-foreground">{selected.name}</h2>
-              <div className="flex gap-2">
-                {isEditing ? (
-                  <>
-                    <Button size="sm" variant="outline" className="h-8 gap-1.5 bg-transparent"
-                      onClick={() => setIsEditing(false)}>
-                      <X className="h-3.5 w-3.5" />キャンセル
-                    </Button>
-                    <Button size="sm" className="h-8 gap-1.5"
-                      onClick={handleSave} disabled={!editName.trim() || saving}>
-                      {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-                      {saving ? "保存中..." : "保存"}
-                    </Button>
-                  </>
-                ) : (
-                  <>
-                    <Button size="sm" variant="outline" className="h-8 gap-1.5 bg-transparent"
-                      onClick={startEdit}>
-                      <Pencil className="h-3.5 w-3.5" />編集
-                    </Button>
-                    <Button size="sm" variant="outline"
-                      className="h-8 gap-1.5 bg-transparent text-destructive hover:text-destructive"
-                      onClick={openDeleteDialog}>
-                      <Trash2 className="h-3.5 w-3.5" />削除
-                    </Button>
-                  </>
-                )}
-              </div>
-            </div>
-
-            <div className="flex-1 overflow-auto px-6 py-6 space-y-8">
-                <p className="text-xs text-muted-foreground">
-                  登録日 {formatDateTime(selected.createdAt)}　登録者 {selected.createdBy || "—"}　更新日 {formatDateTime(selected.updatedAt)}　更新者 {selected.updatedBy || "—"}
-                </p>
-
+        {/* 詳細（常に編集可・固定パネル） */}
+        <div className="flex w-[30rem] shrink-0 flex-col overflow-hidden bg-card">
+          {selected ? (
+            <>
+              <div className="flex-1 space-y-6 overflow-y-auto px-4 py-4">
                 {/* 基本情報 */}
-                <div className="space-y-5">
+                <section className="space-y-3">
                   <SectionHeader icon={FileText} title="基本情報" />
-                  {isEditing ? (
-                    <>
-                      <div className="space-y-2">
-                        <Label htmlFor="edit-name">クラス名 <span className="text-destructive">*</span></Label>
-                        <Input id="edit-name" value={editName}
-                          onChange={(e) => setEditName(e.target.value)} />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="edit-name-en">英語名</Label>
-                        <Input id="edit-name-en" value={editNameEn}
-                          onChange={(e) => setEditNameEn(e.target.value)}
-                          placeholder="例：Defect Case" />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="edit-desc">説明</Label>
-                        <Textarea id="edit-desc" rows={4} value={editDesc}
-                          onChange={(e) => setEditDesc(e.target.value)} />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="edit-parent">親クラス</Label>
-                        <Select
-                          value={editParentId ?? "__none__"}
-                          onValueChange={(v) => setEditParentId(v === "__none__" ? null : v)}
-                        >
-                          <SelectTrigger id="edit-parent">
-                            <SelectValue>
-                              {editParentId
-                                ? (parentCandidates.find(c => c.id === editParentId)?.name ?? editParentId)
-                                : "なし"}
-                            </SelectValue>
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="__none__">なし</SelectItem>
-                            {parentCandidates.map((c) => (
-                              <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <div className="space-y-1">
-                        <Label className="text-xs text-muted-foreground">クラス名</Label>
-                        <p className="text-sm font-medium text-foreground">{selected.name}</p>
-                      </div>
-                      <div className="space-y-1">
-                        <Label className="text-xs text-muted-foreground">説明</Label>
-                        <p className="text-sm text-foreground whitespace-pre-wrap">
-                          {selected.description || "（説明なし）"}
-                        </p>
-                      </div>
-                      <div className="space-y-1">
-                        <Label className="text-xs text-muted-foreground">親クラス</Label>
-                        <p className="text-sm text-foreground">{parentName}</p>
-                      </div>
-                    </>
-                  )}
-                </div>
+                  <div className="space-y-3">
+                    <div className="space-y-0.5 text-xs text-muted-foreground">
+                      <p>登録日 {formatDateTime(selected.createdAt)}{selected.createdBy ? `（${selected.createdBy}）` : ""}</p>
+                      <p>更新日 {formatDateTime(selected.updatedAt)}{selected.updatedBy ? `（${selected.updatedBy}）` : ""}</p>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-sm font-medium">クラス名（日本語名） <span className="text-destructive">*</span></Label>
+                      <Input value={editName} onChange={(e) => setEditName(e.target.value)}
+                        placeholder="例：不具合事例" className="h-8" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-sm font-medium">クラス名（英語名）</Label>
+                      <Input value={editNameEn} onChange={(e) => setEditNameEn(e.target.value)}
+                        placeholder="例：Defect Case" className="h-8" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-sm font-medium">説明</Label>
+                      <Textarea rows={4} value={editDesc} onChange={(e) => setEditDesc(e.target.value)} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-sm font-medium">親クラス</Label>
+                      <Select
+                        value={editParentId ?? "__none__"}
+                        onValueChange={(v) => setEditParentId(v === "__none__" ? null : v)}
+                      >
+                        <SelectTrigger className="h-8">
+                          <SelectValue>
+                            {editParentId
+                              ? (parentCandidates.find(c => c.id === editParentId)?.name ?? editParentId)
+                              : "なし"}
+                          </SelectValue>
+                        </SelectTrigger>
+                        <SelectContent className="max-h-72 w-auto min-w-(--anchor-width) max-w-[22rem]">
+                          <SelectItem value="__none__">なし</SelectItem>
+                          {parentCandidates.map((c) => (
+                            <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                </section>
 
                 {/* 属性 */}
-                <div className="space-y-4">
+                <section className="space-y-4">
                   <SectionHeader icon={Tags} title="属性" />
                   {loadingAttrs ? (
                     <div className="flex h-20 items-center justify-center text-muted-foreground">
@@ -769,22 +737,22 @@ export function ClassesScreen({ initialSelectedId }: { initialSelectedId?: strin
                       {renderAttrSection("クラス固有属性", ownAttrs, "own")}
                     </div>
                   )}
-                </div>
+                </section>
 
                 {/* 関連リレーション */}
-                <div className="space-y-4">
+                <section className="space-y-4">
                   <SectionHeader icon={Link2} title="関連リレーション" />
                   <div className="space-y-6">
-                    {/* 直接定義されたリレーション */}
+                    {/* クラスが利用されているリレーション */}
                     <div className="space-y-2">
-                      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">直接定義されたリレーション</p>
+                      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">クラスが利用されているリレーション</p>
                       <div className="rounded-lg border border-border">
-                        <Table>
+                        <Table className="table-fixed">
                           <TableHeader>
                             <TableRow className="bg-muted/50 hover:bg-muted/50">
-                              <TableHead className="font-semibold text-foreground">始点クラス</TableHead>
-                              <TableHead className="font-semibold text-foreground">リレーション名</TableHead>
-                              <TableHead className="font-semibold text-foreground">終点クラス</TableHead>
+                              <TableHead className="w-[30%] font-semibold text-foreground">始点クラス</TableHead>
+                              <TableHead className="w-[40%] font-semibold text-foreground">リレーション名</TableHead>
+                              <TableHead className="w-[30%] font-semibold text-foreground">終点クラス</TableHead>
                             </TableRow>
                           </TableHeader>
                           <TableBody>
@@ -794,16 +762,18 @@ export function ClassesScreen({ initialSelectedId }: { initialSelectedId?: strin
                                   .filter((p) => p.sourceClassId === selected!.id || p.targetClassId === selected!.id)
                                   .map((p, i) => (
                                     <TableRow key={`${r.id}-${i}`}>
-                                      <TableCell className="text-foreground">{getClassName(p.sourceClassId)}</TableCell>
-                                      <TableCell className="font-medium text-foreground">{r.name}</TableCell>
-                                      <TableCell className="text-foreground">{getClassName(p.targetClassId)}</TableCell>
+                                      <TableCell>{renderRelClassCell(p.sourceClassId)}</TableCell>
+                                      <TableCell className="font-medium text-foreground">
+                                        <span title={r.name} className="block truncate">{r.name}</span>
+                                      </TableCell>
+                                      <TableCell>{renderRelClassCell(p.targetClassId)}</TableCell>
                                     </TableRow>
                                   ))
                               )
                             ) : (
                               <TableRow>
                                 <TableCell colSpan={3} className="text-center text-muted-foreground">
-                                  直接定義されたリレーションはありません
+                                  このクラスが使われているリレーションはありません
                                 </TableCell>
                               </TableRow>
                             )}
@@ -817,22 +787,26 @@ export function ClassesScreen({ initialSelectedId }: { initialSelectedId?: strin
                       <div className="space-y-2">
                         <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">継承されたリレーション</p>
                         <div className="rounded-lg border border-border">
-                          <Table>
+                          <Table className="table-fixed">
                             <TableHeader>
                               <TableRow className="bg-muted/50 hover:bg-muted/50">
-                                <TableHead className="font-semibold text-foreground">始点クラス</TableHead>
-                                <TableHead className="font-semibold text-foreground">リレーション名</TableHead>
-                                <TableHead className="font-semibold text-foreground">終点クラス</TableHead>
-                                <TableHead className="font-semibold text-foreground">継承元クラス</TableHead>
+                                <TableHead className="w-[25%] font-semibold text-foreground">始点クラス</TableHead>
+                                <TableHead className="w-[30%] font-semibold text-foreground">リレーション名</TableHead>
+                                <TableHead className="w-[25%] font-semibold text-foreground">終点クラス</TableHead>
+                                <TableHead className="w-[20%] font-semibold text-foreground">継承元クラス</TableHead>
                               </TableRow>
                             </TableHeader>
                             <TableBody>
                               {inheritedRelations.map((row, i) => (
                                 <TableRow key={`inh-${row.relation.id}-${i}`}>
-                                  <TableCell className="text-foreground">{getClassName(row.sourceClassId)}</TableCell>
-                                  <TableCell className="font-medium text-foreground">{row.relation.name}</TableCell>
-                                  <TableCell className="text-foreground">{getClassName(row.targetClassId)}</TableCell>
-                                  <TableCell className="text-muted-foreground text-sm">{row.inheritedFrom.name}</TableCell>
+                                  <TableCell>{renderRelClassCell(row.sourceClassId)}</TableCell>
+                                  <TableCell className="font-medium text-foreground">
+                                    <span title={row.relation.name} className="block truncate">{row.relation.name}</span>
+                                  </TableCell>
+                                  <TableCell>{renderRelClassCell(row.targetClassId)}</TableCell>
+                                  <TableCell>
+                                    <span title={row.inheritedFrom.name} className="block truncate text-sm text-muted-foreground">{row.inheritedFrom.name}</span>
+                                  </TableCell>
                                 </TableRow>
                               ))}
                             </TableBody>
@@ -845,16 +819,30 @@ export function ClassesScreen({ initialSelectedId }: { initialSelectedId?: strin
                       <p className="text-center text-sm text-muted-foreground py-4">関連するリレーションはありません</p>
                     )}
                   </div>
-                </div>
+                </section>
+              </div>
+
+              {/* フッター：削除・保存 */}
+              <div className="flex items-center justify-between border-t border-border px-4 py-3">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="gap-1.5 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                  onClick={openDeleteDialog}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />削除
+                </Button>
+                <Button size="sm" variant="success" onClick={handleSave} disabled={!editName.trim() || saving || !classDirty}>
+                  {saving && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}保存
+                </Button>
+              </div>
+            </>
+          ) : (
+            <div className="flex flex-1 items-center justify-center px-4 text-center text-sm text-muted-foreground">
+              クラスを選択してください
             </div>
-          </div>
-        ) : (
-          !loading && (
-            <div className="flex items-center justify-center text-muted-foreground">
-              <p className="text-sm">クラスを選択してください</p>
-            </div>
-          )
-        )}
+          )}
+        </div>
       </div>
 
       {/* クラス追加ダイアログ */}
