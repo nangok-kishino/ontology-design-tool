@@ -708,7 +708,7 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
                               : "なし"}
                           </SelectValue>
                         </SelectTrigger>
-                        <SelectContent className="max-h-72 w-auto min-w-(--anchor-width) max-w-[22rem]">
+                        <SelectContent className="max-h-72">
                           <SelectItem value="__none__">なし</SelectItem>
                           {parentCandidates.map((c) => (
                             <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>

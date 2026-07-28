@@ -67,6 +67,8 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
   const [newNameEn, setNewNameEn] = useState("")
   const [newDesc, setNewDesc] = useState("")
   const [newPairs, setNewPairs] = useState<ClassPair[]>([{ sourceClassId: "", targetClassId: "" }])
+  const [newIncludeChildren, setNewIncludeChildren] = useState(true)
+  const [editIncludeChildren, setEditIncludeChildren] = useState(true)
   const [adding, setAdding] = useState(false)
 
   // 編集モード
@@ -183,6 +185,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
       setEditNameEn(rel.nameEn ?? "")
       setEditDesc(rel.description ?? "")
       setEditPairs(rel.classPairs ?? [])
+      setEditIncludeChildren(true)
     }
     fetchAllAttrs(selectedId, currentProject.id)
   }, [selectedId, currentProject?.id])
@@ -199,7 +202,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
           name: newName.trim(),
           nameEn: newNameEn.trim(),
           description: newDesc.trim(),
-          classPairs: newPairs,
+          classPairs: newIncludeChildren ? expandPairs(newPairs) : newPairs,
         }),
       })
       const created: OntologyRelation = await res.json()
@@ -233,7 +236,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
           name: editName.trim(),
           nameEn: editNameEn.trim(),
           description: editDesc.trim(),
-          classPairs: editPairs,
+          classPairs: editIncludeChildren ? expandPairs(editPairs) : editPairs,
         }),
       })
       await fetchRelations()
@@ -364,6 +367,38 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
   const className = (id: string | null) => id ? (classes.find((c) => c.id === id)?.name ?? "不明") : "—"
   // 参照先クラスが削除された（存在しない）／未設定の端点を「不明」とみなす
   const classMissing = (id: string | null | undefined) => !id || !classes.some((c) => c.id === id)
+
+  // クラス階層：ある親クラスの子孫クラスidを再帰列挙。
+  const hasChildren = (classId: string) => classes.some((c) => c.parentId === classId)
+  const descendantIds = (classId: string): string[] => {
+    const out: string[] = []
+    const stack = classes.filter((c) => c.parentId === classId).map((c) => c.id)
+    while (stack.length) {
+      const id = stack.pop()!
+      out.push(id)
+      for (const c of classes) if (c.parentId === id) stack.push(c.id)
+    }
+    return out
+  }
+  // 親クラスを指定したペアを、その子孫クラスを含む全組合せに展開（重複除去）。
+  const expandPairs = (pairs: ClassPair[]): ClassPair[] => {
+    const seen = new Set<string>()
+    const out: ClassPair[] = []
+    for (const p of pairs) {
+      if (!p.sourceClassId || !p.targetClassId) continue
+      const sources = [p.sourceClassId, ...descendantIds(p.sourceClassId)]
+      const targets = [p.targetClassId, ...descendantIds(p.targetClassId)]
+      for (const s of sources)
+        for (const t of targets) {
+          const k = `${s}|${t}`
+          if (!seen.has(k)) { seen.add(k); out.push({ sourceClassId: s, targetClassId: t }) }
+        }
+    }
+    return out
+  }
+  // ペア群に子クラスを持つ親クラスが含まれるか（子クラス取り込みオプションの表示判定）
+  const pairsHaveParent = (pairs: ClassPair[]) =>
+    pairs.some((p) => (p.sourceClassId && hasChildren(p.sourceClassId)) || (p.targetClassId && hasChildren(p.targetClassId)))
   // classPairs のいずれかの端点が不明なら、定義が不完全なリレーション
   const relationIncomplete = (r: OntologyRelation) =>
     (r.classPairs ?? []).length === 0 ||
@@ -470,7 +505,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
           <div className="flex items-center justify-between px-6 py-3">
             <h2 className="text-base font-semibold text-foreground">リレーション一覧</h2>
             <Button size="sm" variant="outline" className="h-8 gap-1.5 bg-transparent"
-              onClick={() => { setNewName(""); setNewNameEn(""); setNewDesc(""); setNewPairs([{ sourceClassId: "", targetClassId: "" }]); setShowAdd(true) }}>
+              onClick={() => { setNewName(""); setNewNameEn(""); setNewDesc(""); setNewPairs([{ sourceClassId: "", targetClassId: "" }]); setNewIncludeChildren(true); setShowAdd(true) }}>
               <Plus className="h-3.5 w-3.5" />追加
             </Button>
           </div>
@@ -496,7 +531,6 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                     {relations.map((r) => {
                       const isSel = selectedId === r.id
                       const pairs = r.classPairs ?? []
-                      const first = pairs[0]
                       return (
                         <TableRow
                           key={r.id}
@@ -518,17 +552,20 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                             {r.nameEn && <span className="block truncate text-xs text-muted-foreground">{r.nameEn}</span>}
                           </TableCell>
                           <TableCell className="align-top text-sm text-muted-foreground">
-                            {first ? (
-                              <span className="flex items-center gap-1">
-                                <span className={cn("truncate", classMissing(first.sourceClassId) && "font-medium text-amber-600 dark:text-amber-500")}>
-                                  {className(first.sourceClassId)}
-                                </span>
-                                <ArrowRight className="h-3 w-3 shrink-0" />
-                                <span className={cn("truncate", classMissing(first.targetClassId) && "font-medium text-amber-600 dark:text-amber-500")}>
-                                  {className(first.targetClassId)}
-                                </span>
-                                {pairs.length > 1 && <span className="shrink-0 text-xs">+{pairs.length - 1}</span>}
-                              </span>
+                            {pairs.length > 0 ? (
+                              <div className="flex flex-col gap-0.5">
+                                {pairs.map((p, i) => (
+                                  <span key={i} className="flex items-center gap-1">
+                                    <span className={cn(classMissing(p.sourceClassId) && "font-medium text-amber-600 dark:text-amber-500")}>
+                                      {className(p.sourceClassId)}
+                                    </span>
+                                    <ArrowRight className="h-3 w-3 shrink-0" />
+                                    <span className={cn(classMissing(p.targetClassId) && "font-medium text-amber-600 dark:text-amber-500")}>
+                                      {className(p.targetClassId)}
+                                    </span>
+                                  </span>
+                                ))}
+                              </div>
                             ) : "—"}
                           </TableCell>
                         </TableRow>
@@ -578,10 +615,10 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                           <div key={i} className="flex items-center gap-2">
                             <Select value={pair.sourceClassId || "__none__"}
                               onValueChange={(v) => updateEditPair(i, "sourceClassId", v && v !== "__none__" ? v : "")}>
-                              <SelectTrigger className="h-8 flex-1">
+                              <SelectTrigger className="h-8 min-w-0 flex-1">
                                 <SelectValue>{pair.sourceClassId ? className(pair.sourceClassId) : "始点クラス"}</SelectValue>
                               </SelectTrigger>
-                              <SelectContent className="max-h-72 w-auto min-w-(--anchor-width) max-w-[22rem]">
+                              <SelectContent className="max-h-72">
                                 {classes.map((c) => (
                                   <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
                                 ))}
@@ -590,10 +627,10 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                             <ArrowRight className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
                             <Select value={pair.targetClassId || "__none__"}
                               onValueChange={(v) => updateEditPair(i, "targetClassId", v && v !== "__none__" ? v : "")}>
-                              <SelectTrigger className="h-8 flex-1">
+                              <SelectTrigger className="h-8 min-w-0 flex-1">
                                 <SelectValue>{pair.targetClassId ? className(pair.targetClassId) : "終点クラス"}</SelectValue>
                               </SelectTrigger>
-                              <SelectContent className="max-h-72 w-auto min-w-(--anchor-width) max-w-[22rem]">
+                              <SelectContent className="max-h-72">
                                 {classes.map((c) => (
                                   <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
                                 ))}
@@ -611,6 +648,16 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                       <Button size="sm" variant="outline" className="gap-1 bg-transparent" onClick={addEditPair}>
                         <Plus className="h-3.5 w-3.5" />ペアを追加
                       </Button>
+                      {pairsHaveParent(editPairs) && (
+                        <label className="mt-1 flex cursor-pointer items-start gap-2 rounded-md border border-border bg-muted/30 px-3 py-2">
+                          <input type="checkbox" checked={editIncludeChildren}
+                            onChange={(e) => setEditIncludeChildren(e.target.checked)}
+                            className="mt-0.5 h-4 w-4 accent-indigo-600" />
+                          <span className="text-xs text-muted-foreground">
+                            親クラスを指定したペアは、その<strong className="font-medium text-foreground">子クラスも対象に含める</strong>（推奨）。保存時に子クラス分のペアへ自動展開します。
+                          </span>
+                        </label>
+                      )}
                     </div>
                     <div className="space-y-1.5">
                       <Label className="text-sm font-medium">説明</Label>
@@ -680,7 +727,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                   <div key={i} className="flex items-center gap-2">
                     <Select value={pair.sourceClassId || "__none__"}
                       onValueChange={(v) => updateNewPair(i, "sourceClassId", v && v !== "__none__" ? v : "")}>
-                      <SelectTrigger className="flex-1">
+                      <SelectTrigger className="min-w-0 flex-1">
                         <SelectValue>{pair.sourceClassId ? className(pair.sourceClassId) : "始点クラス"}</SelectValue>
                       </SelectTrigger>
                       <SelectContent>
@@ -692,7 +739,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                     <ArrowRight className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
                     <Select value={pair.targetClassId || "__none__"}
                       onValueChange={(v) => updateNewPair(i, "targetClassId", v && v !== "__none__" ? v : "")}>
-                      <SelectTrigger className="flex-1">
+                      <SelectTrigger className="min-w-0 flex-1">
                         <SelectValue>{pair.targetClassId ? className(pair.targetClassId) : "終点クラス"}</SelectValue>
                       </SelectTrigger>
                       <SelectContent>
@@ -715,6 +762,16 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                 <Plus className="h-3.5 w-3.5" />
                 ペアを追加
               </Button>
+              {pairsHaveParent(newPairs) && (
+                <label className="mt-1 flex cursor-pointer items-start gap-2 rounded-md border border-border bg-muted/30 px-3 py-2">
+                  <input type="checkbox" checked={newIncludeChildren}
+                    onChange={(e) => setNewIncludeChildren(e.target.checked)}
+                    className="mt-0.5 h-4 w-4 accent-indigo-600" />
+                  <span className="text-xs text-muted-foreground">
+                    親クラスを指定したペアは、その<strong className="font-medium text-foreground">子クラスも対象に含める</strong>（推奨）。登録時に子クラス分のペアへ自動展開します。
+                  </span>
+                </label>
+              )}
             </div>
             <div className="space-y-2">
               <Label>説明</Label>

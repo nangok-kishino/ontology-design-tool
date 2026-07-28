@@ -108,6 +108,66 @@ export type NameResolution = {
   approvedAt: string
 }
 
+// ─────────────────────────────────────────────
+// トリプレット（(主語インスタンス)—[述語リレーション]→(目的語インスタンス)）
+//   トリプレット化できるのは本登録(confirmed)インスタンスのみ（名寄せ設計の原則）。
+//   一覧・Neo4jエクスポートの対象は本登録トリプレットのみ。
+// ─────────────────────────────────────────────
+
+// 文書から抽出したトリプレットの候補。
+// 【重要】抽出は必ず「登録済み（本登録）インスタンス」と「定義済みリレーション」を候補として
+// LLMに渡し、その中から id を選ばせる（定義に無い事物は抽出させない）。したがって candidate は
+// 表層文字列ではなく、選ばれた id を保持する。表層(subjectText等)は表示・監査用の参考値。
+// フェーズ2（文書取込みビュー）で使用。判定（クラスペア整合など）は lib/triplet-resolve.ts の
+// サーバ処理（LLM不要）で都度算出する。
+export type TripletResolveStatus = "valid" | "type_conflict" | "unresolved"
+
+export type TripletCandidate = {
+  id: string
+  projectId: string
+  sourceDocName: string
+  // LLM が登録済みインスタンス／定義済みリレーションの中から選んだ id
+  subjectInstanceId: string
+  predicateRelationId: string
+  objectInstanceId: string
+  // 抽出当時の表層（参考・表示フォールバック用）
+  subjectText?: string
+  predicateText?: string
+  objectText?: string
+  evidence: string // 抽出根拠スニペット
+  confidence?: number
+  createdBy: string
+  createdAt: string
+  // 直近の判定スナップショット（表示用・任意）。判定は都度サーバで再計算してよい
+  resolvedStatus?: TripletResolveStatus
+}
+
+// 承認済み（本登録）トリプレット。一覧・エクスポートの対象。
+export type Triplet = {
+  id: string
+  projectId: string
+  subjectInstanceId: string
+  predicateRelationId: string
+  objectInstanceId: string
+  // 表示・エクスポート安定用スナップショット（作成/承認当時の名前・クラス）
+  subjectName: string
+  subjectClassId: string | null
+  predicateName: string
+  objectName: string
+  objectClassId: string | null
+  sourceDocName?: string
+  evidence?: string
+  sourceCandidateId?: string // 由来の TripletCandidate（手動追加なら未設定）
+  approvedBy: string
+  approvedAt: string
+  neo4jSynced?: boolean
+  neo4jSyncedAt?: string
+  createdBy: string
+  createdAt: string
+  updatedBy: string
+  updatedAt: string
+}
+
 export type CandidateType = "class" | "relation"
 export type CandidateStatus = "確認中" | "承認済み" | "却下"
 

@@ -7,6 +7,9 @@ import { ClassesScreen } from "@/components/classes-screen"
 import { RelationsScreen } from "@/components/relations-screen"
 import { ReviewScreen } from "@/components/review-screen"
 import { InstancesScreen } from "@/components/instances-screen"
+import { TripletsScreen } from "@/components/triplets-screen"
+import { TripletReviewScreen } from "@/components/triplet-review-screen"
+import { GraphScreen } from "@/components/graph-screen"
 import { ProjectWelcomeScreen } from "@/components/project-welcome-screen"
 import { OntologyInfoScreen } from "@/components/ontology-info-screen"
 import { ProjectProvider } from "@/app/project-context"
@@ -20,6 +23,9 @@ function AppContent() {
   const [hasVisitedRelations, setHasVisitedRelations] = useState(false)
   const [hasVisitedInstances, setHasVisitedInstances] = useState(false)
   const [hasVisitedReview, setHasVisitedReview] = useState(false)
+  const [hasVisitedTriplets, setHasVisitedTriplets] = useState(false)
+  const [hasVisitedTripletReview, setHasVisitedTripletReview] = useState(false)
+  const [hasVisitedGraph, setHasVisitedGraph] = useState(false)
 
   const navigate = (s: ScreenId, id?: string) => {
     setInitialSelectId(id)
@@ -28,6 +34,9 @@ function AppContent() {
     if (s === "relations") setHasVisitedRelations(true)
     if (s === "instances") setHasVisitedInstances(true)
     if (s === "review") setHasVisitedReview(true)
+    if (s === "triplets") setHasVisitedTriplets(true)
+    if (s === "triplet-review") setHasVisitedTripletReview(true)
+    if (s === "graph") setHasVisitedGraph(true)
   }
 
   return (
@@ -59,6 +68,21 @@ function AppContent() {
             {hasVisitedReview && (
               <div className={screen === "review" ? "h-full" : "hidden"}>
                 <ReviewScreen active={screen === "review"} />
+              </div>
+            )}
+            {hasVisitedTriplets && (
+              <div className={screen === "triplets" ? "h-full" : "hidden"}>
+                <TripletsScreen active={screen === "triplets"} />
+              </div>
+            )}
+            {hasVisitedTripletReview && (
+              <div className={screen === "triplet-review" ? "h-full" : "hidden"}>
+                <TripletReviewScreen active={screen === "triplet-review"} />
+              </div>
+            )}
+            {hasVisitedGraph && (
+              <div className={screen === "graph" ? "h-full" : "hidden"}>
+                <GraphScreen active={screen === "graph"} />
               </div>
             )}
           </>

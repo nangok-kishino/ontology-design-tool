@@ -4,12 +4,12 @@ import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { cn } from "@/lib/utils"
 import {
-  LayoutDashboard, Boxes, GitBranch, FileInput, Database, FolderOpen, BookOpen, LogOut, Lock, Settings,
+  LayoutDashboard, Boxes, GitBranch, FileInput, Database, FolderOpen, BookOpen, LogOut, Lock, Settings, Waypoints, Network,
 } from "lucide-react"
 import { useProject } from "@/app/project-context"
 import { ProjectSettingsDialog } from "@/components/project-settings-dialog"
 
-export type ScreenId = "dashboard" | "review" | "classes" | "relations" | "instances" | "ontology-info"
+export type ScreenId = "dashboard" | "review" | "classes" | "relations" | "instances" | "triplets" | "triplet-review" | "graph" | "ontology-info"
 
 type NavItem = { id: ScreenId; label: string; icon: React.ElementType }
 type NavGroup = { label: string; items: NavItem[] }
@@ -19,19 +19,27 @@ const navGroups: NavGroup[] = [
     label: "全体",
     items: [
       { id: "dashboard", label: "ダッシュボード", icon: LayoutDashboard },
-      { id: "review", label: "文書取込み", icon: FileInput },
     ],
   },
   {
     label: "オントロジー設計",
     items: [
+      { id: "review", label: "オントロジー抽出", icon: FileInput },
       { id: "classes", label: "クラス管理", icon: Boxes },
       { id: "relations", label: "リレーション管理", icon: GitBranch },
     ],
   },
   {
-    label: "インスタンス管理",
-    items: [{ id: "instances", label: "登録済みインスタンス", icon: Database }],
+    label: "インスタンス作成",
+    items: [{ id: "instances", label: "インスタンス管理", icon: Database }],
+  },
+  {
+    label: "ナレッジグラフ作成",
+    items: [
+      { id: "triplet-review", label: "トリプレット抽出", icon: FileInput },
+      { id: "triplets", label: "トリプレット管理", icon: Waypoints },
+      { id: "graph", label: "グラフビュー", icon: Network },
+    ],
   },
 ]
 

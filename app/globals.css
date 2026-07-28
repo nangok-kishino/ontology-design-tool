@@ -134,3 +134,25 @@
     cursor: pointer;
   }
 }
+
+/* グラフビュー(force-graph)のホバーツールチップ：カーソルの右側に表示し、
+   暗背景に合わせて配色。既定は下方でラベルと重なるため右側へ寄せる。 */
+.float-tooltip-kap {
+  transform: translate(14px, -50%) !important;
+  background: rgba(10, 11, 20, 0.92) !important;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 6px 10px !important;
+  color: #e6ecff !important;
+  font-size: 13px;
+  line-height: 1.35;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+  text-align: left !important;
+}
+.float-tooltip-kap .gv-tt-name {
+  font-weight: 600;
+}
+.float-tooltip-kap .gv-tt-sub {
+  font-size: 0.82em;
+  opacity: 0.7;
+}

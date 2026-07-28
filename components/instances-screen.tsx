@@ -872,7 +872,7 @@ export function InstancesScreen({ initialSelectedClassId, active }: { initialSel
 
   return (
     <div className="flex h-full flex-col">
-      <TopBar title="登録済みインスタンス">
+      <TopBar title="インスタンス管理">
         <Button size="sm" variant="outline" className="h-8 gap-1.5 bg-transparent"
           onClick={handleExport} disabled={!currentProject || exporting}>
           {exporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
@@ -1057,7 +1057,7 @@ export function InstancesScreen({ initialSelectedClassId, active }: { initialSel
                                   : "未分類"}
                               </SelectValue>
                             </SelectTrigger>
-                            <SelectContent className="max-h-72 w-auto min-w-(--anchor-width) max-w-[22rem]">
+                            <SelectContent className="max-h-72">
                               <SelectItem value={UNCLASSIFIED}>未分類</SelectItem>
                               {classes.map((cls) => (
                                 <SelectItem key={cls.id} value={cls.id}>{cls.name}</SelectItem>

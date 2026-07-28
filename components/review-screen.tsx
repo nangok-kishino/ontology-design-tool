@@ -148,8 +148,14 @@ export function ReviewScreen({ active }: { active?: boolean }) {
     fetchClassesAndRelations()
   }, [currentProject?.id])
 
+  // 現在の候補件数を参照するためのref（active復帰時に未レビューなら保存済みを読み込む）
+  const candCountRef = useRef(0)
+  useEffect(() => {
+    candCountRef.current = classCands.length + instCands.length + relCands.length
+  }, [classCands.length, instCands.length, relCands.length])
+
   // この画面が表示状態になったらクラス・リレーションを再取得する
-  // （他画面でのクラス追加を始点・終点クラスの選択肢へ即時反映するため）
+  // （他画面でのクラス追加を始点・終点クラスの選択肢へ即時反映するため）。
   useEffect(() => {
     if (active) fetchClassesAndRelations()
   }, [active, fetchClassesAndRelations])
@@ -167,6 +173,99 @@ export function ReviewScreen({ active }: { active?: boolean }) {
     setAnalyzeError(null)
   }
 
+  // オントロジー抽出結果（共通取込み /api/ingest が返す ontology）を候補タブに反映する。
+  // 解析直後と、保存済み取込み結果の読み込み時の両方で使う。
+  const applyOntology = useCallback((ontology: { instances?: any[]; relations?: any[] } | null | undefined) => {
+    const allInst: any[] = Array.isArray(ontology?.instances) ? ontology!.instances : []
+
+    // isNewClass=true かつ classId なし → クラス候補タブへ（同一クラス名は1行に統合）
+    const classGroups = new Map<string, { description: string; instanceNames: string[] }>()
+    for (const i of allInst) {
+      if (!i.isNewClass || i.classId) continue
+      const key = (i.newClassName ?? "").trim()
+      if (!key) continue
+      if (!classGroups.has(key)) {
+        classGroups.set(key, { description: i.newClassDescription ?? "", instanceNames: [] })
+      }
+      classGroups.get(key)!.instanceNames.push(i.name)
+    }
+    const classCandEntries = Array.from(classGroups.entries()).map(([name, v], idx) => ({
+      id: `cc-${idx}-${name}`,
+      instanceNames: v.instanceNames,
+      proposedClassName: name,
+      proposedClassDescription: v.description,
+      status: "確認中" as CandidateStatus,
+      saving: false,
+    }))
+    setClassCands(classCandEntries)
+    const classCandIdByName = new Map(classCandEntries.map((cc) => [cc.proposedClassName, cc.id]))
+
+    const resolvedInstCands: InstanceCandidate[] = allInst
+      .filter((i) => !i.isNewClass || !!i.classId)
+      .map((i) => ({
+        id: i.id,
+        name: i.name,
+        classId: i.classId ?? null,
+        className: i.className ?? "",
+        proposedClassName: i.className || i.suggestedClassName || "",
+        status: "確認中" as CandidateStatus,
+        saving: false,
+      }))
+
+    const pendingInstCands: InstanceCandidate[] = allInst
+      .filter((i) => i.isNewClass && !i.classId && (i.newClassName ?? "").trim())
+      .map((i) => ({
+        id: i.id,
+        name: i.name,
+        classId: null,
+        className: "",
+        proposedClassName: (i.newClassName ?? "").trim(),
+        pendingClassCandidateId: classCandIdByName.get((i.newClassName ?? "").trim()),
+        status: "確認中" as CandidateStatus,
+        saving: false,
+      }))
+    setInstCands([...resolvedInstCands, ...pendingInstCands])
+
+    // リレーション候補：始点・終点・名称が一致する重複を除去する
+    const rawRels: any[] = Array.isArray(ontology?.relations) ? ontology!.relations : []
+    const seenRel = new Set<string>()
+    const dedupedRels = rawRels.filter((r) => {
+      const key = [
+        (r.sourceClassId || r.sourceClassName || "").trim().toLowerCase(),
+        (r.relationName || "").trim().toLowerCase(),
+        (r.targetClassId || r.targetClassName || "").trim().toLowerCase(),
+      ].join("|")
+      if (seenRel.has(key)) return false
+      seenRel.add(key)
+      return true
+    })
+    setRelCands(dedupedRels)
+  }, [])
+
+  // 保存済みの取込み結果（他画面＝ナレッジグラフ作成の文書取込みからの取込みも含む）を読み込む
+  const loadPersistedIngestion = useCallback(async () => {
+    if (!currentProject) return
+    try {
+      const data = await fetch(`/api/ingest?projectId=${currentProject.id}`).then((r) => r.json())
+      if (data?.ontology) {
+        applyOntology(data.ontology)
+        setAnalyzedFileName(data.sourceDocName ?? null)
+        setAnalyzedModelLabel(MODEL_OPTIONS.find((m) => m.id === data.model)?.label ?? data.model ?? null)
+      }
+    } catch {}
+  }, [currentProject?.id, applyOntology])
+
+  // プロジェクト変更時：クリア（上の効果）後に保存済み取込み結果を反映する
+  useEffect(() => {
+    loadPersistedIngestion()
+  }, [currentProject?.id, loadPersistedIngestion])
+
+  // 画面がアクティブになったとき、未レビューなら保存済み取込み結果を反映する
+  // （ナレッジグラフ作成側の文書取込みからの取込みをここに反映するため）
+  useEffect(() => {
+    if (active && candCountRef.current === 0) loadPersistedIngestion()
+  }, [active, loadPersistedIngestion])
+
   const handleAnalyze = async (reuseFile?: File) => {
     const target = reuseFile ?? file
     if (!target || !currentProject) return
@@ -178,81 +277,17 @@ export function ReviewScreen({ active }: { active?: boolean }) {
       fd.append("file", target)
       fd.append("projectId", currentProject.id)
       fd.append("model", selectedModel)
-      const res = await fetch("/api/analyze", { method: "POST", body: fd })
+      // 共通取込み：オントロジー抽出（主）とトリプレット抽出（従属）を1回で実行。
+      // トリプレット候補はナレッジグラフ作成の文書取込み画面に反映される。
+      const res = await fetch("/api/ingest", { method: "POST", body: fd })
       const data = await res.json()
       if (!res.ok) { setAnalyzeError(data.error ?? "解析に失敗しました"); return }
 
-      const allInst: any[] = Array.isArray(data.instances) ? data.instances : []
-
-      // isNewClass=true かつ classId なし → クラス候補タブへ（同一クラス名は1行に統合）
-      const classGroups = new Map<string, { description: string; instanceNames: string[] }>()
-      for (const i of allInst) {
-        if (!i.isNewClass || i.classId) continue
-        const key = (i.newClassName ?? "").trim()
-        if (!key) continue
-        if (!classGroups.has(key)) {
-          classGroups.set(key, { description: i.newClassDescription ?? "", instanceNames: [] })
-        }
-        classGroups.get(key)!.instanceNames.push(i.name)
-      }
-      const classCandEntries = Array.from(classGroups.entries()).map(([name, v], idx) => ({
-        id: `cc-${idx}-${name}`,
-        instanceNames: v.instanceNames,
-        proposedClassName: name,
-        proposedClassDescription: v.description,
-        status: "確認中" as CandidateStatus,
-        saving: false,
-      }))
-      setClassCands(classCandEntries)
-      const classCandIdByName = new Map(classCandEntries.map((cc) => [cc.proposedClassName, cc.id]))
-
-      // 既存クラスに割当済み → インスタンス候補タブへ
-      const resolvedInstCands: InstanceCandidate[] = allInst
-        .filter((i) => !i.isNewClass || !!i.classId)
-        .map((i) => ({
-          id: i.id,
-          name: i.name,
-          classId: i.classId ?? null,
-          className: i.className ?? "",
-          proposedClassName: i.className || i.suggestedClassName || "",
-          status: "確認中" as CandidateStatus,
-          saving: false,
-        }))
-
-      // クラス候補（未登録）に紐づくインスタンス候補 → 参照用にインスタンス候補タブへも表示（クラスが本登録されるまでは登録不可）
-      const pendingInstCands: InstanceCandidate[] = allInst
-        .filter((i) => i.isNewClass && !i.classId && (i.newClassName ?? "").trim())
-        .map((i) => ({
-          id: i.id,
-          name: i.name,
-          classId: null,
-          className: "",
-          proposedClassName: (i.newClassName ?? "").trim(),
-          pendingClassCandidateId: classCandIdByName.get((i.newClassName ?? "").trim()),
-          status: "確認中" as CandidateStatus,
-          saving: false,
-        }))
-
-      setInstCands([...resolvedInstCands, ...pendingInstCands])
-
-      // リレーション候補：始点・終点・名称が一致する重複を除去する（特にGeminiで重複が出やすい）
-      const rawRels: any[] = Array.isArray(data.relations) ? data.relations : []
-      const seenRel = new Set<string>()
-      const dedupedRels = rawRels.filter((r) => {
-        const key = [
-          (r.sourceClassId || r.sourceClassName || "").trim().toLowerCase(),
-          (r.relationName || "").trim().toLowerCase(),
-          (r.targetClassId || r.targetClassName || "").trim().toLowerCase(),
-        ].join("|")
-        if (seenRel.has(key)) return false
-        seenRel.add(key)
-        return true
-      })
-      setRelCands(dedupedRels)
+      applyOntology(data.ontology)
 
       // 解析成功後、ファイル指定エリアをクリアして解析結果側に表示を切り替える
       lastFileRef.current = target
-      setAnalyzedFileName(target.name)
+      setAnalyzedFileName(data.sourceDocName ?? target.name)
       setAnalyzedModelLabel(MODEL_OPTIONS.find((m) => m.id === selectedModel)?.label ?? selectedModel)
       setFile(null)
       if (fileInputRef.current) fileInputRef.current.value = ""
@@ -409,7 +444,7 @@ export function ReviewScreen({ active }: { active?: boolean }) {
 
   return (
     <div className="flex h-full flex-col">
-      <TopBar title="文書取込み" />
+      <TopBar title="オントロジー抽出" />
       <div className="flex-1 overflow-auto p-6">
 
         <div className="mb-6 flex items-start justify-between gap-4">
@@ -781,7 +816,7 @@ export function ReviewScreen({ active }: { active?: boolean }) {
                                         <SelectTrigger className="h-8 w-full">
                                           <SelectValue>{c.sourceClassId ? c.sourceClassName : "選択"}</SelectValue>
                                         </SelectTrigger>
-                                        <SelectContent className="max-h-72 w-auto min-w-(--anchor-width) max-w-[22rem]">
+                                        <SelectContent className="max-h-72">
                                           <SelectItem value="__none__">選択</SelectItem>
                                           {classes.map((cls) => <SelectItem key={cls.id} value={cls.id}>{cls.name}</SelectItem>)}
                                         </SelectContent>
@@ -801,7 +836,7 @@ export function ReviewScreen({ active }: { active?: boolean }) {
                                         <SelectTrigger className="h-8 w-full">
                                           <SelectValue>{c.targetClassId ? c.targetClassName : "選択"}</SelectValue>
                                         </SelectTrigger>
-                                        <SelectContent className="max-h-72 w-auto min-w-(--anchor-width) max-w-[22rem]">
+                                        <SelectContent className="max-h-72">
                                           <SelectItem value="__none__">選択</SelectItem>
                                           {classes.map((cls) => <SelectItem key={cls.id} value={cls.id}>{cls.name}</SelectItem>)}
                                         </SelectContent>
@@ -935,7 +970,7 @@ export function ReviewScreen({ active }: { active?: boolean }) {
                                         <SelectTrigger className="h-8 w-full">
                                           <SelectValue>{c.classId ? c.className : "既存クラスから選択"}</SelectValue>
                                         </SelectTrigger>
-                                        <SelectContent className="max-h-72 w-auto min-w-(--anchor-width) max-w-[22rem]">
+                                        <SelectContent className="max-h-72">
                                           <SelectItem value="__none__">既存クラスから選択</SelectItem>
                                           {classes.map((cls) => <SelectItem key={cls.id} value={cls.id}>{cls.name}</SelectItem>)}
                                         </SelectContent>
