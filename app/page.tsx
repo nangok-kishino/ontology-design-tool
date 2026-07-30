@@ -26,6 +26,10 @@ function AppContent() {
   const [hasVisitedTriplets, setHasVisitedTriplets] = useState(false)
   const [hasVisitedTripletReview, setHasVisitedTripletReview] = useState(false)
   const [hasVisitedGraph, setHasVisitedGraph] = useState(false)
+  // 1回の文書取込み（/api/ingest）を「オントロジー抽出」「トリプレット抽出」両画面で共有するための
+  // 通知カウンタ。どちらかの画面で取込みが成功したらインクリメントし、他方が再取得・再反映する。
+  const [ingestVersion, setIngestVersion] = useState(0)
+  const bumpIngest = () => setIngestVersion((v) => v + 1)
 
   const navigate = (s: ScreenId, id?: string) => {
     setInitialSelectId(id)
@@ -67,7 +71,7 @@ function AppContent() {
             )}
             {hasVisitedReview && (
               <div className={screen === "review" ? "h-full" : "hidden"}>
-                <ReviewScreen active={screen === "review"} />
+                <ReviewScreen active={screen === "review"} ingestVersion={ingestVersion} onIngested={bumpIngest} />
               </div>
             )}
             {hasVisitedTriplets && (
@@ -77,7 +81,7 @@ function AppContent() {
             )}
             {hasVisitedTripletReview && (
               <div className={screen === "triplet-review" ? "h-full" : "hidden"}>
-                <TripletReviewScreen active={screen === "triplet-review"} />
+                <TripletReviewScreen active={screen === "triplet-review"} ingestVersion={ingestVersion} onIngested={bumpIngest} />
               </div>
             )}
             {hasVisitedGraph && (

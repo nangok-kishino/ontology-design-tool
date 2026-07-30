@@ -553,9 +553,9 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                           </TableCell>
                           <TableCell className="align-top text-sm text-muted-foreground">
                             {pairs.length > 0 ? (
-                              <div className="flex flex-col gap-0.5">
-                                {pairs.map((p, i) => (
-                                  <span key={i} className="flex items-center gap-1">
+                              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                                {pairs.slice(0, 3).map((p, i) => (
+                                  <span key={i} className="inline-flex items-center gap-1 whitespace-nowrap">
                                     <span className={cn(classMissing(p.sourceClassId) && "font-medium text-amber-600 dark:text-amber-500")}>
                                       {className(p.sourceClassId)}
                                     </span>
@@ -565,6 +565,9 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                                     </span>
                                   </span>
                                 ))}
+                                {pairs.length > 3 && (
+                                  <span className="whitespace-nowrap text-xs text-muted-foreground">＋他{pairs.length - 3}件（詳細で確認）</span>
+                                )}
                               </div>
                             ) : "—"}
                           </TableCell>

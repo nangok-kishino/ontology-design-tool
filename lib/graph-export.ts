@@ -61,6 +61,11 @@ export function buildCypher(
   lines.push("// トリプレット: リレーションとしてMERGE。出典・根拠文・承認者/日時も出力。")
   for (const t of triplets) {
     const rsets: string[] = []
+    // このトリプレット（エッジ）固有の属性値
+    for (const [k, v] of Object.entries(t.attributes ?? {})) {
+      if (v === null || v === undefined || v === "") continue
+      rsets.push(`r.${escLabel(k)} = ${escStr(String(v))}`)
+    }
     if (t.sourceDocName) rsets.push(`r.sourceDoc = ${escStr(t.sourceDocName)}`)
     if (t.evidence) rsets.push(`r.evidence = ${escStr(t.evidence)}`)
     if (t.approvedBy) rsets.push(`r.approvedBy = ${escStr(t.approvedBy)}`)

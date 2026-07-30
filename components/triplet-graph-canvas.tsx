@@ -30,6 +30,7 @@ type GraphLink = {
   source: string | GraphNode
   target: string | GraphNode
   label: string
+  attributes: Record<string, string>
 }
 
 // classId 文字列から決定的に色相(hue)を作る。暗背景で映えるネオン色に使う。
@@ -70,6 +71,7 @@ export default function TripletGraphCanvas({
   triplets,
   instById,
   classNameById,
+  attrNameById,
   width,
   height,
   onSelectNode,
@@ -77,6 +79,7 @@ export default function TripletGraphCanvas({
   triplets: Triplet[]
   instById: Map<string, OntologyInstance>
   classNameById: Map<string, string>
+  attrNameById?: Map<string, string>
   width: number
   height: number
   onSelectNode?: (instanceId: string) => void
@@ -123,6 +126,7 @@ export default function TripletGraphCanvas({
         source: t.subjectInstanceId,
         target: t.objectInstanceId,
         label: t.predicateName,
+        attributes: t.attributes ?? {},
       })
       if (!adjacency.has(t.subjectInstanceId)) adjacency.set(t.subjectInstanceId, new Set())
       if (!adjacency.has(t.objectInstanceId)) adjacency.set(t.objectInstanceId, new Set())
@@ -348,7 +352,20 @@ export default function TripletGraphCanvas({
       nodeCanvasObject={paintNode as any}
       nodePointerAreaPaint={paintNodePointerArea as any}
       nodeLabel={((n: GraphNode) => `<div class="gv-tt-name">${esc(n.name)}</div><div class="gv-tt-sub">${esc(n.className)}</div>`) as any}
-      linkLabel={((l: GraphLink) => `<div class="gv-tt-name">${esc(l.label)}</div><div class="gv-tt-sub">${esc(linkEndNode(l.source)?.name ?? "")} → ${esc(linkEndNode(l.target)?.name ?? "")}</div>`) as any}
+      linkLabel={((l: GraphLink) => {
+        const head =
+          `<div class="gv-tt-name">${esc(l.label)}</div>` +
+          `<div class="gv-tt-sub">${esc(linkEndNode(l.source)?.name ?? "")} → ${esc(linkEndNode(l.target)?.name ?? "")}</div>`
+        // このトリプレット（エッジ）固有の属性値を「属性名：値」で表示（値が入っているものだけ）
+        const rows = Object.entries(l.attributes ?? {})
+          .filter(([, v]) => v != null && String(v).trim() !== "")
+          .map(
+            ([id, v]) =>
+              `<span class="gv-tt-attr-key">${esc(attrNameById?.get(id) ?? id)}</span>` +
+              `<span class="gv-tt-attr-val">${esc(String(v))}</span>`,
+          )
+        return rows.length ? `${head}<div class="gv-tt-attrs">${rows.join("")}</div>` : head
+      }) as any}
       linkColor={((l: GraphLink) => {
         const hue = linkEndNode(l.source)?.hue ?? 210
         // 常時見える線。ホバー時は対象を明るく・非対象を暗く。

@@ -82,6 +82,26 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    // 同一トリプレット（主語・述語・目的語が同じ）の重複作成を防ぐ
+    const { resources: dups } = await tripletContainer.items
+      .query<Triplet>({
+        query:
+          "SELECT c.id FROM c WHERE c.projectId = @p AND c.subjectInstanceId = @s AND c.predicateRelationId = @r AND c.objectInstanceId = @o",
+        parameters: [
+          { name: "@p", value: projectId },
+          { name: "@s", value: subjectInstanceId },
+          { name: "@r", value: predicateRelationId },
+          { name: "@o", value: objectInstanceId },
+        ],
+      })
+      .fetchAll()
+    if (dups.length > 0) {
+      return NextResponse.json(
+        { error: `同一のトリプレット（〈${subject.name}〉→「${relation.name}」→〈${object.name}〉）が既に登録されています。` },
+        { status: 409 },
+      )
+    }
+
     const now = new Date().toISOString()
     const actor = getPrincipalName(request)
     const item: Triplet = {
@@ -97,6 +117,7 @@ export async function POST(request: NextRequest) {
       objectClassId: object.classId ?? null,
       sourceDocName: body.sourceDocName ?? "手動追加",
       evidence: body.evidence ?? "",
+      attributes: body.attributes ?? {},
       sourceCandidateId: body.sourceCandidateId,
       approvedBy: actor,
       approvedAt: now,

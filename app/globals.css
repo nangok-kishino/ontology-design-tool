@@ -156,3 +156,21 @@
   font-size: 0.82em;
   opacity: 0.7;
 }
+/* エッジツールチップのリレーション属性一覧（名前=値） */
+.float-tooltip-kap .gv-tt-attrs {
+  margin-top: 5px;
+  padding-top: 5px;
+  border-top: 1px solid rgba(255, 255, 255, 0.14);
+  font-size: 0.82em;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 8px;
+  row-gap: 2px;
+}
+.float-tooltip-kap .gv-tt-attr-key {
+  opacity: 0.6;
+  white-space: nowrap;
+}
+.float-tooltip-kap .gv-tt-attr-val {
+  font-weight: 500;
+}

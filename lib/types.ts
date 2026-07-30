@@ -157,6 +157,9 @@ export type Triplet = {
   objectClassId: string | null
   sourceDocName?: string
   evidence?: string
+  // このトリプレット（エッジ）固有の属性値。キーは述語リレーションに定義された
+  // 属性の id（プロジェクト共通属性＋リレーション固有属性）。値は表示文字列。
+  attributes?: Record<string, string>
   sourceCandidateId?: string // 由来の TripletCandidate（手動追加なら未設定）
   approvedBy: string
   approvedAt: string

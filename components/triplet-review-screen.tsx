@@ -32,7 +32,7 @@ function StatusBadge({ status }: { status: CandStatus }) {
   return <span className={`inline-block whitespace-nowrap rounded-full border px-2 py-0.5 text-xs font-medium ${map[status]}`}>{status}</span>
 }
 
-export function TripletReviewScreen({ active }: { active?: boolean }) {
+export function TripletReviewScreen({ active, ingestVersion, onIngested }: { active?: boolean; ingestVersion?: number; onIngested?: () => void }) {
   const { currentProject } = useProject()
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -76,6 +76,15 @@ export function TripletReviewScreen({ active }: { active?: boolean }) {
     if (active && currentProject) fetchCandidates()
   }, [active, currentProject?.id, fetchCandidates])
 
+  // オントロジー抽出画面で取込みが実行されたら（ingestVersion 変化）、この画面が非アクティブの間に
+  // トリプレット候補を再取得する（1回の取込みを両画面で共有する合意仕様）。
+  const ingestVersionRef = useRef(ingestVersion)
+  useEffect(() => {
+    if (ingestVersionRef.current === ingestVersion) return
+    ingestVersionRef.current = ingestVersion
+    if (!active && currentProject) fetchCandidates()
+  }, [ingestVersion, active, currentProject?.id, fetchCandidates])
+
   const handleFileChange = (f: File | null) => { if (!f) return; setFile(f); setAnalyzeError(null) }
 
   const handleAnalyze = async (f?: File) => {
@@ -96,6 +105,8 @@ export function TripletReviewScreen({ active }: { active?: boolean }) {
       await fetchCandidates()
       setFile(null)
       if (fileInputRef.current) fileInputRef.current.value = ""
+      // 同一取込みでオントロジー候補も保存済み。オントロジー抽出画面へ共有（再反映）を通知する。
+      onIngested?.()
     } catch (e) {
       setAnalyzeError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -114,6 +125,18 @@ export function TripletReviewScreen({ active }: { active?: boolean }) {
   }
 
   const selectedCount = rows.filter((r) => r.uiStatus === "採用候補").length
+
+  // 全選択/全選択解除（解決可能かつ本登録済みでない行が対象）
+  const selectableRows = rows.filter((r) => resolvable(r) && r.uiStatus !== "本登録済み")
+  const allSelected = selectableRows.length > 0 && selectableRows.every((r) => r.uiStatus === "採用候補")
+  const toggleAll = () =>
+    setRows((prev) => {
+      const sel = prev.filter((r) => resolvable(r) && r.uiStatus !== "本登録済み")
+      const allSel = sel.length > 0 && sel.every((r) => r.uiStatus === "採用候補")
+      return prev.map((r) =>
+        resolvable(r) && r.uiStatus !== "本登録済み" ? { ...r, uiStatus: allSel ? "確認中" : "採用候補" } : r,
+      )
+    })
 
   const registerSelected = async () => {
     if (!currentProject) return
@@ -240,7 +263,27 @@ export function TripletReviewScreen({ active }: { active?: boolean }) {
                   <Table className="table-fixed">
                     <TableHeader>
                       <TableRow className="bg-muted/50 hover:bg-muted/50">
-                        <TableHead className="w-16 text-center font-semibold text-foreground">採用</TableHead>
+                        <TableHead className="w-16 text-center font-semibold text-foreground">
+                          <div className="flex items-center justify-center">
+                            <button
+                              type="button"
+                              disabled={selectableRows.length === 0}
+                              aria-label="全選択 / 全選択解除"
+                              title="全選択 / 全選択解除"
+                              onClick={toggleAll}
+                              className={cn(
+                                "inline-flex h-5 w-5 items-center justify-center rounded border transition-colors",
+                                selectableRows.length === 0
+                                  ? "cursor-not-allowed border-input opacity-40"
+                                  : allSelected
+                                    ? "border-green-600 bg-green-600 text-white"
+                                    : "cursor-pointer border-input hover:border-green-500",
+                              )}
+                            >
+                              {allSelected && <Check className="h-3.5 w-3.5" />}
+                            </button>
+                          </div>
+                        </TableHead>
                         <TableHead className="w-[46%] font-semibold text-foreground">トリプレット（ノード → エッジ → ノード）</TableHead>
                         <TableHead className="font-semibold text-foreground">抽出元文章</TableHead>
                         <TableHead className="w-24 font-semibold text-foreground">ステータス</TableHead>

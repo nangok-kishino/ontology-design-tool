@@ -22,11 +22,13 @@ export function TripletGraph({
   triplets,
   instById,
   classNameById,
+  attrNameById,
   onSelectNode,
 }: {
   triplets: Triplet[]
   instById: Map<string, OntologyInstance>
   classNameById: Map<string, string>
+  attrNameById?: Map<string, string>
   onSelectNode?: (instanceId: string) => void
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -57,6 +59,7 @@ export function TripletGraph({
           triplets={triplets}
           instById={instById}
           classNameById={classNameById}
+          attrNameById={attrNameById}
           width={size.w}
           height={size.h}
           onSelectNode={onSelectNode}

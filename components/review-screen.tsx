@@ -90,7 +90,30 @@ function CountPill({ n }: { n: number }) {
   )
 }
 
-export function ReviewScreen({ active }: { active?: boolean }) {
+// 「採用」列ヘッダの全選択/全選択解除チェックボックス（行チェックと同じ見た目）
+function SelectAllBox({ allSelected, disabled, onToggle }: { allSelected: boolean; disabled?: boolean; onToggle: () => void }) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      aria-label="全選択 / 全選択解除"
+      title="全選択 / 全選択解除"
+      onClick={onToggle}
+      className={cn(
+        "inline-flex h-5 w-5 items-center justify-center rounded border transition-colors",
+        disabled
+          ? "cursor-not-allowed border-input opacity-40"
+          : allSelected
+            ? "border-green-600 bg-green-600 text-white"
+            : "cursor-pointer border-input hover:border-green-500",
+      )}
+    >
+      {allSelected && <Check className="h-3.5 w-3.5" />}
+    </button>
+  )
+}
+
+export function ReviewScreen({ active, ingestVersion, onIngested }: { active?: boolean; ingestVersion?: number; onIngested?: () => void }) {
   const { currentProject } = useProject()
   const fileInputRef = useRef<HTMLInputElement>(null)
   // 直近に解析したファイル（解析後は file を null にするため、再実行用に保持する）
@@ -114,6 +137,10 @@ export function ReviewScreen({ active }: { active?: boolean }) {
   const [registeringRelations, setRegisteringRelations] = useState(false)
   const [classes, setClasses] = useState<OntologyClass[]>([])
   const [existingRelations, setExistingRelations] = useState<OntologyRelation[]>([])
+  // applyOntology は useCallback([]) のため、最新の既存リレーションを ref 経由で参照して
+  // 「定義済みと同一（同名＋同一クラスペア）」の候補を除外する（重複抽出のはじき）。
+  const existingRelationsRef = useRef<OntologyRelation[]>([])
+  useEffect(() => { existingRelationsRef.current = existingRelations }, [existingRelations])
 
   // 既存クラス・リレーションを取得する（解析結果は消さない）。
   // 画面はマウント維持されるため、クラス管理等でクラスを追加した後に
@@ -226,10 +253,24 @@ export function ReviewScreen({ active }: { active?: boolean }) {
       }))
     setInstCands([...resolvedInstCands, ...pendingInstCands])
 
-    // リレーション候補：始点・終点・名称が一致する重複を除去する
+    // リレーション候補の重複除去：
+    //   (1) バッチ内で始点・終点・名称が一致するものを1つにまとめる
+    //   (2) 既に定義済みのリレーション（同名かつ同一の始点→終点クラスペアを既に持つ）は除外する
+    //       ※同名でもそのクラスペアを持たない場合は「新しいペアの追加候補」として残す
     const rawRels: any[] = Array.isArray(ontology?.relations) ? ontology!.relations : []
+    const existingRels = existingRelationsRef.current
+    const isExistingPair = (r: any) => {
+      if (!r.sourceClassId || !r.targetClassId) return false
+      const name = (r.relationName || "").trim().toLowerCase()
+      return existingRels.some(
+        (er) =>
+          (er.name || "").trim().toLowerCase() === name &&
+          (er.classPairs ?? []).some((p) => p.sourceClassId === r.sourceClassId && p.targetClassId === r.targetClassId),
+      )
+    }
     const seenRel = new Set<string>()
     const dedupedRels = rawRels.filter((r) => {
+      if (isExistingPair(r)) return false
       const key = [
         (r.sourceClassId || r.sourceClassName || "").trim().toLowerCase(),
         (r.relationName || "").trim().toLowerCase(),
@@ -266,6 +307,16 @@ export function ReviewScreen({ active }: { active?: boolean }) {
     if (active && candCountRef.current === 0) loadPersistedIngestion()
   }, [active, loadPersistedIngestion])
 
+  // トリプレット抽出画面で取込みが実行されたら（ingestVersion 変化）、この画面が非アクティブの間に
+  // 保存済みオントロジー候補を反映する（1回の取込みを両画面で共有する合意仕様）。
+  // 自画面がアクティブ＝ユーザー操作中のときは上書きしない（アクティブ化時の再読込に委ねる）。
+  const ingestVersionRef = useRef(ingestVersion)
+  useEffect(() => {
+    if (ingestVersionRef.current === ingestVersion) return
+    ingestVersionRef.current = ingestVersion
+    if (!active) loadPersistedIngestion()
+  }, [ingestVersion, active, loadPersistedIngestion])
+
   const handleAnalyze = async (reuseFile?: File) => {
     const target = reuseFile ?? file
     if (!target || !currentProject) return
@@ -291,6 +342,8 @@ export function ReviewScreen({ active }: { active?: boolean }) {
       setAnalyzedModelLabel(MODEL_OPTIONS.find((m) => m.id === selectedModel)?.label ?? selectedModel)
       setFile(null)
       if (fileInputRef.current) fileInputRef.current.value = ""
+      // 同一取込みでトリプレット候補も保存済み。トリプレット抽出画面へ共有（再取得）を通知する。
+      onIngested?.()
     } catch {
       setAnalyzeError("解析中にエラーが発生しました")
     } finally {
@@ -440,6 +493,37 @@ export function ReviewScreen({ active }: { active?: boolean }) {
     }
   }
 
+  // 全選択/全選択解除（本登録済みは対象外）。すべて採用候補なら解除、そうでなければ全採用。
+  const classAllSelected =
+    classCands.some((c) => c.status !== "本登録済み") &&
+    classCands.filter((c) => c.status !== "本登録済み").every((c) => c.status === "採用候補")
+  const toggleAllClasses = () =>
+    setClassCands((p) => {
+      const sel = p.filter((c) => c.status !== "本登録済み")
+      const allSel = sel.length > 0 && sel.every((c) => c.status === "採用候補")
+      return p.map((c) => (c.status === "本登録済み" ? c : { ...c, status: allSel ? "確認中" : "採用候補" }))
+    })
+
+  const relAllSelected =
+    relCands.some((c) => c.status !== "本登録済み") &&
+    relCands.filter((c) => c.status !== "本登録済み").every((c) => c.status === "採用候補")
+  const toggleAllRelations = () =>
+    setRelCands((p) => {
+      const sel = p.filter((c) => c.status !== "本登録済み")
+      const allSel = sel.length > 0 && sel.every((c) => c.status === "採用候補")
+      return p.map((c) => (c.status === "本登録済み" ? c : { ...c, status: allSel ? "確認中" : "採用候補" }))
+    })
+
+  const instAllSelected =
+    instCands.some((c) => c.status !== "本登録済み") &&
+    instCands.filter((c) => c.status !== "本登録済み").every((c) => c.status === "採用候補")
+  const toggleAllInstances = () =>
+    setInstCands((p) => {
+      const sel = p.filter((c) => c.status !== "本登録済み")
+      const allSel = sel.length > 0 && sel.every((c) => c.status === "採用候補")
+      return p.map((c) => (c.status === "本登録済み" ? c : { ...c, status: allSel ? "確認中" : "採用候補" }))
+    })
+
   const hasCandidates = classCands.length > 0 || instCands.length > 0 || relCands.length > 0
 
   return (
@@ -581,7 +665,11 @@ export function ReviewScreen({ active }: { active?: boolean }) {
                           <Table className="table-fixed">
                             <TableHeader>
                               <TableRow className="bg-muted/50 hover:bg-muted/50">
-                                <TableHead className="w-16 text-center font-semibold text-foreground">採用</TableHead>
+                                <TableHead className="w-16 text-center font-semibold text-foreground">
+                                  <div className="flex items-center justify-center">
+                                    <SelectAllBox allSelected={classAllSelected} onToggle={toggleAllClasses} />
+                                  </div>
+                                </TableHead>
                                 <TableHead className="w-48 font-semibold text-foreground">提案クラス名</TableHead>
                                 <TableHead className="font-semibold text-foreground">説明</TableHead>
                                 <TableHead className="w-56 font-semibold text-foreground">インスタンス候補</TableHead>
@@ -716,7 +804,11 @@ export function ReviewScreen({ active }: { active?: boolean }) {
                           <Table className="table-fixed">
                             <TableHeader>
                               <TableRow className="bg-muted/50 hover:bg-muted/50">
-                                <TableHead className="w-16 text-center font-semibold text-foreground">採用</TableHead>
+                                <TableHead className="w-16 text-center font-semibold text-foreground">
+                                  <div className="flex items-center justify-center">
+                                    <SelectAllBox allSelected={relAllSelected} onToggle={toggleAllRelations} />
+                                  </div>
+                                </TableHead>
                                 <TableHead className="w-44 font-semibold text-foreground">提案リレーション名</TableHead>
                                 <TableHead className="font-semibold text-foreground">説明</TableHead>
                                 <TableHead className="w-36 font-semibold text-foreground">始点クラス</TableHead>
@@ -887,7 +979,11 @@ export function ReviewScreen({ active }: { active?: boolean }) {
                           <Table className="table-fixed">
                             <TableHeader>
                               <TableRow className="bg-muted/50 hover:bg-muted/50">
-                                <TableHead className="w-16 text-center font-semibold text-foreground">採用</TableHead>
+                                <TableHead className="w-16 text-center font-semibold text-foreground">
+                                  <div className="flex items-center justify-center">
+                                    <SelectAllBox allSelected={instAllSelected} onToggle={toggleAllInstances} />
+                                  </div>
+                                </TableHead>
                                 <TableHead className="w-48 font-semibold text-foreground">提案インスタンス名</TableHead>
                                 <TableHead className="w-56 font-semibold text-foreground">所属クラス</TableHead>
                                 <TableHead className="font-semibold text-foreground">提案所属クラス</TableHead>

@@ -8,13 +8,15 @@ import { Loader2 } from "lucide-react"
 import { TopBar } from "@/components/top-bar"
 import { TripletGraph } from "@/components/triplet-graph"
 import { useProject } from "@/app/project-context"
-import type { Triplet, OntologyInstance, OntologyClass } from "@/lib/types"
+import type { Triplet, OntologyInstance, OntologyClass, OntologyAttribute } from "@/lib/types"
 
 export function GraphScreen({ active }: { active?: boolean }) {
   const { currentProject, loading: projectLoading } = useProject()
   const [triplets, setTriplets] = useState<Triplet[]>([])
   const [instances, setInstances] = useState<OntologyInstance[]>([])
   const [classes, setClasses] = useState<OntologyClass[]>([])
+  // トリプレット（エッジ）の属性値はキーが属性id。ツールチップに属性名で表示するための id→名前 対応。
+  const [attrNameById, setAttrNameById] = useState<Map<string, string>>(new Map())
   const [loading, setLoading] = useState(true)
 
   const classNameById = useMemo(() => new Map(classes.map((c) => [c.id, c.name])), [classes])
@@ -29,9 +31,23 @@ export function GraphScreen({ active }: { active?: boolean }) {
         fetch(`/api/instances?projectId=${currentProject.id}`).then((res) => res.json()),
         fetch(`/api/classes?projectId=${currentProject.id}`).then((res) => res.json()),
       ])
-      setTriplets(Array.isArray(t) ? t : [])
+      const tlist: Triplet[] = Array.isArray(t) ? t : []
+      setTriplets(tlist)
       setInstances(Array.isArray(i) ? i : [])
       setClasses(Array.isArray(c) ? c : [])
+
+      // エッジ属性名の解決用に、プロジェクト共通属性＋トリプレットで使われている述語リレーションの
+      // 属性定義を取得して id→名前 マップを作る。
+      const relIds = Array.from(new Set(tlist.map((x) => x.predicateRelationId).filter(Boolean)))
+      const attrLists: unknown[] = await Promise.all([
+        fetch(`/api/attributes?targetId=${currentProject.id}`).then((res) => res.json()),
+        ...relIds.map((rid) => fetch(`/api/attributes?targetId=${rid}`).then((res) => res.json())),
+      ])
+      const m = new Map<string, string>()
+      for (const list of attrLists) {
+        if (Array.isArray(list)) for (const a of list as OntologyAttribute[]) m.set(a.id, a.name)
+      }
+      setAttrNameById(m)
     } finally {
       setLoading(false)
     }
@@ -75,7 +91,7 @@ export function GraphScreen({ active }: { active?: boolean }) {
             プロジェクトを選択してください
           </div>
         ) : (
-          <TripletGraph triplets={triplets} instById={instById} classNameById={classNameById} />
+          <TripletGraph triplets={triplets} instById={instById} classNameById={classNameById} attrNameById={attrNameById} />
         )}
       </div>
     </div>

@@ -28,12 +28,13 @@ import {
 } from "@/components/ui/table"
 import { TopBar } from "@/components/top-bar"
 import { SectionHeader } from "@/components/section-header"
+import { AttrValueList, hasMissingRequired } from "@/components/attr-fields"
 import { cn } from "@/lib/utils"
 import { useProject } from "@/app/project-context"
 import { isConfirmed } from "@/lib/instance-status"
 import { buildCypher } from "@/lib/graph-export"
-import type { Triplet, OntologyInstance, OntologyRelation, OntologyClass } from "@/lib/types"
-import { ArrowRight, Plus, Trash2, Loader2, Download, FileText } from "lucide-react"
+import type { Triplet, OntologyInstance, OntologyRelation, OntologyClass, OntologyAttribute } from "@/lib/types"
+import { ArrowRight, Plus, Trash2, Loader2, Download, FileText, Tags } from "lucide-react"
 
 function formatDateTime(iso: string | undefined): string {
   if (!iso) return "—"
@@ -71,6 +72,14 @@ export function TripletsScreen({ active }: { active?: boolean }) {
 
   // Neo4jエクスポート
   const [showExport, setShowExport] = useState(false)
+
+  // 述語リレーションごとの属性定義（プロジェクト共通＋リレーション固有）のキャッシュ。
+  // トリプレット（エッジ）に属性値を入力させるために、選択中の述語の属性を読み込む。
+  const [attrsByRelation, setAttrsByRelation] = useState<Record<string, OntologyAttribute[]>>({})
+  const [loadingAttrs, setLoadingAttrs] = useState(false)
+  // 追加ダイアログ／編集ペインそれぞれの属性値（キー＝属性id）
+  const [addAttrValues, setAddAttrValues] = useState<Record<string, string>>({})
+  const [editAttrValues, setEditAttrValues] = useState<Record<string, string>>({})
 
   const confirmedInstances = useMemo(
     () => instances.filter((i) => isConfirmed(i)).sort((a, b) => a.name.localeCompare(b.name, "ja")),
@@ -114,6 +123,26 @@ export function TripletsScreen({ active }: { active?: boolean }) {
     if (active && currentProject) fetchAll()
   }, [active, currentProject?.id, fetchAll])
 
+  // 述語リレーションの属性定義（プロジェクト共通＋リレーション固有）を読み込む（キャッシュ）。
+  const ensureRelAttrs = useCallback(async (relationId: string) => {
+    if (!relationId || !currentProject) return
+    if (attrsByRelation[relationId]) return
+    setLoadingAttrs(true)
+    try {
+      const [projData, ownData] = await Promise.all([
+        fetch(`/api/attributes?targetId=${currentProject.id}`).then((r) => r.json()),
+        fetch(`/api/attributes?targetId=${relationId}`).then((r) => r.json()),
+      ])
+      const combined = [
+        ...(Array.isArray(projData) ? projData : []),
+        ...(Array.isArray(ownData) ? ownData : []),
+      ]
+      setAttrsByRelation((prev) => ({ ...prev, [relationId]: combined }))
+    } finally {
+      setLoadingAttrs(false)
+    }
+  }, [currentProject?.id, attrsByRelation])
+
   const selected = triplets.find((t) => t.id === selectedId) ?? null
 
   // 選択が変わったら編集フィールドを対象トリプレットで初期化
@@ -124,6 +153,8 @@ export function TripletsScreen({ active }: { active?: boolean }) {
         predicateRelationId: selected.predicateRelationId,
         objectInstanceId: selected.objectInstanceId,
       })
+      setEditAttrValues(selected.attributes ?? {})
+      if (selected.predicateRelationId) ensureRelAttrs(selected.predicateRelationId)
       setSaveError(null)
     }
   }, [selectedId])
@@ -140,7 +171,22 @@ export function TripletsScreen({ active }: { active?: boolean }) {
 
   const noPrereq = confirmedInstances.length < 2 || relations.length === 0
 
-  const openAdd = () => { setAddDraft(EMPTY_DRAFT); setAddError(null); setShowAdd(true) }
+  const openAdd = () => { setAddDraft(EMPTY_DRAFT); setAddAttrValues({}); setAddError(null); setShowAdd(true) }
+
+  // 追加／編集で述語が変わったら、その述語リレーションの属性定義を読み込む
+  useEffect(() => { if (addDraft.predicateRelationId) ensureRelAttrs(addDraft.predicateRelationId) }, [addDraft.predicateRelationId, ensureRelAttrs])
+  useEffect(() => { if (editDraft.predicateRelationId) ensureRelAttrs(editDraft.predicateRelationId) }, [editDraft.predicateRelationId, ensureRelAttrs])
+
+  // 指定リレーションに定義された属性のうち、値が入っているものだけを {id: value} で返す
+  const collectAttrValues = (relationId: string, values: Record<string, string>): Record<string, string> => {
+    const attrs = attrsByRelation[relationId] ?? []
+    const out: Record<string, string> = {}
+    for (const a of attrs) {
+      const v = (values[a.id] ?? "").trim()
+      if (v !== "") out[a.id] = values[a.id]
+    }
+    return out
+  }
 
   const handleAdd = async () => {
     if (!currentProject || !isComplete(addDraft)) return
@@ -149,7 +195,7 @@ export function TripletsScreen({ active }: { active?: boolean }) {
       const res = await fetch("/api/triplets", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId: currentProject.id, ...addDraft }),
+        body: JSON.stringify({ projectId: currentProject.id, ...addDraft, attributes: collectAttrValues(addDraft.predicateRelationId, addAttrValues) }),
       })
       const created = await res.json()
       if (!res.ok) { setAddError(created.error ?? "追加に失敗しました"); return }
@@ -161,10 +207,16 @@ export function TripletsScreen({ active }: { active?: boolean }) {
     }
   }
 
+  const attrsEqual = (a: Record<string, string>, b: Record<string, string>) => {
+    const keys = new Set([...Object.keys(a), ...Object.keys(b)])
+    for (const k of keys) if ((a[k] ?? "") !== (b[k] ?? "")) return false
+    return true
+  }
   const editDirty = !!selected && (
     editDraft.subjectInstanceId !== selected.subjectInstanceId ||
     editDraft.predicateRelationId !== selected.predicateRelationId ||
-    editDraft.objectInstanceId !== selected.objectInstanceId
+    editDraft.objectInstanceId !== selected.objectInstanceId ||
+    !attrsEqual(collectAttrValues(editDraft.predicateRelationId, editAttrValues), selected.attributes ?? {})
   )
 
   const handleSave = async () => {
@@ -174,7 +226,7 @@ export function TripletsScreen({ active }: { active?: boolean }) {
       const res = await fetch(`/api/triplets/${selected.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(editDraft),
+        body: JSON.stringify({ ...editDraft, attributes: collectAttrValues(editDraft.predicateRelationId, editAttrValues) }),
       })
       const updated = await res.json()
       if (!res.ok) { setSaveError(updated.error ?? "保存に失敗しました"); return }
@@ -397,6 +449,28 @@ export function TripletsScreen({ active }: { active?: boolean }) {
                     {saveError && <p className="text-sm text-destructive">{saveError}</p>}
                   </div>
                 </section>
+
+                {/* 属性（述語リレーションに定義された属性の値） */}
+                <section className="space-y-3">
+                  <SectionHeader icon={Tags} title="属性" />
+                  <div>
+                    {!editDraft.predicateRelationId ? (
+                      <p className="text-sm text-muted-foreground">述語（エッジ）を選択すると、そのリレーションの属性が表示されます。</p>
+                    ) : loadingAttrs && !attrsByRelation[editDraft.predicateRelationId] ? (
+                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                        <Loader2 className="h-4 w-4 animate-spin" />属性を読み込み中…
+                      </div>
+                    ) : (attrsByRelation[editDraft.predicateRelationId] ?? []).length === 0 ? (
+                      <p className="text-sm text-muted-foreground">このリレーションには属性が設定されていません</p>
+                    ) : (
+                      <AttrValueList
+                        attrs={attrsByRelation[editDraft.predicateRelationId] ?? []}
+                        values={editAttrValues}
+                        onChange={(id, v) => setEditAttrValues((prev) => ({ ...prev, [id]: v }))}
+                      />
+                    )}
+                  </div>
+                </section>
               </div>
 
               <div className="flex items-center justify-between border-t border-border px-4 py-3">
@@ -405,7 +479,7 @@ export function TripletsScreen({ active }: { active?: boolean }) {
                   onClick={() => setShowDelete(true)}>
                   <Trash2 className="h-3.5 w-3.5" />削除
                 </Button>
-                <Button size="sm" variant="success" onClick={handleSave} disabled={!isComplete(editDraft) || saving || !editDirty}>
+                <Button size="sm" variant="success" onClick={handleSave} disabled={!isComplete(editDraft) || saving || !editDirty || hasMissingRequired(attrsByRelation[editDraft.predicateRelationId] ?? [], editAttrValues)}>
                   {saving && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}保存
                 </Button>
               </div>
@@ -429,12 +503,29 @@ export function TripletsScreen({ active }: { active?: boolean }) {
           ) : (
             <div className="min-w-0 space-y-4 py-2">
               <TripleSelects draft={addDraft} onChange={setAddDraft} />
+              {/* 属性（述語リレーションに定義された属性の値） */}
+              {addDraft.predicateRelationId && (
+                loadingAttrs && !attrsByRelation[addDraft.predicateRelationId] ? (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" />属性を読み込み中…
+                  </div>
+                ) : (attrsByRelation[addDraft.predicateRelationId] ?? []).length > 0 ? (
+                  <div className="space-y-3">
+                    <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">リレーション属性</p>
+                    <AttrValueList
+                      attrs={attrsByRelation[addDraft.predicateRelationId] ?? []}
+                      values={addAttrValues}
+                      onChange={(id, v) => setAddAttrValues((prev) => ({ ...prev, [id]: v }))}
+                    />
+                  </div>
+                ) : null
+              )}
               {addError && <p className="text-sm text-destructive">{addError}</p>}
             </div>
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowAdd(false)}>キャンセル</Button>
-            <Button onClick={handleAdd} disabled={noPrereq || !isComplete(addDraft) || adding}>
+            <Button onClick={handleAdd} disabled={noPrereq || !isComplete(addDraft) || adding || hasMissingRequired(attrsByRelation[addDraft.predicateRelationId] ?? [], addAttrValues)}>
               {adding ? "登録中..." : "登録"}
             </Button>
           </DialogFooter>

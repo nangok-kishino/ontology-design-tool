@@ -75,6 +75,33 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
       )
     }
 
+    // 主語・述語・目的語のいずれかが変わる場合、他の同一トリプレットと重複しないか検証
+    const spoChanged =
+      subjectInstanceId !== existing.subjectInstanceId ||
+      predicateRelationId !== existing.predicateRelationId ||
+      objectInstanceId !== existing.objectInstanceId
+    if (spoChanged) {
+      const { resources: dups } = await container.items
+        .query<Triplet>({
+          query:
+            "SELECT c.id FROM c WHERE c.projectId = @p AND c.subjectInstanceId = @s AND c.predicateRelationId = @r AND c.objectInstanceId = @o AND c.id != @id",
+          parameters: [
+            { name: "@p", value: existing.projectId },
+            { name: "@s", value: subjectInstanceId },
+            { name: "@r", value: predicateRelationId },
+            { name: "@o", value: objectInstanceId },
+            { name: "@id", value: id },
+          ],
+        })
+        .fetchAll()
+      if (dups.length > 0) {
+        return NextResponse.json(
+          { error: `同一のトリプレット（〈${subject.name}〉→「${relation.name}」→〈${object.name}〉）が既に登録されています。` },
+          { status: 409 },
+        )
+      }
+    }
+
     const updated: Triplet = {
       ...existing,
       subjectInstanceId,
@@ -87,6 +114,7 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
       objectClassId: object.classId ?? null,
       sourceDocName: body.sourceDocName ?? existing.sourceDocName,
       evidence: body.evidence ?? existing.evidence,
+      attributes: body.attributes ?? existing.attributes ?? {},
       // 内容が変わったので同期状態はリセット（再エクスポートで冪等に反映）
       neo4jSynced: false,
       neo4jSyncedAt: undefined,
