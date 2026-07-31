@@ -61,11 +61,15 @@ export type OntologyAttribute = {
   updatedAt: string
 }
 
-// インスタンスのライフサイクル状態（名寄せ設計）
-//   provisional 仮登録: 全登録経路（手動追加/YAMLインポート/LLM候補採用）の初期状態
-//   confirmed   本登録: 名寄せチェックで承認済み。将来のトリプレット作成で利用可
+// インスタンスのライフサイクル状態（名寄せ設計・登録／名寄せチェック分離モデル）
+//   登録（本登録）はすべての経路で「即時」に行われる。仮登録という中間状態は廃止し、
+//   代わりに「名寄せチェック済みか否か」を独立した軸として status で表す。
+//   provisional 本登録済み・名寄せ未チェック: 全登録経路（手動追加/YAMLインポート/LLM候補採用）の着地点
+//   confirmed   本登録済み・名寄せチェック済み: 名寄せチェックを通過済み。トリプレット作成で利用可
 //   merged      統合済み: 名寄せで不採用となった側。物理削除せず保持し、既定で非表示
-// 後方互換: status 未設定の既存データは confirmed 相当（旧登録モデルで登録済み）として扱う。
+// 後方互換／移行: status 未設定の既存データは confirmed 相当（＝名寄せチェック済み）として扱う。
+//   旧「本登録」= confirmed（＝チェック済み）、旧「仮登録」= provisional（＝本登録済み・未チェック）に
+//   そのまま対応するため、データ移行は不要（恒等写像）。
 // 判定は lib/instance-status.ts の instanceStatus() 経由で行うこと。
 export type InstanceStatus = "provisional" | "confirmed" | "merged"
 

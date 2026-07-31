@@ -147,7 +147,7 @@ export async function POST(request: NextRequest) {
 
     let tripletNote: string | undefined
     if (confirmedInstances.length === 0 || relations.length === 0) {
-      tripletNote = "本登録インスタンスと定義済みリレーションが揃っていないため、トリプレットは抽出できません。まずオントロジー設計（クラス・リレーション・インスタンスの本登録）を進めてください。"
+      tripletNote = "名寄せチェック済みインスタンスと定義済みリレーションが揃っていないため、トリプレットは抽出できません。まずオントロジー設計（クラス・リレーション・インスタンスの本登録＋名寄せチェック）を進めてください。"
     } else if (resolvedCandidates.length === 0) {
       tripletNote = "登録済みインスタンス同士が定義済みリレーションで結ばれる事実は、この文書からは見つかりませんでした。"
     } else if (tripletResult.dropped > 0) {

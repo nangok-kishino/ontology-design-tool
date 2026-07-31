@@ -420,12 +420,18 @@ export function ReviewScreen({ active, ingestVersion, onIngested }: { active?: b
         if (!cand.classId) continue
         updateInst(cand.id, { saving: true })
         try {
-          await fetch("/api/instances", {
+          const res = await fetch("/api/instances", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ projectId: currentProject.id, name: cand.name, classId: cand.classId }),
           })
-          updateInst(cand.id, { status: "本登録済み", saving: false })
+          // 409（同一クラス×正規化一致の重複）は既に同名インスタンスが存在する＝
+          // 登録の目的は達成済みとみなし、本登録済み扱いにする（重複作成はしない）。
+          if (res.ok || res.status === 409) {
+            updateInst(cand.id, { status: "本登録済み", saving: false })
+          } else {
+            updateInst(cand.id, { saving: false })
+          }
         } catch {
           updateInst(cand.id, { saving: false })
         }

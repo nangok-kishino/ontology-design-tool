@@ -1,5 +1,6 @@
 // クラス定義・リレーション定義・インスタンスのインポート/エクスポート（YAML）
 import { parse as parseYamlText, stringify as stringifyYaml } from "yaml"
+import { normalizeName } from "./normalize"
 import type {
   OntologyClass,
   OntologyRelation,
@@ -465,7 +466,19 @@ export async function previewInstancesImport(
   const existingKeys = new Set(existing.map((inst) => instanceKey(existingClassNameOf(inst), inst.name)))
   const fileKeys = new Set(fileItems.map((i) => instanceKey(i.class, i.name)))
 
-  const toCreate = fileItems.filter((i) => !existingKeys.has(instanceKey(i.class, i.name))).map((i) => i.name)
+  // 作成対象: 既存に「完全一致」がなく、かつ「同一クラス×正規化一致」の重複もないもの。
+  // サーバ側 POST /api/instances の重複弾き（同一クラス×normalizeName 一致で 409）と挙動を一致させ、
+  // ファイル内で先行する正規化重複も 2件目以降は作成されない前提でプレビューする。
+  const normKey = (className: string | null, name: string) => `${className ?? " "}::${normalizeName(name)}`
+  const seenNorm = new Set(existing.map((inst) => normKey(existingClassNameOf(inst), inst.name)))
+  const toCreate: string[] = []
+  for (const i of fileItems) {
+    if (existingKeys.has(instanceKey(i.class, i.name))) continue // 完全一致は更新/スキップ対象
+    const nk = normKey(i.class, i.name)
+    if (seenNorm.has(nk)) continue // 正規化重複（既存 or ファイル内先行）→ 作成されない
+    seenNorm.add(nk)
+    toCreate.push(i.name)
+  }
   const toUpdate = mode === "replace"
     ? fileItems.filter((i) => existingKeys.has(instanceKey(i.class, i.name))).map((i) => i.name)
     : []
@@ -751,8 +764,13 @@ export async function executeInstancesImport(
 
     const existingInst = existingByKey.get(key)
     if (!existingInst) {
-      await postJson("/api/instances", { projectId, classId, name: item.name, attributes })
-      created++
+      // 同一クラス×正規化一致の重複はサーバ側が 409 で弾く。重複作成はせず件数にも数えない。
+      const res = await fetch("/api/instances", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId, classId, name: item.name, attributes }),
+      })
+      if (res.ok) created++
     } else if (mode === "replace") {
       await putJson(`/api/instances/${existingInst.id}`, { name: item.name, classId, attributes })
       updated++

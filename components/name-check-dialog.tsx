@@ -147,7 +147,7 @@ export function NameCheckDialog({
       initial.sort((a, b) => a.canonical.name.localeCompare(b.canonical.name, "ja"))
       setGroups(initial)
     } catch {
-      setError("仮登録インスタンスの取得に失敗しました")
+      setError("未チェックインスタンスの取得に失敗しました")
     } finally {
       setLoading(false)
     }
@@ -274,7 +274,7 @@ export function NameCheckDialog({
       onResolved()
       onOpenChange(false)
     } catch {
-      setError("本登録に失敗しました")
+      setError("名寄せの確定に失敗しました")
     } finally {
       setBusy(false)
     }
@@ -286,11 +286,11 @@ export function NameCheckDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="flex max-h-[85vh] flex-col sm:max-w-3xl">
         <DialogHeader>
-          <DialogTitle>本登録候補</DialogTitle>
+          <DialogTitle>名寄せチェック</DialogTitle>
         </DialogHeader>
 
         <p className="text-sm text-muted-foreground">
-          同義と思われるインスタンスは統合したうえで登録することができます（インスタンスをドラッグ＆ドロップしてください）。統合はこの画面での操作によってのみ確定します（自動では行いません）。
+          同義と思われるインスタンスは統合したうえで名寄せを確定できます（インスタンスをドラッグ＆ドロップしてください）。統合はこの画面での操作によってのみ確定します（自動では行いません）。
         </p>
 
         <div className="flex-1 overflow-y-auto py-2">
@@ -303,7 +303,7 @@ export function NameCheckDialog({
           ) : groups.length === 0 ? (
             <div className="flex flex-col items-center gap-2 py-12 text-center text-sm text-muted-foreground">
               <CheckCheck className="h-8 w-8 text-green-500" />
-              本登録が必要な仮登録インスタンスはありません。
+              名寄せチェックが必要なインスタンスはありません。
             </div>
           ) : (
             <DndContext
@@ -333,11 +333,11 @@ export function NameCheckDialog({
         {groups.length > 0 && (
           <DialogFooter className="flex-col items-stretch gap-2 sm:flex-row sm:items-center sm:justify-between">
             <span className="text-xs text-muted-foreground">
-              {totalCount} 件の仮登録{mergeCount > 0 ? `／うち ${mergeCount} 件を統合` : ""}
+              {totalCount} 件の未チェック{mergeCount > 0 ? `／うち ${mergeCount} 件を統合` : ""}
             </span>
             <Button variant="success" onClick={handleRegister} disabled={busy}>
               {busy && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}
-              この内容で本登録する
+              この内容で名寄せを確定する
             </Button>
           </DialogFooter>
         )}

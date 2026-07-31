@@ -65,7 +65,7 @@ export async function POST(request: NextRequest) {
     }
     if (!isConfirmed(subject) || !isConfirmed(object)) {
       return NextResponse.json(
-        { error: "主語・目的語はいずれも本登録インスタンスである必要があります" },
+        { error: "主語・目的語はいずれも名寄せチェック済みインスタンスである必要があります" },
         { status: 400 },
       )
     }

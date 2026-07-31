@@ -359,7 +359,7 @@ export function TripletsScreen({ active }: { active?: boolean }) {
             </SelectContent>
           </Select>
           {draft.subjectInstanceId && draft.predicateRelationId && objOptions.length === 0 && (
-            <p className="text-xs text-muted-foreground">この組み合わせに一致する目的語（本登録インスタンス）がありません。</p>
+            <p className="text-xs text-muted-foreground">この組み合わせに一致する目的語（名寄せチェック済みインスタンス）がありません。</p>
           )}
         </div>
       </div>
@@ -498,7 +498,7 @@ export function TripletsScreen({ active }: { active?: boolean }) {
           <DialogHeader><DialogTitle>トリプレットを追加</DialogTitle></DialogHeader>
           {noPrereq ? (
             <p className="py-4 text-sm text-muted-foreground">
-              トリプレットの作成には、本登録インスタンスが2つ以上と、定義済みリレーションが必要です。先にオントロジー設計（インスタンス・リレーションの本登録）を進めてください。
+              トリプレットの作成には、名寄せチェック済みインスタンスが2つ以上と、定義済みリレーションが必要です。先にオントロジー設計（インスタンスの本登録・名寄せチェックとリレーション定義）を進めてください。
             </p>
           ) : (
             <div className="min-w-0 space-y-4 py-2">

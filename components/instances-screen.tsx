@@ -293,7 +293,8 @@ function SortableInstRow({
   onClick: () => void
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: inst.id })
-  const isProvisional = instanceStatus(inst) === "provisional"
+  // 本登録は全インスタンス完了済み。行が示すのは「名寄せチェック」の済/未。
+  const nameUnchecked = instanceStatus(inst) === "provisional"
   const style: React.CSSProperties = {
     transform: CSS.Translate.toString(transform),
     transition,
@@ -323,17 +324,17 @@ function SortableInstRow({
           <GripVertical className="h-4 w-4" />
         </button>
       </TableCell>
-      <TableCell className={cn("font-medium", isProvisional ? "text-muted-foreground" : "text-foreground")}>
+      <TableCell className="font-medium text-foreground">
         {inst.name}
       </TableCell>
-      <TableCell className="w-28 pr-4 text-right">
-        {isProvisional ? (
+      <TableCell className="w-32 pr-4 text-right">
+        {nameUnchecked ? (
           <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300">
-            仮登録
+            未チェック
           </span>
         ) : (
           <span className="rounded-full border border-green-300 bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700 dark:border-green-800 dark:bg-green-950 dark:text-green-300">
-            本登録済
+            チェック済み
           </span>
         )}
       </TableCell>
@@ -710,10 +711,14 @@ export function InstancesScreen({ initialSelectedClassId, active }: { initialSel
           attributes: newAttrValues,
         }),
       })
+      if (res.status === 409) {
+        alert("同一クラスに同名（表記揺れ含む）のインスタンスが既に存在します")
+        return
+      }
       if (!res.ok) throw new Error()
       setShowAdd(false)
       await fetchInstances(selectedClass.id)
-      // 追加した新規インスタンスは仮登録で着地するため、仮登録件数（本登録ボタンの活性）を更新する
+      // 追加した新規インスタンスは名寄せ未チェックで着地するため、未チェック件数（名寄せチェックボタンの活性）を更新する
       await fetchAllCounts(classes, currentProject.id)
     } catch {
       alert("インスタンスの追加に失敗しました")
@@ -850,7 +855,7 @@ export function InstancesScreen({ initialSelectedClassId, active }: { initialSel
 
   const currentLabel = isUnclassifiedSelected ? "未分類" : selectedClass?.name ?? null
   const canAdd = !!selectedClass && !isUnclassifiedSelected
-  // チェック＆本登録は「現在選択中のクラス（または未分類）」の仮登録だけを対象にする
+  // 名寄せチェックは「現在選択中のクラス（または未分類）」の未チェック（provisional）だけを対象にする
   const nameCheckClassId = isUnclassifiedSelected ? UNCLASSIFIED : (selectedClass?.id ?? null)
   const currentProvisionalCount = instances.filter((i) => instanceStatus(i) === "provisional").length
 
@@ -959,8 +964,8 @@ export function InstancesScreen({ initialSelectedClassId, active }: { initialSel
                   onClick={() => setShowNameCheck(true)}
                   disabled={!currentProject || currentProvisionalCount === 0}
                 >
-                  チェック＆本登録
-                  {currentProvisionalCount > 0 && `（${currentProvisionalCount}件）`}
+                  名寄せチェック
+                  {currentProvisionalCount > 0 && `（未チェック${currentProvisionalCount}件）`}
                 </Button>
               </div>
 
@@ -982,7 +987,7 @@ export function InstancesScreen({ initialSelectedClassId, active }: { initialSel
                             <TableRow className="bg-muted/50 hover:bg-muted/50">
                               <TableHead className="w-8 px-2" />
                               <TableHead className="font-semibold text-foreground">インスタンス名</TableHead>
-                              <TableHead className="w-28 pr-4 text-right font-semibold text-foreground">ステータス</TableHead>
+                              <TableHead className="w-32 pr-4 text-right font-semibold text-foreground">名寄せチェック</TableHead>
                             </TableRow>
                           </TableHeader>
                           <TableBody>
@@ -1018,17 +1023,20 @@ export function InstancesScreen({ initialSelectedClassId, active }: { initialSel
                           <p>登録日 {selectedInst.registeredAt || "—"}{selectedInst.registeredBy ? `（${selectedInst.registeredBy}）` : ""}</p>
                           <p>更新日 {selectedInst.updatedAt || "—"}{selectedInst.updatedBy ? `（${selectedInst.updatedBy}）` : ""}</p>
                         </div>
-                        {/* ステータス（インスタンス名などと同じフォント表現） */}
+                        {/* ステータス（本登録は完了済み。名寄せチェックの済/未を示す） */}
                         <div className="space-y-1.5">
                           <Label className="text-sm font-medium">ステータス</Label>
-                          <div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="inline-block rounded-full border border-green-300 bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700 dark:border-green-800 dark:bg-green-950 dark:text-green-300">
+                              本登録済
+                            </span>
                             {instanceStatus(selectedInst) === "provisional" ? (
                               <span className="inline-block rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300">
-                                仮登録
+                                名寄せ未チェック
                               </span>
                             ) : (
                               <span className="inline-block rounded-full border border-green-300 bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700 dark:border-green-800 dark:bg-green-950 dark:text-green-300">
-                                本登録済
+                                名寄せチェック済み
                               </span>
                             )}
                           </div>

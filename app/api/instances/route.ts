@@ -3,6 +3,7 @@ import { getContainer } from "@/lib/cosmos"
 import { getPrincipalName } from "@/lib/auth"
 import { checkProjectAccess } from "@/lib/project-access"
 import { normalizeName } from "@/lib/normalize"
+import { normalizedNameOf, isMerged } from "@/lib/instance-status"
 import type { InstanceStatus, OntologyInstance } from "@/lib/types"
 
 const CONTAINER = "instances"
@@ -89,8 +90,41 @@ export async function POST(request: NextRequest) {
     }
     const now = new Date().toISOString().split("T")[0]
     const actor = getPrincipalName(request)
-    // 全登録経路（手動追加/YAMLインポート/LLM候補採用）は仮登録で着地させる。
-    // 本登録には名寄せチェックの承認が必須（名寄せ設計の原則A）。
+
+    const container = await getContainer(CONTAINER)
+
+    // 重複弾き（正規化一致・全経路）: 同一クラス内に normalizeName が一致する
+    // 既存インスタンス（統合済みは除く）があれば登録を拒否する。あいまい統合は
+    // 名寄せチェックで扱う想定のため、ここは「同一クラス×正規化一致」のみブロックする。
+    // POST は全登録経路（手動追加/YAMLインポート/LLM候補採用）の単一チョークポイント。
+    const targetClassId: string | null = body.classId ?? null
+    const targetNormalized = normalizeName(body.name)
+    if (body.projectId && targetNormalized) {
+      const classMatch =
+        targetClassId === null
+          ? "(IS_NULL(c.classId) OR NOT IS_DEFINED(c.classId))"
+          : "c.classId = @classId"
+      const dupQuery: { query: string; parameters: { name: string; value: string }[] } = {
+        query: `SELECT * FROM c WHERE c.projectId = @projectId AND ${classMatch}`,
+        parameters: [{ name: "@projectId", value: body.projectId }],
+      }
+      if (targetClassId !== null) dupQuery.parameters.push({ name: "@classId", value: targetClassId })
+      const { resources: sameClass } = await container.items
+        .query<OntologyInstance>(dupQuery)
+        .fetchAll()
+      const duplicate = sameClass.some(
+        (inst) => !isMerged(inst) && normalizedNameOf(inst) === targetNormalized,
+      )
+      if (duplicate) {
+        return NextResponse.json(
+          { error: "同一クラスに同名（表記揺れ含む）のインスタンスが既に存在します", duplicate: true },
+          { status: 409 },
+        )
+      }
+    }
+
+    // 全登録経路は「本登録済み・名寄せ未チェック(provisional)」で着地させる。
+    // 名寄せチェックを通過すると confirmed（＝チェック済み）になる。
     // 移行・復元など特別な経路のみ body.status での明示指定を許容する。
     const status: InstanceStatus =
       body.status === "confirmed" || body.status === "merged" ? body.status : "provisional"
@@ -105,9 +139,8 @@ export async function POST(request: NextRequest) {
       updatedAt: now,
       attributes: body.attributes ?? {},
       status,
-      normalizedName: normalizeName(body.name),
+      normalizedName: targetNormalized,
     }
-    const container = await getContainer(CONTAINER)
     const { resource } = await container.items.create(item)
     return NextResponse.json(resource, { status: 201 })
   } catch (error) {
