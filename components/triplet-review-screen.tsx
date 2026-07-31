@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils"
 import { useProject } from "@/app/project-context"
 import type { OntologyClass } from "@/lib/types"
 import type { ResolvedTripletCandidate } from "@/lib/triplet-resolve"
-import { UploadCloud, FileText, Sparkles, Loader2, Check, ArrowRight } from "lucide-react"
+import { UploadCloud, FileText, Sparkles, Loader2, Check, ArrowRight, RotateCw } from "lucide-react"
 
 const MODEL_OPTIONS = [
   { id: "claude-opus-4-8", label: "Claude Opus 4.8" },
@@ -22,6 +22,15 @@ const MODEL_OPTIONS = [
 // クラス抽出（文書取込み）と同じステータス体系：確認中 → 採用候補 → 本登録済み
 type CandStatus = "確認中" | "採用候補" | "本登録済み"
 type Row = ResolvedTripletCandidate & { uiStatus: CandStatus; saving: boolean }
+
+// 残り候補数などを示す小さなカウントバッジ（オントロジー抽出画面と同じ見た目）
+function CountPill({ n }: { n: number }) {
+  return (
+    <span className="rounded-full bg-muted px-1.5 py-0.5 text-xs tabular-nums text-muted-foreground">
+      {n}
+    </span>
+  )
+}
 
 function StatusBadge({ status }: { status: CandStatus }) {
   const map: Record<CandStatus, string> = {
@@ -35,6 +44,8 @@ function StatusBadge({ status }: { status: CandStatus }) {
 export function TripletReviewScreen({ active, ingestVersion, onIngested }: { active?: boolean; ingestVersion?: number; onIngested?: () => void }) {
   const { currentProject } = useProject()
   const fileInputRef = useRef<HTMLInputElement>(null)
+  // 直近に解析したファイル（解析後は file を null にするため、再実行用に保持する）
+  const lastFileRef = useRef<File | null>(null)
 
   const [selectedModel, setSelectedModel] = useState(MODEL_OPTIONS[0].id)
   const [file, setFile] = useState<File | null>(null)
@@ -92,6 +103,9 @@ export function TripletReviewScreen({ active, ingestVersion, onIngested }: { act
     if (!target || !currentProject) return
     setAnalyzing(true)
     setAnalyzeError(null)
+    // 解析開始時に前回の結果をクリアし、解析中はローディングを表示する（成功時に新結果へ差し替え）
+    setRows([])
+    setNotice(null)
     try {
       const fd = new FormData()
       fd.append("file", target)
@@ -103,6 +117,7 @@ export function TripletReviewScreen({ active, ingestVersion, onIngested }: { act
       setAnalyzedInfo({ doc: data.sourceDocName, model: MODEL_OPTIONS.find((m) => m.id === selectedModel)?.label ?? selectedModel })
       setNotice(data.tripletNote ?? null)
       await fetchCandidates()
+      lastFileRef.current = target
       setFile(null)
       if (fileInputRef.current) fileInputRef.current.value = ""
       // 同一取込みでオントロジー候補も保存済み。オントロジー抽出画面へ共有（再反映）を通知する。
@@ -125,6 +140,8 @@ export function TripletReviewScreen({ active, ingestVersion, onIngested }: { act
   }
 
   const selectedCount = rows.filter((r) => r.uiStatus === "採用候補").length
+  // 見出しに出す「残り候補数」。本登録済みは候補から外れるので数えない。
+  const remainingCount = rows.filter((r) => r.uiStatus !== "本登録済み").length
 
   // 全選択/全選択解除（解決可能かつ本登録済みでない行が対象）
   const selectableRows = rows.filter((r) => resolvable(r) && r.uiStatus !== "本登録済み")
@@ -230,21 +247,46 @@ export function TripletReviewScreen({ active, ingestVersion, onIngested }: { act
 
         <Card className="mt-6">
           <CardHeader>
-            <CardTitle className="text-base flex flex-wrap items-center gap-2">
-              抽出トリプレット
-              <span className="rounded-full bg-muted px-1.5 py-0.5 text-xs tabular-nums text-muted-foreground">{rows.length}</span>
-              {analyzedInfo && (
-                <span className="inline-flex items-center gap-1 text-xs font-normal text-muted-foreground">
-                  <FileText className="h-3.5 w-3.5" />{analyzedInfo.doc}／利用モデル：{analyzedInfo.model}
-                </span>
-              )}
-            </CardTitle>
+            <div className="flex items-center justify-between gap-2">
+              <CardTitle className="text-base flex flex-wrap items-center gap-2">
+                抽出トリプレット
+                {!analyzing && <CountPill n={remainingCount} />}
+                {!analyzing && analyzedInfo && (
+                  <span className="inline-flex items-center gap-1 text-xs font-normal text-muted-foreground">
+                    <FileText className="h-3.5 w-3.5" />{analyzedInfo.doc}
+                  </span>
+                )}
+                {!analyzing && analyzedInfo && (
+                  <span className="text-xs font-normal text-muted-foreground">
+                    利用モデル：{analyzedInfo.model}
+                  </span>
+                )}
+              </CardTitle>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-8 shrink-0 gap-1.5 bg-transparent"
+                title="同じファイルを、現在選択中のモデルでもう一度解析します"
+                disabled={analyzing || !lastFileRef.current || !currentProject}
+                onClick={() => { if (lastFileRef.current) handleAnalyze(lastFileRef.current) }}
+              >
+                {analyzing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCw className="h-3.5 w-3.5" />}
+                解析を再実行
+              </Button>
+            </div>
           </CardHeader>
           <CardContent>
-            {notice && (
+            {notice && !analyzing && (
               <div className="mb-4 rounded-md border border-border bg-muted/50 px-3 py-2.5 text-sm text-muted-foreground">{notice}</div>
             )}
-            {loading ? (
+            {analyzing ? (
+              <div className="flex flex-col items-center justify-center gap-3 py-12 text-center">
+                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                <p className="text-sm text-muted-foreground">
+                  文書を解析しています。完了すると、定義済みオントロジー（登録済みインスタンス・定義済みリレーション）に基づくトリプレットが表示されます。
+                </p>
+              </div>
+            ) : loading ? (
               <div className="flex h-24 items-center justify-center text-muted-foreground"><Loader2 className="h-5 w-5 animate-spin" /></div>
             ) : rows.length === 0 ? (
               <p className="py-8 text-center text-sm text-muted-foreground">

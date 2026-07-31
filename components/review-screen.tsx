@@ -24,7 +24,7 @@ import { TopBar } from "@/components/top-bar"
 import { useProject } from "@/app/project-context"
 import { cn } from "@/lib/utils"
 import type { OntologyClass, OntologyRelation } from "@/lib/types"
-import { UploadCloud, FileText, Check, Sparkles, Loader2, Pencil, RotateCw } from "lucide-react"
+import { UploadCloud, FileText, Check, Sparkles, Loader2, Pencil, RotateCw, AlertTriangle } from "lucide-react"
 
 type CandidateStatus = "確認中" | "新規追加" | "承認済み" | "却下" | "採用候補" | "本登録済み"
 
@@ -322,7 +322,13 @@ export function ReviewScreen({ active, ingestVersion, onIngested }: { active?: b
     if (!target || !currentProject) return
     setAnalyzing(true)
     setAnalyzeError(null)
-    // 解析中も直前の結果は残しておき、成功時に差し替える（再実行の比較・スピナー表示のため）
+    // 解析開始時に前回の結果をクリアし、解析中はローディングを表示する（成功時に新結果へ差し替え）
+    setClassCands([])
+    setInstCands([])
+    setRelCands([])
+    setEditingClassNameId(null)
+    setEditingRelationNameId(null)
+    setEditingInstanceNameId(null)
     try {
       const fd = new FormData()
       fd.append("file", target)
@@ -510,6 +516,12 @@ export function ReviewScreen({ active, ingestVersion, onIngested }: { active?: b
       return p.map((c) => (c.status === "本登録済み" ? c : { ...c, status: allSel ? "確認中" : "採用候補" }))
     })
 
+  // 採用候補のうち、始点・終点クラス（または名称）が未指定で本登録できない行。
+  // 「なぜ本登録ボタンが押せないか」の説明と、行・ドロップダウンの黄色ハイライトに使う。
+  const relIncompleteSelected = relCands.filter(
+    (c) => c.status === "採用候補" && (!c.sourceClassId || !c.targetClassId || !c.relationName.trim()),
+  )
+
   const relAllSelected =
     relCands.some((c) => c.status !== "本登録済み") &&
     relCands.filter((c) => c.status !== "本登録済み").every((c) => c.status === "採用候補")
@@ -607,18 +619,18 @@ export function ReviewScreen({ active, ingestVersion, onIngested }: { active?: b
           </CardContent>
         </Card>
 
-        {hasCandidates && (
+        {(analyzing || hasCandidates) && (
           <Card className="mt-6">
             <CardHeader>
               <div className="flex items-center justify-between gap-2">
                 <CardTitle className="text-base flex items-center gap-2">
                   解析結果
-                  {analyzedFileName && (
+                  {!analyzing && analyzedFileName && (
                     <span className="inline-flex items-center gap-1 text-xs font-normal text-muted-foreground">
                       <FileText className="h-3.5 w-3.5" />{analyzedFileName}
                     </span>
                   )}
-                  {analyzedModelLabel && (
+                  {!analyzing && analyzedModelLabel && (
                     <span className="text-xs font-normal text-muted-foreground">
                       利用モデル：{analyzedModelLabel}
                     </span>
@@ -638,11 +650,19 @@ export function ReviewScreen({ active, ingestVersion, onIngested }: { active?: b
               </div>
             </CardHeader>
             <CardContent>
+              {analyzing ? (
+                <div className="flex flex-col items-center justify-center gap-3 py-12 text-center">
+                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                  <p className="text-sm text-muted-foreground">
+                    文書を解析しています。完了すると、クラス・リレーション・インスタンスの候補が表示されます。
+                  </p>
+                </div>
+              ) : (
               <Tabs defaultValue="classes">
                 <TabsList>
-                  <TabsTrigger value="classes">クラス候補<CountPill n={classCands.length} /></TabsTrigger>
-                  <TabsTrigger value="relations">リレーション候補<CountPill n={relCands.length} /></TabsTrigger>
-                  <TabsTrigger value="instances">インスタンス候補<CountPill n={instCands.length} /></TabsTrigger>
+                  <TabsTrigger value="classes">クラス候補<CountPill n={classCands.filter((c) => c.status !== "本登録済み").length} /></TabsTrigger>
+                  <TabsTrigger value="relations">リレーション候補<CountPill n={relCands.filter((c) => c.status !== "本登録済み").length} /></TabsTrigger>
+                  <TabsTrigger value="instances">インスタンス候補<CountPill n={instCands.filter((c) => c.status !== "本登録済み").length} /></TabsTrigger>
                 </TabsList>
 
                 {/* クラス候補 */}
@@ -806,6 +826,15 @@ export function ReviewScreen({ active, ingestVersion, onIngested }: { active?: b
                             チェックを付けて採用候補に選び、始点・終点クラスを確定してまとめて本登録できます。鉛筆アイコンで名称・説明を編集できます。
                           </p>
                         </div>
+                        {relIncompleteSelected.length > 0 && (
+                          <div className="mb-3 flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
+                            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                            <span>
+                              採用候補のうち {relIncompleteSelected.length} 件は始点・終点クラス（または名称）が未指定のため本登録できません。
+                              <span className="font-medium">黄色の行</span>の未指定項目（黄色で強調されたドロップダウン）を指定してください。
+                            </span>
+                          </div>
+                        )}
                         <div className="overflow-x-auto rounded-lg border border-border">
                           <Table className="table-fixed">
                             <TableHeader>
@@ -827,12 +856,17 @@ export function ReviewScreen({ active, ingestVersion, onIngested }: { active?: b
                                 const registered = c.status === "本登録済み"
                                 const selected = c.status === "採用候補"
                                 const editing = editingRelationNameId === c.id
+                                // 採用候補なのに始点/終点クラスが未指定＝本登録できない行。黄色で強調する。
+                                const needSource = selected && !c.sourceClassId
+                                const needTarget = selected && !c.targetClassId
+                                const incomplete = needSource || needTarget
                                 return (
                                   <TableRow
                                     key={c.id}
                                     className={cn(
                                       registered && "opacity-50",
-                                      selected && "bg-green-50/60 dark:bg-green-950/20",
+                                      selected && !incomplete && "bg-green-50/60 dark:bg-green-950/20",
+                                      selected && incomplete && "bg-amber-50/70 dark:bg-amber-950/25",
                                     )}
                                   >
                                     <TableCell className="align-top pt-3 text-center">
@@ -911,8 +945,8 @@ export function ReviewScreen({ active, ingestVersion, onIngested }: { active?: b
                                             ...(v !== "__none__" ? { status: "採用候補" as CandidateStatus } : {}),
                                           })
                                         }}>
-                                        <SelectTrigger className="h-8 w-full">
-                                          <SelectValue>{c.sourceClassId ? c.sourceClassName : "選択"}</SelectValue>
+                                        <SelectTrigger className={cn("h-8 w-full", needSource && "border-amber-400 text-amber-700 ring-1 ring-amber-400/50 dark:border-amber-600 dark:text-amber-300")}>
+                                          <SelectValue>{c.sourceClassId ? c.sourceClassName : (needSource ? "要選択" : "選択")}</SelectValue>
                                         </SelectTrigger>
                                         <SelectContent className="max-h-72">
                                           <SelectItem value="__none__">選択</SelectItem>
@@ -931,8 +965,8 @@ export function ReviewScreen({ active, ingestVersion, onIngested }: { active?: b
                                             ...(v !== "__none__" ? { status: "採用候補" as CandidateStatus } : {}),
                                           })
                                         }}>
-                                        <SelectTrigger className="h-8 w-full">
-                                          <SelectValue>{c.targetClassId ? c.targetClassName : "選択"}</SelectValue>
+                                        <SelectTrigger className={cn("h-8 w-full", needTarget && "border-amber-400 text-amber-700 ring-1 ring-amber-400/50 dark:border-amber-600 dark:text-amber-300")}>
+                                          <SelectValue>{c.targetClassId ? c.targetClassName : (needTarget ? "要選択" : "選択")}</SelectValue>
                                         </SelectTrigger>
                                         <SelectContent className="max-h-72">
                                           <SelectItem value="__none__">選択</SelectItem>
@@ -1104,6 +1138,7 @@ export function ReviewScreen({ active, ingestVersion, onIngested }: { active?: b
                 </TabsContent>
 
               </Tabs>
+              )}
             </CardContent>
           </Card>
         )}
