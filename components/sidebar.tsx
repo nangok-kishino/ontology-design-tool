@@ -4,41 +4,45 @@ import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { cn } from "@/lib/utils"
 import {
-  LayoutDashboard, Boxes, GitBranch, FileInput, Database, FolderOpen, BookOpen, LogOut, Lock, Settings, Waypoints, Network,
+  LayoutGrid, Boxes, Database, FolderOpen, BookOpen, LogOut, Lock, Settings, Waypoints,
 } from "lucide-react"
 import { useProject } from "@/app/project-context"
 import { ProjectSettingsDialog } from "@/components/project-settings-dialog"
 
 export type ScreenId = "dashboard" | "review" | "classes" | "relations" | "instances" | "triplets" | "triplet-review" | "graph" | "ontology-info"
 
-type NavItem = { id: ScreenId; label: string; icon: React.ElementType }
-type NavGroup = { label: string; items: NavItem[] }
+type NavItem = { id: ScreenId; label: string }
+type NavGroup = { label: string; icon: React.ElementType; items: NavItem[] }
 
 const navGroups: NavGroup[] = [
   {
     label: "全体",
+    icon: LayoutGrid,
     items: [
-      { id: "dashboard", label: "ダッシュボード", icon: LayoutDashboard },
+      { id: "dashboard", label: "ダッシュボード" },
+      { id: "graph", label: "グラフビュー" },
     ],
   },
   {
     label: "オントロジー設計",
+    icon: Boxes,
     items: [
-      { id: "review", label: "オントロジー抽出", icon: FileInput },
-      { id: "classes", label: "クラス管理", icon: Boxes },
-      { id: "relations", label: "リレーション管理", icon: GitBranch },
+      { id: "review", label: "オントロジー抽出" },
+      { id: "classes", label: "クラス管理" },
+      { id: "relations", label: "リレーション管理" },
     ],
   },
   {
     label: "インスタンス作成",
-    items: [{ id: "instances", label: "インスタンス管理", icon: Database }],
+    icon: Database,
+    items: [{ id: "instances", label: "インスタンス管理" }],
   },
   {
     label: "ナレッジグラフ作成",
+    icon: Waypoints,
     items: [
-      { id: "triplet-review", label: "トリプレット抽出", icon: FileInput },
-      { id: "triplets", label: "トリプレット管理", icon: Waypoints },
-      { id: "graph", label: "グラフビュー", icon: Network },
+      { id: "triplet-review", label: "トリプレット抽出" },
+      { id: "triplets", label: "トリプレット管理" },
     ],
   },
 ]
@@ -126,38 +130,37 @@ export function Sidebar({
       {currentProject && (
         <>
           <div className="mx-3 border-t border-white/[0.06]" />
-          <nav className="flex-1 space-y-4 overflow-y-auto px-3 py-4">
-            {navGroups.map((group) => (
-              <div key={group.label} className="space-y-0.5">
-                <p className="px-2 pb-1 text-[11px] font-semibold uppercase tracking-widest text-zinc-400">
-                  {group.label}
-                </p>
-                {group.items.map((item) => {
-                  const Icon = item.icon
-                  const isActive = active === item.id
-                  return (
-                    <button
-                      key={item.id}
-                      onClick={() => onNavigate(item.id)}
-                      className={cn(
-                        "flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-sm transition-colors",
-                        isActive
-                          ? "bg-white/10 font-medium text-white"
-                          : "text-zinc-300 hover:bg-white/5 hover:text-white",
-                      )}
-                    >
-                      <Icon
+          <nav className="flex-1 space-y-5 overflow-y-auto px-3 py-4">
+            {navGroups.map((group) => {
+              const GroupIcon = group.icon
+              return (
+                <div key={group.label} className="space-y-0.5">
+                  <div className="flex items-center gap-2 px-2 pb-1.5">
+                    <GroupIcon className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
+                    <p className="text-[11px] font-semibold uppercase tracking-widest text-zinc-400">
+                      {group.label}
+                    </p>
+                  </div>
+                  {group.items.map((item) => {
+                    const isActive = active === item.id
+                    return (
+                      <button
+                        key={item.id}
+                        onClick={() => onNavigate(item.id)}
                         className={cn(
-                          "h-4 w-4 shrink-0",
-                          isActive ? "text-indigo-400" : "text-zinc-400",
+                          "flex w-full items-center rounded-md py-2 pl-8 pr-2.5 text-sm transition-colors",
+                          isActive
+                            ? "bg-white/10 font-medium text-white"
+                            : "text-zinc-300 hover:bg-white/5 hover:text-white",
                         )}
-                      />
-                      <span>{item.label}</span>
-                    </button>
-                  )
-                })}
-              </div>
-            ))}
+                      >
+                        <span>{item.label}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+              )
+            })}
           </nav>
         </>
       )}

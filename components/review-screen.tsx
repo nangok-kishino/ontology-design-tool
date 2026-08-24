@@ -546,7 +546,7 @@ export function ReviewScreen({ active, ingestVersion, onIngested }: { active?: b
 
   return (
     <div className="flex h-full flex-col">
-      <TopBar title="オントロジー抽出" />
+      <TopBar group="オントロジー設計" title="オントロジー抽出" />
       <div className="flex-1 overflow-auto p-6">
 
         <div className="mb-6 flex items-start justify-between gap-4">

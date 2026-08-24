@@ -368,7 +368,7 @@ export function TripletsScreen({ active }: { active?: boolean }) {
 
   return (
     <div className="flex h-full flex-col">
-      <TopBar title="トリプレット管理">
+      <TopBar group="ナレッジグラフ作成" title="トリプレット管理">
         <Button size="sm" variant="outline" className="h-8 gap-1.5 bg-transparent"
           onClick={() => setShowExport(true)} disabled={!currentProject || triplets.length === 0}>
           <Download className="h-3.5 w-3.5" />Neo4jエクスポート

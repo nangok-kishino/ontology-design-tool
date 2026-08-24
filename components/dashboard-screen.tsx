@@ -130,7 +130,7 @@ export function DashboardScreen({ onNavigate }: Props) {
 
   return (
     <div className="flex h-full flex-col">
-      <TopBar title="ダッシュボード" />
+      <TopBar group="全体" title="ダッシュボード" />
 
       {projectLoading || loading ? (
         <div className="flex flex-1 items-center justify-center text-muted-foreground">

@@ -877,7 +877,7 @@ export function InstancesScreen({ initialSelectedClassId, active }: { initialSel
 
   return (
     <div className="flex h-full flex-col">
-      <TopBar title="インスタンス管理">
+      <TopBar group="インスタンス作成" title="インスタンス管理">
         <Button size="sm" variant="outline" className="h-8 gap-1.5 bg-transparent"
           onClick={handleExport} disabled={!currentProject || exporting}>
           {exporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}

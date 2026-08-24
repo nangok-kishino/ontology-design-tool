@@ -74,7 +74,7 @@ export function GraphScreen({ active }: { active?: boolean }) {
 
   return (
     <div className="flex h-full flex-col">
-      <TopBar title="グラフビュー">
+      <TopBar group="全体" title="グラフビュー">
         {!loading && currentProject && triplets.length > 0 && (
           <span className="text-xs text-muted-foreground">
             ノード {nodeCount}・エッジ {triplets.length}

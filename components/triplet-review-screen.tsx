@@ -194,7 +194,7 @@ export function TripletReviewScreen({ active, ingestVersion, onIngested }: { act
 
   return (
     <div className="flex h-full flex-col">
-      <TopBar title="トリプレット抽出" />
+      <TopBar group="ナレッジグラフ作成" title="トリプレット抽出" />
       <div className="flex-1 overflow-auto p-6">
 
         <div className="mb-6 flex items-start justify-between gap-4">

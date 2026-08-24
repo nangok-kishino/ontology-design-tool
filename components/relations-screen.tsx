@@ -488,7 +488,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
 
   return (
     <div className="flex h-full flex-col">
-      <TopBar title="リレーション管理">
+      <TopBar group="オントロジー設計" title="リレーション管理">
         <Button size="sm" variant="outline" className="h-8 gap-1.5 bg-transparent"
           onClick={handleExport} disabled={!currentProject || relations.length === 0 || exporting}>
           {exporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
