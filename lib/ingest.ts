@@ -76,7 +76,9 @@ export async function runExtraction(model: string, system: string, userContent: 
 
 const ONTOLOGY_SYSTEM =
   "あなたはオントロジーエンジニアです。提供された文書と定義済みクラス・リレーション・登録済みインスタンスを参照し、以下を抽出してください。\n\n" +
-  "1. インスタンス候補：文書中の具体的な事例・対象・固有名詞のうち、【登録済みインスタンス】に一致・類似するものは除外し、新規性のあるものだけを列挙してください。既存クラスに割り当ててください（suggestedClassId と suggestedClassName を指定）。適切なクラスがない場合は isNewClass: true とし、新規クラス名と説明を提案してください。\n\n" +
+  "1. インスタンス候補：文書中に登場する【すべての固有名詞・登場人物・場所・組織・道具・成果物・具体的な事例・対象】を漏れなく列挙してください。網羅性が最優先です。判断に迷ったものは省かず候補に含めてください。「新規性のあるものだけ」に絞り込む必要はありません。除外してよいのは、【登録済みインスタンス】と明確に同一・類似のものだけです。\n" +
+  "   - 可能であれば既存クラスに割り当ててください（suggestedClassId と suggestedClassName を指定）。\n" +
+  "   - 適切な既存クラスが無い場合も候補から外さず、必ず isNewClass: true として新規クラス名と説明を提案してください（既存クラスに合わないことを理由に候補を省いてはいけません）。\n\n" +
   "2. リレーション候補：クラス（種類・カテゴリ）どうしの関係を、汎用的で再利用可能な粒度で抽出してください。\n" +
   "   - リレーション名は「始点クラス（主語）—述語—終点クラス（目的語）」の【述語部分だけ】を記述してください。主語となる始点クラスや、目的語となる終点クラスの名詞をリレーション名に含めてはいけません（それらは sourceClassName／targetClassName で別途表します）。\n" +
   "   - リレーション名は簡潔な動詞句にしてください。良い例：「含む」「構成する」「搭載される」「評価される」「準拠する」「影響する」（格助詞を付けた「を含む」「に搭載される」なども可）。悪い例：「潤滑油の低粘度化が燃費・電費を向上させる」（主語・目的語・条件を含む）／「性能に影響する」（目的語の名詞『性能』を含む）。\n" +
@@ -289,15 +291,15 @@ export type ExtractedTriplet = {
 export async function extractTriplets(
   model: string,
   text: string,
-  ctx: { confirmedInstances: OntologyInstance[]; relations: OntologyRelation[]; classNameById: Map<string, string> },
+  ctx: { registeredInstances: OntologyInstance[]; relations: OntologyRelation[]; classNameById: Map<string, string> },
 ): Promise<{ triplets: ExtractedTriplet[]; dropped: number }> {
-  const { confirmedInstances, relations, classNameById } = ctx
-  if (confirmedInstances.length === 0 || relations.length === 0) return { triplets: [], dropped: 0 }
+  const { registeredInstances, relations, classNameById } = ctx
+  if (registeredInstances.length === 0 || relations.length === 0) return { triplets: [], dropped: 0 }
 
-  const instById = new Map(confirmedInstances.map((i) => [i.id, i]))
+  const instById = new Map(registeredInstances.map((i) => [i.id, i]))
   const relById = new Map(relations.map((r) => [r.id, r]))
 
-  const instText = confirmedInstances
+  const instText = registeredInstances
     .map((i) => `- id=${i.id} 名前=${i.name} クラス=${i.classId ? (classNameById.get(i.classId) ?? "不明") : "未分類"}`)
     .join("\n")
   const relText = relations

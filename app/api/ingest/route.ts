@@ -8,7 +8,7 @@ import {
   extractTriplets,
   type OntologyResult,
 } from "@/lib/ingest"
-import { isConfirmed } from "@/lib/instance-status"
+import { isRegistered } from "@/lib/instance-status"
 import { classifyTriplet, resolveCandidate } from "@/lib/triplet-resolve"
 import type { OntologyClass, OntologyInstance, OntologyRelation, Triplet, TripletCandidate } from "@/lib/types"
 
@@ -79,7 +79,9 @@ export async function POST(request: NextRequest) {
       r.classPairs ? r : { ...r, classPairs: [{ sourceClassId: r.sourceClassId, targetClassId: r.targetClassId }] },
     )
     const classNameById = new Map(classes.map((c) => [c.id, c.name]))
-    const confirmedInstances = instancesAll.filter((i) => isConfirmed(i))
+    // トリプレット抽出は本登録済み（provisional/confirmed の両方）のインスタンスを対象にする。
+    // 名寄せチェック（confirmed）は必須ゲートにしない方針（統合済み merged のみ除外）。
+    const registeredInstances = instancesAll.filter((i) => isRegistered(i))
 
     const text = await extractTextFromFile(file)
     if (!text.trim()) return NextResponse.json({ error: "テキストを抽出できませんでした" }, { status: 400 })
@@ -90,7 +92,7 @@ export async function POST(request: NextRequest) {
     // オントロジー抽出（主）とトリプレット抽出（従属）を並行実行
     const [ontology, tripletResult] = await Promise.all([
       extractOntology(model, text, { classes, relations, instances: instancesAll }),
-      extractTriplets(model, text, { confirmedInstances, relations, classNameById }),
+      extractTriplets(model, text, { registeredInstances, relations, classNameById }),
     ])
 
     // オントロジー候補を保留セッションとして保存（全体の文書取込み画面が読む）
@@ -122,8 +124,8 @@ export async function POST(request: NextRequest) {
       if (existingKeys.has(key) || seen.has(key)) continue
       seen.add(key)
       const relation = relations.find((r) => r.id === t.predicateRelationId)!
-      const subject = confirmedInstances.find((i) => i.id === t.subjectInstanceId)!
-      const object = confirmedInstances.find((i) => i.id === t.objectInstanceId)!
+      const subject = registeredInstances.find((i) => i.id === t.subjectInstanceId)!
+      const object = registeredInstances.find((i) => i.id === t.objectInstanceId)!
       const cand: TripletCandidate = {
         id: crypto.randomUUID(),
         projectId,
@@ -143,11 +145,11 @@ export async function POST(request: NextRequest) {
       const { resource } = await candContainer.items.create(cand)
       if (resource) savedCandidates.push(resource)
     }
-    const resolvedCandidates = savedCandidates.map((c) => resolveCandidate(c, confirmedInstances, relations))
+    const resolvedCandidates = savedCandidates.map((c) => resolveCandidate(c, registeredInstances, relations))
 
     let tripletNote: string | undefined
-    if (confirmedInstances.length === 0 || relations.length === 0) {
-      tripletNote = "名寄せチェック済みインスタンスと定義済みリレーションが揃っていないため、トリプレットは抽出できません。まずオントロジー設計（クラス・リレーション・インスタンスの本登録＋名寄せチェック）を進めてください。"
+    if (registeredInstances.length === 0 || relations.length === 0) {
+      tripletNote = "登録済みインスタンスと定義済みリレーションが揃っていないため、トリプレットは抽出できません。まずオントロジー設計（クラス・リレーション・インスタンスの本登録）を進めてください。"
     } else if (resolvedCandidates.length === 0) {
       tripletNote = "登録済みインスタンス同士が定義済みリレーションで結ばれる事実は、この文書からは見つかりませんでした。"
     } else if (tripletResult.dropped > 0) {

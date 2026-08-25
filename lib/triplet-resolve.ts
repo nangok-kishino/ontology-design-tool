@@ -6,7 +6,7 @@
 // 文書candidateの表層解決（resolveByText）はフェーズ2の文書取込みビューで使用する。
 
 import type { OntologyInstance, OntologyRelation, TripletCandidate, TripletResolveStatus } from "./types"
-import { isConfirmed } from "./instance-status"
+import { isRegistered } from "./instance-status"
 
 // リレーションが (sourceClassId, targetClassId) のクラスペアを許可しているか。
 // フェーズ1は完全一致。将来 parentId 継承（サブクラス許容）を足す余地あり。
@@ -62,8 +62,8 @@ export function resolveCandidate(
   instances: OntologyInstance[],
   relations: OntologyRelation[],
 ): ResolvedTripletCandidate {
-  const subject = instances.find((i) => i.id === cand.subjectInstanceId && isConfirmed(i)) ?? null
-  const object = instances.find((i) => i.id === cand.objectInstanceId && isConfirmed(i)) ?? null
+  const subject = instances.find((i) => i.id === cand.subjectInstanceId && isRegistered(i)) ?? null
+  const object = instances.find((i) => i.id === cand.objectInstanceId && isRegistered(i)) ?? null
   const relation = relations.find((r) => r.id === cand.predicateRelationId) ?? null
   const status = classifyTriplet({ subject, object, relation })
   return {

@@ -31,7 +31,7 @@ import { SectionHeader } from "@/components/section-header"
 import { AttrValueList, hasMissingRequired } from "@/components/attr-fields"
 import { cn } from "@/lib/utils"
 import { useProject } from "@/app/project-context"
-import { isConfirmed } from "@/lib/instance-status"
+import { isRegistered } from "@/lib/instance-status"
 import { buildCypher } from "@/lib/graph-export"
 import type { Triplet, OntologyInstance, OntologyRelation, OntologyClass, OntologyAttribute } from "@/lib/types"
 import { ArrowRight, Plus, Trash2, Loader2, Download, FileText, Tags, CheckCircle2, X } from "lucide-react"
@@ -102,8 +102,8 @@ export function TripletsScreen({ active }: { active?: boolean }) {
   const [addAttrValues, setAddAttrValues] = useState<Record<string, string>>({})
   const [editAttrValues, setEditAttrValues] = useState<Record<string, string>>({})
 
-  const confirmedInstances = useMemo(
-    () => instances.filter((i) => isConfirmed(i)).sort((a, b) => a.name.localeCompare(b.name, "ja")),
+  const registeredInstances = useMemo(
+    () => instances.filter((i) => isRegistered(i)).sort((a, b) => a.name.localeCompare(b.name, "ja")),
     [instances],
   )
   const classNameById = useMemo(() => new Map(classes.map((c) => [c.id, c.name])), [classes])
@@ -256,7 +256,7 @@ export function TripletsScreen({ active }: { active?: boolean }) {
   // 不整合ならエラーを返す（前設計の整合表示は廃止）。
   const isComplete = (d: Draft) => !!(d.subjectInstanceId && d.predicateRelationId && d.objectInstanceId)
 
-  const noPrereq = confirmedInstances.length < 2 || relations.length === 0
+  const noPrereq = registeredInstances.length < 2 || relations.length === 0
 
   const openAdd = () => { setAddDraft(EMPTY_DRAFT); setAddAttrValues({}); setAddError(null); setShowAdd(true) }
 
@@ -387,11 +387,11 @@ export function TripletsScreen({ active }: { active?: boolean }) {
   const objectsForSubjectRel = (subjectId: string, relId: string) => {
     const scid = subjectId ? subjClassOf(subjectId) : null
     const rel = relId ? relById.get(relId) : null
-    if (!scid || !rel) return confirmedInstances
+    if (!scid || !rel) return registeredInstances
     const targets = new Set(
       (rel.classPairs ?? []).filter((p) => p.sourceClassId === scid).map((p) => p.targetClassId),
     )
-    return confirmedInstances.filter((i) => i.classId && targets.has(i.classId))
+    return registeredInstances.filter((i) => i.classId && targets.has(i.classId))
   }
 
   const TripleSelects = ({ draft, onChange }: { draft: Draft; onChange: (d: Draft) => void }) => {
@@ -421,7 +421,7 @@ export function TripletsScreen({ active }: { active?: boolean }) {
           <Select value={draft.subjectInstanceId || "__none__"} onValueChange={changeSubject}>
             <SelectTrigger className="h-8 w-full min-w-0"><SelectValue>{draft.subjectInstanceId ? instLabel(draft.subjectInstanceId) : "選択"}</SelectValue></SelectTrigger>
             <SelectContent className="max-h-72">
-              {confirmedInstances.map((i) => <SelectItem key={i.id} value={i.id}>{instLabel(i.id)}</SelectItem>)}
+              {registeredInstances.map((i) => <SelectItem key={i.id} value={i.id}>{instLabel(i.id)}</SelectItem>)}
             </SelectContent>
           </Select>
         </div>
@@ -446,7 +446,7 @@ export function TripletsScreen({ active }: { active?: boolean }) {
             </SelectContent>
           </Select>
           {draft.subjectInstanceId && draft.predicateRelationId && objOptions.length === 0 && (
-            <p className="text-xs text-muted-foreground">この組み合わせに一致する目的語（名寄せチェック済みインスタンス）がありません。</p>
+            <p className="text-xs text-muted-foreground">この組み合わせに一致する目的語（本登録済みインスタンス）がありません。</p>
           )}
         </div>
       </div>
@@ -654,7 +654,7 @@ export function TripletsScreen({ active }: { active?: boolean }) {
           <DialogHeader><DialogTitle>トリプレットを追加</DialogTitle></DialogHeader>
           {noPrereq ? (
             <p className="py-4 text-sm text-muted-foreground">
-              トリプレットの作成には、名寄せチェック済みインスタンスが2つ以上と、定義済みリレーションが必要です。先にオントロジー設計（インスタンスの本登録・名寄せチェックとリレーション定義）を進めてください。
+              トリプレットの作成には、本登録済みインスタンスが2つ以上と、定義済みリレーションが必要です。先にオントロジー設計（インスタンスの本登録とリレーション定義）を進めてください。
             </p>
           ) : (
             <div className="min-w-0 space-y-4 py-2">

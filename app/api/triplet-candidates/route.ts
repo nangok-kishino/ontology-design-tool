@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getContainer } from "@/lib/cosmos"
 import { checkProjectAccess } from "@/lib/project-access"
-import { isConfirmed } from "@/lib/instance-status"
+import { isRegistered } from "@/lib/instance-status"
 import { resolveCandidate } from "@/lib/triplet-resolve"
 import type { OntologyInstance, OntologyRelation, TripletCandidate } from "@/lib/types"
 
@@ -30,8 +30,10 @@ export async function GET(request: NextRequest) {
     const relations: OntologyRelation[] = relationsRaw.map((r) =>
       r.classPairs ? r : { ...r, classPairs: [{ sourceClassId: r.sourceClassId, targetClassId: r.targetClassId }] },
     )
-    const confirmedInstances = instancesAll.filter((i) => isConfirmed(i))
-    const resolved = candidates.map((c) => resolveCandidate(c, confirmedInstances, relations))
+    // トリプレット candidate の解決は本登録済み（provisional/confirmed）のインスタンスを対象。
+    // 名寄せチェック済み限定にはしない（統合済み merged のみ除外）。
+    const registeredInstances = instancesAll.filter((i) => isRegistered(i))
+    const resolved = candidates.map((c) => resolveCandidate(c, registeredInstances, relations))
     return NextResponse.json(resolved)
   } catch (error) {
     console.error("GET /api/triplet-candidates:", error)

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { getContainer } from "@/lib/cosmos"
 import { getPrincipalName } from "@/lib/auth"
 import { checkProjectAccess } from "@/lib/project-access"
-import { isConfirmed } from "@/lib/instance-status"
+import { isRegistered } from "@/lib/instance-status"
 import { relationAllowsPair } from "@/lib/triplet-resolve"
 import { appendEditEvent, diffTripletFields } from "@/lib/confirmation"
 import type { Triplet, OntologyInstance, OntologyRelation } from "@/lib/types"
@@ -58,9 +58,9 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
     if (!relRaw || relRaw.projectId !== existing.projectId) {
       return NextResponse.json({ error: "述語リレーションが見つかりません" }, { status: 400 })
     }
-    if (!isConfirmed(subject) || !isConfirmed(object)) {
+    if (!isRegistered(subject) || !isRegistered(object)) {
       return NextResponse.json(
-        { error: "主語・目的語はいずれも名寄せチェック済みインスタンスである必要があります" },
+        { error: "主語・目的語はいずれも本登録済みインスタンスである必要があります（統合済みは不可）" },
         { status: 400 },
       )
     }
