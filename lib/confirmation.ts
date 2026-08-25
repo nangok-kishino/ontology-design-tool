@@ -1,4 +1,4 @@
-import type { ConfirmationEvent, OntologyClass, OntologyRelation } from "@/lib/types"
+import type { ConfirmationEvent, OntologyClass, OntologyInstance, OntologyRelation, Triplet } from "@/lib/types"
 
 // 「未確認」／「確認済み」／「確認済み*（最終確認後に編集あり）」の3状態
 export type ConfirmationState = "unconfirmed" | "confirmed" | "confirmed_edited"
@@ -72,6 +72,30 @@ export function diffRelationFields(before: OntologyRelation, after: OntologyRela
 
 function byPair(a: { sourceClassId: string; targetClassId: string }, b: { sourceClassId: string; targetClassId: string }) {
   return (a.sourceClassId + "|" + a.targetClassId).localeCompare(b.sourceClassId + "|" + b.targetClassId)
+}
+
+// インスタンス編集で確認履歴の [edit] を積むべきフィールドを比較。
+// 対象: 名前(name)・所属クラス(classId)・属性値(attributes)
+export function diffInstanceFields(before: OntologyInstance, after: OntologyInstance): string[] {
+  const changed: string[] = []
+  if ((before.name ?? "") !== (after.name ?? "")) changed.push("name")
+  if ((before.classId ?? null) !== (after.classId ?? null)) changed.push("classId")
+  if (JSON.stringify(before.attributes ?? {}) !== JSON.stringify(after.attributes ?? {})) changed.push("attributes")
+  return changed
+}
+
+// トリプレット編集で確認履歴の [edit] を積むべきフィールドを比較。
+// 対象: 主語/述語/目的語（スナップショット名も含む）・属性値
+export function diffTripletFields(before: Triplet, after: Triplet): string[] {
+  const changed: string[] = []
+  if (before.subjectInstanceId !== after.subjectInstanceId) changed.push("subjectInstanceId")
+  if (before.predicateRelationId !== after.predicateRelationId) changed.push("predicateRelationId")
+  if (before.objectInstanceId !== after.objectInstanceId) changed.push("objectInstanceId")
+  if ((before.subjectName ?? "") !== (after.subjectName ?? "")) changed.push("subjectName")
+  if ((before.predicateName ?? "") !== (after.predicateName ?? "")) changed.push("predicateName")
+  if ((before.objectName ?? "") !== (after.objectName ?? "")) changed.push("objectName")
+  if (JSON.stringify(before.attributes ?? {}) !== JSON.stringify(after.attributes ?? {})) changed.push("attributes")
+  return changed
 }
 
 // 確認履歴に [confirm] イベントを追加した新しい配列を返す（イミュータブル）

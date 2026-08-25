@@ -41,9 +41,19 @@ import {
   executeInstancesImport,
   type InstanceExportItem,
 } from "@/lib/import-export"
-import { ChevronDown, ChevronRight, Plus, Trash2, Loader2, Info, X, GripVertical, AlertTriangle, Download, Upload, Undo2, FileText, Tags } from "lucide-react"
+import { ChevronDown, ChevronRight, Plus, Trash2, Loader2, Info, X, GripVertical, AlertTriangle, Download, Upload, Undo2, FileText, Tags, CheckCircle2 } from "lucide-react"
 import { SectionHeader } from "@/components/section-header"
 import { useProject } from "@/app/project-context"
+import { deriveConfirmationStatus, type ConfirmationState } from "@/lib/confirmation"
+import { ConfirmationBadge } from "@/components/confirmation-badge"
+import { ConfirmDialog } from "@/components/confirm-dialog"
+import { ConfirmationSummary } from "@/components/confirmation-summary"
+
+const INSTANCE_FIELD_LABEL: Record<string, string> = {
+  name: "インスタンス名",
+  classId: "所属クラス",
+  attributes: "属性",
+}
 import {
   DndContext,
   closestCenter,
@@ -287,14 +297,19 @@ function SortableInstRow({
   inst,
   isSelected,
   onClick,
+  isChecked,
+  onToggleCheck,
 }: {
   inst: OntologyInstance
   isSelected: boolean
   onClick: () => void
+  isChecked: boolean
+  onToggleCheck: () => void
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: inst.id })
   // 本登録は全インスタンス完了済み。行が示すのは「名寄せチェック」の済/未。
   const nameUnchecked = instanceStatus(inst) === "provisional"
+  const confirmState = deriveConfirmationStatus(inst.confirmations).state
   const style: React.CSSProperties = {
     transform: CSS.Translate.toString(transform),
     transition,
@@ -324,10 +339,21 @@ function SortableInstRow({
           <GripVertical className="h-4 w-4" />
         </button>
       </TableCell>
+      <TableCell className="w-10" onClick={(e) => e.stopPropagation()}>
+        <input
+          type="checkbox"
+          aria-label={`${inst.name}を選択`}
+          checked={isChecked}
+          onChange={onToggleCheck}
+        />
+      </TableCell>
       <TableCell className="font-medium text-foreground">
         {inst.name}
       </TableCell>
-      <TableCell className="w-32 pr-4 text-right">
+      <TableCell className="w-32">
+        <ConfirmationBadge state={confirmState} />
+      </TableCell>
+      <TableCell className="w-24 pr-4 text-right">
         {nameUnchecked ? (
           <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300">
             未
@@ -370,6 +396,13 @@ export function InstancesScreen({ initialSelectedClassId, active }: { initialSel
   const allAttrs = [...attrGroups.project, ...attrGroups.inherited, ...attrGroups.own]
 
   // 追加ダイアログ
+  // 確認機構
+  const [filterState, setFilterState] = useState<"all" | ConfirmationState>("all")
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [showBulkConfirm, setShowBulkConfirm] = useState(false)
+  const [bulkConfirming, setBulkConfirming] = useState(false)
+  const [bulkUnconfirming, setBulkUnconfirming] = useState(false)
+
   const [showAdd, setShowAdd] = useState(false)
   const [newName, setNewName] = useState("")
   const [newAttrValues, setNewAttrValues] = useState<Record<string, string>>({})
@@ -864,6 +897,76 @@ export function InstancesScreen({ initialSelectedClassId, active }: { initialSel
 
   const currentLabel = isUnclassifiedSelected ? "未分類" : selectedClass?.name ?? null
   const canAdd = !!selectedClass && !isUnclassifiedSelected
+
+  // 表示中インスタンス（確認状態フィルタ）
+  const displayedInstances = filterState === "all"
+    ? instances
+    : instances.filter((i) => deriveConfirmationStatus(i.confirmations).state === filterState)
+
+  const confirmSelectedStates = Array.from(selectedIds).map((id) => {
+    const inst = instances.find((i) => i.id === id)
+    return deriveConfirmationStatus(inst?.confirmations).state
+  })
+  const canBulkConfirm = confirmSelectedStates.some((s) => s === "unconfirmed" || s === "confirmed_edited")
+  const canBulkUnconfirm = confirmSelectedStates.some((s) => s === "confirmed" || s === "confirmed_edited")
+
+  const handleBulkConfirm = async (confirmerName: string) => {
+    const targets = Array.from(selectedIds).filter((id) => {
+      const inst = instances.find((i) => i.id === id)
+      const s = deriveConfirmationStatus(inst?.confirmations).state
+      return s === "unconfirmed" || s === "confirmed_edited"
+    })
+    if (targets.length === 0) return
+    setBulkConfirming(true)
+    try {
+      await Promise.all(
+        targets.map((id) =>
+          fetch(`/api/instances/${id}/confirmations`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ confirmerName }),
+          })
+        )
+      )
+      if (selectedClass || isUnclassifiedSelected) {
+        await fetchInstances(selectedClass?.id ?? UNCLASSIFIED)
+      }
+      setSelectedIds(new Set())
+      setShowBulkConfirm(false)
+    } finally {
+      setBulkConfirming(false)
+    }
+  }
+
+  const handleBulkUnconfirm = async () => {
+    const targets = Array.from(selectedIds).filter((id) => {
+      const inst = instances.find((i) => i.id === id)
+      const s = deriveConfirmationStatus(inst?.confirmations).state
+      return s === "confirmed" || s === "confirmed_edited"
+    })
+    if (targets.length === 0) return
+    setBulkUnconfirming(true)
+    try {
+      await Promise.all(
+        targets.map((id) => fetch(`/api/instances/${id}/confirmations`, { method: "DELETE" }))
+      )
+      if (selectedClass || isUnclassifiedSelected) {
+        await fetchInstances(selectedClass?.id ?? UNCLASSIFIED)
+      }
+      setSelectedIds(new Set())
+    } finally {
+      setBulkUnconfirming(false)
+    }
+  }
+
+  const toggleSelectConfirm = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
   // 名寄せチェックは「現在選択中のクラス（または未分類）」の未チェック（provisional）だけを対象にする
   const nameCheckClassId = isUnclassifiedSelected ? UNCLASSIFIED : (selectedClass?.id ?? null)
   const currentProvisionalCount = instances.filter((i) => instanceStatus(i) === "provisional").length
@@ -978,6 +1081,45 @@ export function InstancesScreen({ initialSelectedClassId, active }: { initialSel
                   </Button>
                 )}
               </div>
+              <div className="flex items-center gap-2 px-6 pb-3 text-xs">
+                <span className="text-muted-foreground">表示：</span>
+                {([
+                  { key: "all", label: "全て" },
+                  { key: "confirmed", label: "確認済み" },
+                  { key: "confirmed_edited", label: "確認済み*" },
+                  { key: "unconfirmed", label: "未確認" },
+                ] as { key: "all" | ConfirmationState; label: string }[]).map((opt) => (
+                  <button
+                    key={opt.key}
+                    type="button"
+                    className={cn(
+                      "rounded-full border px-2.5 py-0.5 transition-colors",
+                      filterState === opt.key
+                        ? "border-indigo-400 bg-indigo-100 text-indigo-800 dark:border-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-200"
+                        : "border-border text-muted-foreground hover:bg-muted",
+                    )}
+                    onClick={() => setFilterState(opt.key)}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+              {selectedIds.size > 0 && (canBulkConfirm || canBulkUnconfirm) && (
+                <div className="flex items-center gap-2 px-6 pb-3 text-xs">
+                  <span className="text-muted-foreground">{selectedIds.size}件を：</span>
+                  {canBulkConfirm && (
+                    <Button size="sm" variant="outline" className="h-7 gap-1.5 bg-transparent" onClick={() => setShowBulkConfirm(true)}>
+                      <CheckCircle2 className="h-3.5 w-3.5" />確認する
+                    </Button>
+                  )}
+                  {canBulkUnconfirm && (
+                    <Button size="sm" variant="outline" className="h-7 gap-1.5 bg-transparent" onClick={handleBulkUnconfirm} disabled={bulkUnconfirming}>
+                      {bulkUnconfirming ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <X className="h-3.5 w-3.5" />}
+                      確認を取り消す
+                    </Button>
+                  )}
+                </div>
+              )}
 
               <div className="flex-1 overflow-auto px-6 pb-6">
                 {loadingInstances ? (
@@ -991,22 +1133,38 @@ export function InstancesScreen({ initialSelectedClassId, active }: { initialSel
                 ) : (
                   <div className="overflow-x-auto rounded-lg border border-border">
                     <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-                      <SortableContext items={instances.map((i) => i.id)} strategy={verticalListSortingStrategy}>
+                      <SortableContext items={displayedInstances.map((i) => i.id)} strategy={verticalListSortingStrategy}>
                         <Table>
                           <TableHeader>
                             <TableRow className="bg-muted/50 hover:bg-muted/50">
                               <TableHead className="w-8 px-2" />
+                              <TableHead className="w-10">
+                                <input
+                                  type="checkbox"
+                                  aria-label="表示中のインスタンスをすべて選択"
+                                  checked={displayedInstances.length > 0 && displayedInstances.every((i) => selectedIds.has(i.id))}
+                                  onChange={(e) => {
+                                    const next = new Set(selectedIds)
+                                    if (e.target.checked) displayedInstances.forEach((i) => next.add(i.id))
+                                    else displayedInstances.forEach((i) => next.delete(i.id))
+                                    setSelectedIds(next)
+                                  }}
+                                />
+                              </TableHead>
                               <TableHead className="font-semibold text-foreground">インスタンス名</TableHead>
-                              <TableHead className="w-32 pr-4 text-right font-semibold text-foreground">名寄せチェック</TableHead>
+                              <TableHead className="w-32 font-semibold text-foreground">確認</TableHead>
+                              <TableHead className="w-24 pr-4 text-right font-semibold text-foreground">名寄せ</TableHead>
                             </TableRow>
                           </TableHeader>
                           <TableBody>
-                            {instances.map((inst) => (
+                            {displayedInstances.map((inst) => (
                               <SortableInstRow
                                 key={inst.id}
                                 inst={inst}
                                 isSelected={selectedInst?.id === inst.id}
                                 onClick={() => handleSelectInst(inst)}
+                                isChecked={selectedIds.has(inst.id)}
+                                onToggleCheck={() => toggleSelectConfirm(inst.id)}
                               />
                             ))}
                           </TableBody>
@@ -1029,7 +1187,8 @@ export function InstancesScreen({ initialSelectedClassId, active }: { initialSel
                       <SectionHeader icon={FileText} title="基本情報" />
                       <div className="space-y-3">
                         {/* 登録・更新状況 */}
-                        <div className="space-y-0.5 text-xs text-muted-foreground">
+                        <div className="space-y-1 text-xs text-muted-foreground">
+                          <ConfirmationSummary events={selectedInst.confirmations} fieldLabels={INSTANCE_FIELD_LABEL} />
                           <p>登録日 {selectedInst.registeredAt || "—"}{selectedInst.registeredBy ? `（${selectedInst.registeredBy}）` : ""}</p>
                           <p>更新日 {selectedInst.updatedAt || "—"}{selectedInst.updatedBy ? `（${selectedInst.updatedBy}）` : ""}</p>
                         </div>
@@ -1315,6 +1474,16 @@ export function InstancesScreen({ initialSelectedClassId, active }: { initialSel
         projectId={currentProject?.id ?? null}
         classId={nameCheckClassId}
         onResolved={refreshAfterImport}
+      />
+
+      {/* 一括確認ダイアログ */}
+      <ConfirmDialog
+        open={showBulkConfirm}
+        onOpenChange={setShowBulkConfirm}
+        title={`選択した${selectedIds.size}件のインスタンスを確認する`}
+        description="選択したすべてのインスタンスに同一の確認レコードが追加されます。"
+        submitting={bulkConfirming}
+        onSubmit={handleBulkConfirm}
       />
     </div>
   )

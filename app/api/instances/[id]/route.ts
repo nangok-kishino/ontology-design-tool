@@ -4,6 +4,7 @@ import { getPrincipalName } from "@/lib/auth"
 import { checkProjectAccess } from "@/lib/project-access"
 import { normalizeName } from "@/lib/normalize"
 import { instanceStatus } from "@/lib/instance-status"
+import { appendEditEvent, diffInstanceFields } from "@/lib/confirmation"
 import type { InstanceStatus, OntologyInstance } from "@/lib/types"
 
 const CONTAINER = "instances"
@@ -50,7 +51,8 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
       status = "provisional"
     }
 
-    const updated: OntologyInstance = {
+    const actor = getPrincipalName(request)
+    const merged: OntologyInstance = {
       ...existing,
       name: newName,
       normalizedName: newNormalized,
@@ -59,8 +61,13 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
       status,
       mergedInto: "mergedInto" in body ? (body.mergedInto ?? null) : existing.mergedInto,
       aliases: body.aliases !== undefined ? body.aliases : existing.aliases,
-      updatedBy: getPrincipalName(request),
+      updatedBy: actor,
       updatedAt: now,
+    }
+    const changedFields = diffInstanceFields(existing, merged)
+    const updated: OntologyInstance = {
+      ...merged,
+      confirmations: appendEditEvent(existing.confirmations, actor, changedFields, new Date().toISOString()),
     }
     const { resource } = await container.item(id, id).replace(updated)
     return NextResponse.json(resource)
