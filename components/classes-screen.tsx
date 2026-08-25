@@ -700,35 +700,10 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
         <div className="flex flex-1 flex-col overflow-hidden border-r border-border">
           <div className="flex items-center justify-between px-6 py-3">
             <h2 className="text-base font-semibold text-foreground">クラス一覧</h2>
-            <div className="flex items-center gap-2">
-              {selectedIds.size > 0 && canBulkConfirm && (
-                <Button
-                  size="sm"
-                  variant="success"
-                  className="h-8 gap-1.5"
-                  onClick={() => setShowBulkConfirm(true)}
-                >
-                  <CheckCircle2 className="h-3.5 w-3.5" />
-                  確認する
-                </Button>
-              )}
-              {selectedIds.size > 0 && canBulkUnconfirm && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-8 gap-1.5 bg-transparent"
-                  onClick={handleBulkUnconfirm}
-                  disabled={bulkUnconfirming}
-                >
-                  {bulkUnconfirming ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <X className="h-3.5 w-3.5" />}
-                  確認を取り消す
-                </Button>
-              )}
-              <Button size="sm" variant="outline" className="h-8 gap-1.5 bg-transparent"
-                onClick={openAddDialog}>
-                <Plus className="h-3.5 w-3.5" />クラスを追加
-              </Button>
-            </div>
+            <Button size="sm" variant="outline" className="h-8 gap-1.5 bg-transparent"
+              onClick={openAddDialog}>
+              <Plus className="h-3.5 w-3.5" />クラスを追加
+            </Button>
           </div>
           <div className="flex items-center gap-2 px-6 pb-3 text-xs">
             <span className="text-muted-foreground">表示：</span>
@@ -753,6 +728,34 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
               </button>
             ))}
           </div>
+          {selectedIds.size > 0 && (canBulkConfirm || canBulkUnconfirm) && (
+            <div className="flex items-center gap-2 px-6 pb-3 text-xs">
+              <span className="text-muted-foreground">{selectedIds.size}件を：</span>
+              {canBulkConfirm && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 gap-1.5 bg-transparent"
+                  onClick={() => setShowBulkConfirm(true)}
+                >
+                  <CheckCircle2 className="h-3.5 w-3.5" />
+                  確認する
+                </Button>
+              )}
+              {canBulkUnconfirm && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 gap-1.5 bg-transparent"
+                  onClick={handleBulkUnconfirm}
+                  disabled={bulkUnconfirming}
+                >
+                  {bulkUnconfirming ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <X className="h-3.5 w-3.5" />}
+                  確認を取り消す
+                </Button>
+              )}
+            </div>
+          )}
           <div className="flex-1 overflow-auto px-6 pb-6">
             {loading ? (
               <div className="flex h-32 items-center justify-center text-muted-foreground">
