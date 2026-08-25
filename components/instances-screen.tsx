@@ -330,11 +330,11 @@ function SortableInstRow({
       <TableCell className="w-32 pr-4 text-right">
         {nameUnchecked ? (
           <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300">
-            未チェック
+            未
           </span>
         ) : (
           <span className="rounded-full border border-green-300 bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700 dark:border-green-800 dark:bg-green-950 dark:text-green-300">
-            チェック済み
+            済
           </span>
         )}
       </TableCell>
@@ -946,27 +946,28 @@ export function InstancesScreen({ initialSelectedClassId, active }: { initialSel
               <div className="flex items-center justify-between px-6 py-3">
                 <div className="flex items-center gap-3">
                   <h2 className="text-base font-semibold text-foreground">{currentLabel}のインスタンス一覧</h2>
-                  {canAdd && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="h-8 gap-1.5 bg-transparent"
-                      onClick={openAdd}
-                      disabled={loadingAttrs}
-                    >
-                      <Plus className="h-3.5 w-3.5" />追加
-                    </Button>
-                  )}
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-8 gap-1.5 text-muted-foreground hover:text-foreground"
+                    onClick={() => setShowNameCheck(true)}
+                    disabled={!currentProject || currentProvisionalCount === 0}
+                  >
+                    名寄せチェック
+                    {currentProvisionalCount > 0 && `（未${currentProvisionalCount}件）`}
+                  </Button>
                 </div>
-                <Button
-                  variant="success"
-                  className="gap-1.5 text-sm"
-                  onClick={() => setShowNameCheck(true)}
-                  disabled={!currentProject || currentProvisionalCount === 0}
-                >
-                  名寄せチェック
-                  {currentProvisionalCount > 0 && `（未チェック${currentProvisionalCount}件）`}
-                </Button>
+                {canAdd && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-8 gap-1.5 bg-transparent"
+                    onClick={openAdd}
+                    disabled={loadingAttrs}
+                  >
+                    <Plus className="h-3.5 w-3.5" />インスタンス追加
+                  </Button>
+                )}
               </div>
 
               <div className="flex-1 overflow-auto px-6 pb-6">
@@ -1023,22 +1024,13 @@ export function InstancesScreen({ initialSelectedClassId, active }: { initialSel
                           <p>登録日 {selectedInst.registeredAt || "—"}{selectedInst.registeredBy ? `（${selectedInst.registeredBy}）` : ""}</p>
                           <p>更新日 {selectedInst.updatedAt || "—"}{selectedInst.updatedBy ? `（${selectedInst.updatedBy}）` : ""}</p>
                         </div>
-                        {/* ステータス（本登録は完了済み。名寄せチェックの済/未を示す） */}
+                        {/* ステータス（本登録済のみ表示） */}
                         <div className="space-y-1.5">
                           <Label className="text-sm font-medium">ステータス</Label>
                           <div className="flex flex-wrap items-center gap-2">
                             <span className="inline-block rounded-full border border-green-300 bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700 dark:border-green-800 dark:bg-green-950 dark:text-green-300">
                               本登録済
                             </span>
-                            {instanceStatus(selectedInst) === "provisional" ? (
-                              <span className="inline-block rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300">
-                                名寄せ未チェック
-                              </span>
-                            ) : (
-                              <span className="inline-block rounded-full border border-green-300 bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700 dark:border-green-800 dark:bg-green-950 dark:text-green-300">
-                                名寄せチェック済み
-                              </span>
-                            )}
                           </div>
                         </div>
                         {/* インスタンス名 */}
