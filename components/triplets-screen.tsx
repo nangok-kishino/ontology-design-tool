@@ -692,7 +692,13 @@ export function TripletsScreen({ active }: { active?: boolean }) {
       <Dialog open={showDelete} onOpenChange={setShowDelete}>
         <DialogContent>
           <DialogHeader><DialogTitle>トリプレットを削除</DialogTitle></DialogHeader>
-          <p className="text-sm text-muted-foreground">このトリプレットを削除します。この操作は取り消せません。</p>
+          {selected && deriveConfirmationStatus(selected.confirmations).state !== "unconfirmed" ? (
+            <p className="text-sm font-medium text-destructive">
+              このトリプレットは確認済みです。本当に削除しますか？ この操作は取り消せません。
+            </p>
+          ) : (
+            <p className="text-sm text-muted-foreground">このトリプレットを削除します。この操作は取り消せません。</p>
+          )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowDelete(false)} disabled={deleting}>キャンセル</Button>
             <Button variant="destructive" onClick={handleDelete} disabled={deleting}>{deleting ? "削除中..." : "削除する"}</Button>

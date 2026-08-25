@@ -1225,6 +1225,11 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
             </div>
           ) : (
             <div className="space-y-5 py-1">
+              {selected && deriveConfirmationStatus(selected.confirmations).state !== "unconfirmed" && (
+                <p className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm font-medium text-destructive">
+                  このクラスは確認済みです。本当に削除しますか？
+                </p>
+              )}
               {/* 子クラスの処理 */}
               {hasChildren && (
                 <div className="space-y-2">

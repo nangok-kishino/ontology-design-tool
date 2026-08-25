@@ -1431,9 +1431,15 @@ export function InstancesScreen({ initialSelectedClassId, active }: { initialSel
           <DialogHeader>
             <DialogTitle>インスタンスを削除</DialogTitle>
           </DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            「{deleteTarget?.name}」を削除します。この操作は元に戻せません。
-          </p>
+          {deleteTarget && deriveConfirmationStatus(deleteTarget.confirmations).state !== "unconfirmed" ? (
+            <p className="text-sm font-medium text-destructive">
+              「{deleteTarget.name}」は確認済みのインスタンスです。本当に削除しますか？ この操作は元に戻せません。
+            </p>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              「{deleteTarget?.name}」を削除します。この操作は元に戻せません。
+            </p>
+          )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeleteTarget(null)} disabled={deleting}>
               キャンセル
