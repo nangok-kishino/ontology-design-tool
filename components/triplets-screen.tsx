@@ -34,7 +34,21 @@ import { useProject } from "@/app/project-context"
 import { isConfirmed } from "@/lib/instance-status"
 import { buildCypher } from "@/lib/graph-export"
 import type { Triplet, OntologyInstance, OntologyRelation, OntologyClass, OntologyAttribute } from "@/lib/types"
-import { ArrowRight, Plus, Trash2, Loader2, Download, FileText, Tags } from "lucide-react"
+import { ArrowRight, Plus, Trash2, Loader2, Download, FileText, Tags, CheckCircle2, X } from "lucide-react"
+import { deriveConfirmationStatus, type ConfirmationState } from "@/lib/confirmation"
+import { ConfirmationBadge } from "@/components/confirmation-badge"
+import { ConfirmDialog } from "@/components/confirm-dialog"
+import { ConfirmationSummary } from "@/components/confirmation-summary"
+
+const TRIPLET_FIELD_LABEL: Record<string, string> = {
+  subjectInstanceId: "主語",
+  predicateRelationId: "述語",
+  objectInstanceId: "目的語",
+  subjectName: "主語名",
+  predicateName: "述語名",
+  objectName: "目的語名",
+  attributes: "属性",
+}
 
 function formatDateTime(iso: string | undefined): string {
   if (!iso) return "—"
@@ -72,6 +86,13 @@ export function TripletsScreen({ active }: { active?: boolean }) {
 
   // Neo4jエクスポート
   const [showExport, setShowExport] = useState(false)
+
+  // 確認機構
+  const [filterState, setFilterState] = useState<"all" | ConfirmationState>("all")
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [showBulkConfirm, setShowBulkConfirm] = useState(false)
+  const [bulkConfirming, setBulkConfirming] = useState(false)
+  const [bulkUnconfirming, setBulkUnconfirming] = useState(false)
 
   // 述語リレーションごとの属性定義（プロジェクト共通＋リレーション固有）のキャッシュ。
   // トリプレット（エッジ）に属性値を入力させるために、選択中の述語の属性を読み込む。
@@ -144,6 +165,72 @@ export function TripletsScreen({ active }: { active?: boolean }) {
   }, [currentProject?.id, attrsByRelation])
 
   const selected = triplets.find((t) => t.id === selectedId) ?? null
+
+  // 表示中トリプレット（確認状態フィルタ）
+  const displayedTriplets = filterState === "all"
+    ? triplets
+    : triplets.filter((t) => deriveConfirmationStatus(t.confirmations).state === filterState)
+
+  const confirmSelectedStates = Array.from(selectedIds).map((id) => {
+    const t = triplets.find((tt) => tt.id === id)
+    return deriveConfirmationStatus(t?.confirmations).state
+  })
+  const canBulkConfirm = confirmSelectedStates.some((s) => s === "unconfirmed" || s === "confirmed_edited")
+  const canBulkUnconfirm = confirmSelectedStates.some((s) => s === "confirmed" || s === "confirmed_edited")
+
+  const handleBulkConfirm = async (confirmerName: string) => {
+    const targets = Array.from(selectedIds).filter((id) => {
+      const t = triplets.find((tt) => tt.id === id)
+      const s = deriveConfirmationStatus(t?.confirmations).state
+      return s === "unconfirmed" || s === "confirmed_edited"
+    })
+    if (targets.length === 0) return
+    setBulkConfirming(true)
+    try {
+      await Promise.all(
+        targets.map((id) =>
+          fetch(`/api/triplets/${id}/confirmations`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ confirmerName }),
+          })
+        )
+      )
+      await fetchAll()
+      setSelectedIds(new Set())
+      setShowBulkConfirm(false)
+    } finally {
+      setBulkConfirming(false)
+    }
+  }
+
+  const handleBulkUnconfirm = async () => {
+    const targets = Array.from(selectedIds).filter((id) => {
+      const t = triplets.find((tt) => tt.id === id)
+      const s = deriveConfirmationStatus(t?.confirmations).state
+      return s === "confirmed" || s === "confirmed_edited"
+    })
+    if (targets.length === 0) return
+    setBulkUnconfirming(true)
+    try {
+      await Promise.all(
+        targets.map((id) => fetch(`/api/triplets/${id}/confirmations`, { method: "DELETE" }))
+      )
+      await fetchAll()
+      setSelectedIds(new Set())
+    } finally {
+      setBulkUnconfirming(false)
+    }
+  }
+
+  const toggleSelectConfirm = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
 
   // 選択が変わったら編集フィールドを対象トリプレットで初期化
   useEffect(() => {
@@ -384,6 +471,45 @@ export function TripletsScreen({ active }: { active?: boolean }) {
               <Plus className="h-3.5 w-3.5" />トリプレットを追加
             </Button>
           </div>
+          <div className="flex items-center gap-2 px-6 pb-3 text-xs">
+            <span className="text-muted-foreground">表示：</span>
+            {([
+              { key: "all", label: "全て" },
+              { key: "confirmed", label: "確認済み" },
+              { key: "confirmed_edited", label: "確認済み*" },
+              { key: "unconfirmed", label: "未確認" },
+            ] as { key: "all" | ConfirmationState; label: string }[]).map((opt) => (
+              <button
+                key={opt.key}
+                type="button"
+                className={cn(
+                  "rounded-full border px-2.5 py-0.5 transition-colors",
+                  filterState === opt.key
+                    ? "border-indigo-400 bg-indigo-100 text-indigo-800 dark:border-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-200"
+                    : "border-border text-muted-foreground hover:bg-muted",
+                )}
+                onClick={() => setFilterState(opt.key)}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          {selectedIds.size > 0 && (canBulkConfirm || canBulkUnconfirm) && (
+            <div className="flex items-center gap-2 px-6 pb-3 text-xs">
+              <span className="text-muted-foreground">{selectedIds.size}件を：</span>
+              {canBulkConfirm && (
+                <Button size="sm" variant="outline" className="h-7 gap-1.5 bg-transparent" onClick={() => setShowBulkConfirm(true)}>
+                  <CheckCircle2 className="h-3.5 w-3.5" />確認する
+                </Button>
+              )}
+              {canBulkUnconfirm && (
+                <Button size="sm" variant="outline" className="h-7 gap-1.5 bg-transparent" onClick={handleBulkUnconfirm} disabled={bulkUnconfirming}>
+                  {bulkUnconfirming ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <X className="h-3.5 w-3.5" />}
+                  確認を取り消す
+                </Button>
+              )}
+            </div>
+          )}
           <div className="flex-1 overflow-auto px-6 pb-6">
             {loading ? (
               <div className="flex h-32 items-center justify-center text-muted-foreground"><Loader2 className="h-5 w-5 animate-spin" /></div>
@@ -396,24 +522,53 @@ export function TripletsScreen({ active }: { active?: boolean }) {
                 <Table>
                   <TableHeader>
                     <TableRow className="bg-muted/50 hover:bg-muted/50">
+                      <TableHead className="w-10">
+                        <input
+                          type="checkbox"
+                          aria-label="表示中のトリプレットをすべて選択"
+                          checked={displayedTriplets.length > 0 && displayedTriplets.every((t) => selectedIds.has(t.id))}
+                          onChange={(e) => {
+                            const next = new Set(selectedIds)
+                            if (e.target.checked) displayedTriplets.forEach((t) => next.add(t.id))
+                            else displayedTriplets.forEach((t) => next.delete(t.id))
+                            setSelectedIds(next)
+                          }}
+                        />
+                      </TableHead>
                       <TableHead className="font-semibold text-foreground">トリプレット</TableHead>
+                      <TableHead className="w-32 font-semibold text-foreground">確認</TableHead>
                       <TableHead className="w-36 font-semibold text-foreground">出典</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {triplets.map((t) => (
-                      <TableRow key={t.id}
-                        className={cn(
-                          "cursor-pointer transition-colors",
-                          selectedId === t.id
-                            ? "bg-indigo-100 hover:bg-indigo-100 dark:bg-indigo-950/50 dark:hover:bg-indigo-950/50"
-                            : "hover:bg-muted/50",
-                        )}
-                        onClick={() => setSelectedId(t.id)}>
-                        <TableCell className="align-middle"><TripleView t={t} /></TableCell>
-                        <TableCell className="align-middle text-sm text-muted-foreground">{t.sourceDocName || "—"}</TableCell>
-                      </TableRow>
-                    ))}
+                    {displayedTriplets.map((t) => {
+                      const state = deriveConfirmationStatus(t.confirmations).state
+                      const isChecked = selectedIds.has(t.id)
+                      return (
+                        <TableRow key={t.id}
+                          className={cn(
+                            "cursor-pointer transition-colors",
+                            selectedId === t.id
+                              ? "bg-indigo-100 hover:bg-indigo-100 dark:bg-indigo-950/50 dark:hover:bg-indigo-950/50"
+                              : "hover:bg-muted/50",
+                          )}
+                          onClick={() => setSelectedId(t.id)}>
+                          <TableCell className="align-middle" onClick={(e) => e.stopPropagation()}>
+                            <input
+                              type="checkbox"
+                              aria-label={`${t.subjectName}→${t.predicateName}→${t.objectName}を選択`}
+                              checked={isChecked}
+                              onChange={() => toggleSelectConfirm(t.id)}
+                            />
+                          </TableCell>
+                          <TableCell className="align-middle"><TripleView t={t} /></TableCell>
+                          <TableCell className="align-middle">
+                            <ConfirmationBadge state={state} />
+                          </TableCell>
+                          <TableCell className="align-middle text-sm text-muted-foreground">{t.sourceDocName || "—"}</TableCell>
+                        </TableRow>
+                      )
+                    })}
                   </TableBody>
                 </Table>
               </div>
@@ -429,7 +584,8 @@ export function TripletsScreen({ active }: { active?: boolean }) {
                 <section className="space-y-3">
                   <SectionHeader icon={FileText} title="基本情報" />
                   <div className="space-y-3">
-                    <div className="space-y-0.5 text-xs text-muted-foreground">
+                    <div className="space-y-1 text-xs text-muted-foreground">
+                      <ConfirmationSummary events={selected.confirmations} fieldLabels={TRIPLET_FIELD_LABEL} />
                       <p>登録日 {formatDateTime(selected.createdAt)}{selected.createdBy ? `（${selected.createdBy}）` : ""}</p>
                       <p>更新日 {formatDateTime(selected.updatedAt)}{selected.updatedBy ? `（${selected.updatedBy}）` : ""}</p>
                     </div>
@@ -562,6 +718,16 @@ export function TripletsScreen({ active }: { active?: boolean }) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* 一括確認ダイアログ */}
+      <ConfirmDialog
+        open={showBulkConfirm}
+        onOpenChange={setShowBulkConfirm}
+        title={`選択した${selectedIds.size}件のトリプレットを確認する`}
+        description="選択したすべてのトリプレットに同一の確認レコードが追加されます。"
+        submitting={bulkConfirming}
+        onSubmit={handleBulkConfirm}
+      />
     </div>
   )
 }

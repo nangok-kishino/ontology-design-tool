@@ -4,6 +4,7 @@ import { getPrincipalName } from "@/lib/auth"
 import { checkProjectAccess } from "@/lib/project-access"
 import { isConfirmed } from "@/lib/instance-status"
 import { relationAllowsPair } from "@/lib/triplet-resolve"
+import { appendEditEvent, diffTripletFields } from "@/lib/confirmation"
 import type { Triplet, OntologyInstance, OntologyRelation } from "@/lib/types"
 
 const CONTAINER = "triplets"
@@ -102,7 +103,8 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
       }
     }
 
-    const updated: Triplet = {
+    const actor = getPrincipalName(request)
+    const merged: Triplet = {
       ...existing,
       subjectInstanceId,
       predicateRelationId,
@@ -118,8 +120,13 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
       // 内容が変わったので同期状態はリセット（再エクスポートで冪等に反映）
       neo4jSynced: false,
       neo4jSyncedAt: undefined,
-      updatedBy: getPrincipalName(request),
+      updatedBy: actor,
       updatedAt: new Date().toISOString(),
+    }
+    const changedFields = diffTripletFields(existing, merged)
+    const updated: Triplet = {
+      ...merged,
+      confirmations: appendEditEvent(existing.confirmations, actor, changedFields, merged.updatedAt),
     }
     const { resource } = await container.item(id, id).replace(updated)
     return NextResponse.json(resource)
