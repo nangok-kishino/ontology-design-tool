@@ -872,8 +872,8 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                           }}
                         />
                       </TableHead>
-                      <TableHead className="w-[30%] font-semibold text-foreground">リレーション名</TableHead>
-                      <TableHead className="w-28 font-semibold text-foreground">確認</TableHead>
+                      <TableHead className="w-[28%] font-semibold text-foreground">リレーション名</TableHead>
+                      <TableHead className="w-44 pr-4 font-semibold text-foreground">確認</TableHead>
                       <TableHead className="w-20 font-semibold text-foreground">条件</TableHead>
                       <TableHead className="font-semibold text-foreground">始点 → 終点クラス</TableHead>
                     </TableRow>
@@ -912,7 +912,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                             </span>
                             {r.nameEn && <span className="block truncate text-xs text-muted-foreground">{r.nameEn}</span>}
                           </TableCell>
-                          <TableCell className="align-top">
+                          <TableCell className="align-top pr-4">
                             <ConfirmationBadge state={state} />
                           </TableCell>
                           <TableCell className="align-top text-sm text-foreground">
