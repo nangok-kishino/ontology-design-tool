@@ -191,13 +191,9 @@
   line-height: 1.35;
   margin-top: 2px;
 }
-.float-tooltip-kap .gv-tt-cond-tag {
+.float-tooltip-kap .gv-tt-cond-bullet {
   flex-shrink: 0;
-  min-width: 26px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.85em;
   opacity: 0.55;
-  letter-spacing: 0.04em;
 }
 .float-tooltip-kap .gv-tt-cond-text {
   font-weight: 500;

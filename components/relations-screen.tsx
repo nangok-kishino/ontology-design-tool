@@ -872,8 +872,9 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                           }}
                         />
                       </TableHead>
-                      <TableHead className="w-[35%] font-semibold text-foreground">リレーション名</TableHead>
+                      <TableHead className="w-[32%] font-semibold text-foreground">リレーション名</TableHead>
                       <TableHead className="w-32 font-semibold text-foreground">確認</TableHead>
+                      <TableHead className="w-16 font-semibold text-foreground">条件</TableHead>
                       <TableHead className="font-semibold text-foreground">始点 → 終点クラス</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -908,21 +909,18 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                               {relationIncomplete(r) && (
                                 <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-500" />
                               )}
-                              {hasConditions(r.conditions) && (
-                                <Tooltip content={<span className="whitespace-pre-line">{formatRelationConditions(r.conditions)}</span>}>
-                                  <Badge
-                                    variant="secondary"
-                                    className="shrink-0 gap-0.5 border-indigo-300 bg-indigo-100 px-1.5 py-0 text-[10px] font-normal text-indigo-800 dark:border-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-200"
-                                  >
-                                    <Filter className="h-2.5 w-2.5" />条件{(r.conditions ?? []).length}
-                                  </Badge>
-                                </Tooltip>
-                              )}
                             </span>
                             {r.nameEn && <span className="block truncate text-xs text-muted-foreground">{r.nameEn}</span>}
                           </TableCell>
                           <TableCell className="align-top">
                             <ConfirmationBadge state={state} />
+                          </TableCell>
+                          <TableCell className="align-top text-sm">
+                            {hasConditions(r.conditions) ? (
+                              <Tooltip content={<span className="whitespace-pre-line">{formatRelationConditions(r.conditions)}</span>}>
+                                <span className="cursor-help text-foreground underline decoration-dotted underline-offset-2">あり</span>
+                              </Tooltip>
+                            ) : null}
                           </TableCell>
                           <TableCell className="align-top text-sm text-muted-foreground">
                             {pairs.length > 0 ? (
@@ -1045,7 +1043,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
 
                 {/* 成立条件 */}
                 <section className="space-y-3">
-                  <SectionHeader icon={Filter} title="リレーション成立条件" />
+                  <SectionHeader icon={Filter} title="成立条件" />
                   {renderConditionsEditor(editConditions, setEditConditions)}
                 </section>
 
@@ -1162,7 +1160,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                 placeholder="リレーションの意味・用途を記述" />
             </div>
             <div className="space-y-2">
-              <Label>リレーション成立条件</Label>
+              <Label>成立条件</Label>
               {renderConditionsEditor(newConditions, setNewConditions)}
             </div>
           </div>

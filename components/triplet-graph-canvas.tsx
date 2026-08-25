@@ -369,15 +369,15 @@ export default function TripletGraphCanvas({
               `<span class="gv-tt-attr-key">${esc(attrNameById?.get(id) ?? id)}</span>` +
               `<span class="gv-tt-attr-val">${esc(String(v))}</span>`,
           )
-        // 述語リレーションに紐づく成立条件（AND評価）を「IF ... / AND ...」で表示
+        // 述語リレーションに紐づく成立条件を日本語1行の箇条書きで表示
         const conds = conditionsByRelationId?.get(l.predicateRelationId) ?? []
         const condHtml = conds.length
           ? `<div class="gv-tt-cond-title">成立条件（すべて満たす場合）</div>` +
             conds
               .map(
-                (c, i) =>
+                (c) =>
                   `<div class="gv-tt-cond-row">` +
-                  `<span class="gv-tt-cond-tag">${i === 0 ? "IF" : "AND"}</span>` +
+                  `<span class="gv-tt-cond-bullet">・</span>` +
                   `<span class="gv-tt-cond-text">${esc(formatRelationCondition(c))}</span>` +
                   `</div>`,
               )
