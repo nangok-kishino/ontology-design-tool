@@ -87,32 +87,34 @@ export function Sidebar({
 
       {/* プロジェクト表示 */}
       <div className="px-3 pb-3">
-        <p className="mb-1 px-2 text-[10px] font-semibold uppercase tracking-widest text-zinc-400">
-          プロジェクト
-        </p>
+        <div className="mb-1 flex items-center justify-between px-2">
+          <p className="text-[10px] font-semibold uppercase tracking-widest text-zinc-400">
+            プロジェクト
+          </p>
+          {currentProject && (
+            <button
+              onClick={clearCurrentProject}
+              className="text-[11px] text-zinc-400 transition-colors hover:text-zinc-100"
+            >
+              変更
+            </button>
+          )}
+        </div>
         {currentProject ? (
-          <div className="space-y-1">
-            <div className="flex items-center justify-between rounded-md px-2 py-2">
-              <div className="flex min-w-0 items-center gap-1.5">
-                <FolderOpen className="h-3.5 w-3.5 shrink-0 text-zinc-300" />
-                <span className="truncate text-sm font-medium text-zinc-100">{currentProject.name}</span>
-                {currentProject.allowedDomains && currentProject.allowedDomains.length > 0 && (
-                  <Lock className="h-3 w-3 shrink-0 text-zinc-400" aria-label="限定公開プロジェクト" />
-                )}
-              </div>
-              <button
-                onClick={clearCurrentProject}
-                className="ml-2 shrink-0 text-[11px] text-zinc-400 transition-colors hover:text-zinc-100"
-              >
-                変更
-              </button>
+          <div className="flex items-center justify-between rounded-md px-2 py-2">
+            <div className="flex min-w-0 items-center gap-1.5">
+              <FolderOpen className="h-3.5 w-3.5 shrink-0 text-zinc-300" />
+              <span className="truncate text-sm font-medium text-zinc-100">{currentProject.name}</span>
+              {currentProject.allowedDomains && currentProject.allowedDomains.length > 0 && (
+                <Lock className="h-3 w-3 shrink-0 text-zinc-400" aria-label="限定公開プロジェクト" />
+              )}
             </div>
             <button
               onClick={() => setShowProjectSettings(true)}
-              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[11px] text-zinc-400 transition-colors hover:bg-white/5 hover:text-zinc-100"
+              aria-label="プロジェクト設定"
+              className="ml-2 shrink-0 rounded p-1 text-zinc-400 transition-colors hover:bg-white/5 hover:text-zinc-100"
             >
-              <Settings className="h-3 w-3 shrink-0" />
-              プロジェクト設定
+              <Settings className="h-3.5 w-3.5" />
             </button>
           </div>
         ) : (
@@ -157,7 +159,7 @@ export function Sidebar({
                         <span className="flex-1 text-left">{item.label}</span>
                         {item.ai && (
                           <span
-                            className="shrink-0 rounded-sm bg-gradient-to-br from-fuchsia-500 to-indigo-600 px-1.5 py-0.5 text-[9px] font-bold leading-none tracking-wider text-white shadow-sm"
+                            className="shrink-0 rounded-[3px] bg-gradient-to-br from-fuchsia-500 to-indigo-600 px-1 py-0.5 text-[9px] font-bold leading-none tracking-wider text-white shadow-sm"
                             aria-label="AIを使用する機能"
                           >
                             AI

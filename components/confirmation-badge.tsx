@@ -4,7 +4,7 @@ import type { ConfirmationState } from "@/lib/confirmation"
 import { CheckCircle2, CircleDashed } from "lucide-react"
 
 export function ConfirmationBadge({ state, className }: { state: ConfirmationState; className?: string }) {
-  const base = "w-24"
+  const base = "h-6 w-28 text-sm [&>svg]:size-3.5!"
   if (state === "confirmed") {
     return (
       <Badge className={cn(base, "border-emerald-200 bg-emerald-100 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/60 dark:text-emerald-200", className)}>

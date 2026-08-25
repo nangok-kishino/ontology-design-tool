@@ -846,9 +846,9 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
                       const status = deriveConfirmationStatus(selected.confirmations)
                       const events = [...(selected.confirmations ?? [])].sort((a, b) => b.at.localeCompare(a.at))
                       return (
-                        <div className="space-y-1">
-                          <div className="space-y-0.5 text-xs text-muted-foreground">
-                            {status.latestConfirm && (
+                        <div className="space-y-1 text-xs text-muted-foreground">
+                          {status.latestConfirm && (
+                            <>
                               <p className="flex items-center gap-2">
                                 <span>
                                   確認日 {formatDateTime(status.latestConfirm.at)}
@@ -863,38 +863,36 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
                                   確認履歴
                                 </button>
                               </p>
-                            )}
-                            <p>登録日 {formatDateTime(selected.createdAt)}{selected.createdBy ? `（${selected.createdBy}）` : ""}</p>
-                            <p>更新日 {formatDateTime(selected.updatedAt)}{selected.updatedBy ? `（${selected.updatedBy}）` : ""}</p>
-                          </div>
-                          {confirmHistoryOpen && status.latestConfirm && (
-                            <div className="mt-1 space-y-1.5 rounded-lg border border-border p-2">
-                              {events.length === 0 ? (
-                                <p className="text-xs text-muted-foreground">まだ履歴はありません</p>
-                              ) : (
-                                events.map((e, i) => (
-                                  <div key={i} className="flex items-start gap-2 text-xs">
-                                    <span className="mt-0.5 shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium">
-                                      {e.type === "confirm" ? "確認" : e.type === "unconfirm" ? "取消" : "編集"}
-                                    </span>
-                                    <div className="flex-1 space-y-0.5">
-                                      <p className="text-muted-foreground">
-                                        {formatDateTime(e.at)}{e.actor && <span className="ml-1">（{e.actor}）</span>}
-                                      </p>
-                                      {e.type === "confirm" && e.confirmerName && (
-                                        <p className="text-foreground">確認者：{e.confirmerName}</p>
-                                      )}
-                                      {e.type === "edit" && e.editedFields && e.editedFields.length > 0 && (
-                                        <p className="text-foreground">
-                                          変更フィールド：{e.editedFields.map((f) => CLASS_FIELD_LABEL[f] ?? f).join("、")}
-                                        </p>
-                                      )}
-                                    </div>
-                                  </div>
-                                ))
+                              {confirmHistoryOpen && (
+                                <div className="space-y-1.5 rounded-lg border border-border p-2">
+                                  {events.length === 0 ? (
+                                    <p>まだ履歴はありません</p>
+                                  ) : (
+                                    events.map((e, i) => (
+                                      <div key={i} className="flex items-start gap-2">
+                                        <span className="mt-0.5 shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium">
+                                          {e.type === "confirm" ? "確認" : e.type === "unconfirm" ? "取消" : "編集"}
+                                        </span>
+                                        <div className="flex-1 space-y-0.5">
+                                          <p>{formatDateTime(e.at)}{e.actor && <span className="ml-1">（{e.actor}）</span>}</p>
+                                          {e.type === "confirm" && e.confirmerName && (
+                                            <p className="text-foreground">確認者：{e.confirmerName}</p>
+                                          )}
+                                          {e.type === "edit" && e.editedFields && e.editedFields.length > 0 && (
+                                            <p className="text-foreground">
+                                              変更フィールド：{e.editedFields.map((f) => CLASS_FIELD_LABEL[f] ?? f).join("、")}
+                                            </p>
+                                          )}
+                                        </div>
+                                      </div>
+                                    ))
+                                  )}
+                                </div>
                               )}
-                            </div>
+                            </>
                           )}
+                          <p>登録日 {formatDateTime(selected.createdAt)}{selected.createdBy ? `（${selected.createdBy}）` : ""}</p>
+                          <p>更新日 {formatDateTime(selected.updatedAt)}{selected.updatedBy ? `（${selected.updatedBy}）` : ""}</p>
                         </div>
                       )
                     })()}
