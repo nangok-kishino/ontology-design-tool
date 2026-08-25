@@ -13,7 +13,7 @@ export function ConfirmationBadge({ state, className }: { state: ConfirmationSta
   }
   if (state === "confirmed_edited") {
     return (
-      <Badge className={cn("border-amber-200 bg-amber-100 text-amber-900 dark:border-amber-900 dark:bg-amber-950/60 dark:text-amber-200", className)}>
+      <Badge className={cn("border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300", className)}>
         <CheckCircle2 />確認済み*
       </Badge>
     )
