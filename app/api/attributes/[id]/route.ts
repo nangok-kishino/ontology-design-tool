@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getContainer } from "@/lib/cosmos"
+import { getPrincipalName } from "@/lib/auth"
 import { checkProjectAccess } from "@/lib/project-access"
+import { bumpParentEditEvent } from "@/lib/confirmation-server"
 import type { OntologyAttribute } from "@/lib/types"
 
 const CONTAINER = "attributes"
@@ -40,6 +42,7 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
       updatedAt: new Date().toISOString(),
     }
     const { resource } = await container.item(id, id).replace(updated)
+    await bumpParentEditEvent(existing.targetType, existing.targetId, getPrincipalName(request), ["attributes"])
     return NextResponse.json(resource)
   } catch (error: any) {
     if (error?.code === 404) return NextResponse.json({ error: "見つかりません" }, { status: 404 })
@@ -57,6 +60,7 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
     const access = await checkProjectAccess(request, existing.projectId)
     if ("error" in access) return access.error
     await container.item(id, id).delete()
+    await bumpParentEditEvent(existing.targetType, existing.targetId, getPrincipalName(request), ["attributes"])
     return new NextResponse(null, { status: 204 })
   } catch (error: any) {
     if (error?.code === 404) return NextResponse.json({ error: "見つかりません" }, { status: 404 })

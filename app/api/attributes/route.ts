@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getContainer } from "@/lib/cosmos"
+import { getPrincipalName } from "@/lib/auth"
 import { checkProjectAccess } from "@/lib/project-access"
+import { bumpParentEditEvent } from "@/lib/confirmation-server"
 import type { OntologyAttribute } from "@/lib/types"
 
 const CONTAINER = "attributes"
@@ -52,6 +54,7 @@ export async function POST(request: NextRequest) {
     }
     const container = await getContainer(CONTAINER)
     const { resource } = await container.items.create(item)
+    await bumpParentEditEvent(item.targetType, item.targetId, getPrincipalName(request), ["attributes"])
     return NextResponse.json(resource, { status: 201 })
   } catch (error) {
     console.error("POST /api/attributes:", error)

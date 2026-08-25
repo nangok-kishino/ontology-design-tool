@@ -1,5 +1,29 @@
 // Cosmos DB エンティティ型定義
 
+// ─────────────────────────────────────────────
+// 確認（承認）機構
+//   クラス／リレーション／インスタンス／トリプレットに対して、専門家が
+//   「これでOK」と承認したことを示す。ConfirmationEvent の配列として
+//   各エンティティに埋め込む。
+//   - "confirm"    : 確認レコード。confirmerName は自由入力（複数人可）。
+//   - "unconfirm"  : 確認取り消しレコード。
+//   - "edit"       : 対象エンティティ自身のフィールドが変更されたことを示す。
+//                    最新の confirm 以降に edit が存在する場合は「確認済み*」表示。
+//   派生状態は lib/confirmation.ts の deriveConfirmationStatus() で判定する。
+// ─────────────────────────────────────────────
+export type ConfirmationEventType = "confirm" | "unconfirm" | "edit"
+
+export type ConfirmationEvent = {
+  type: ConfirmationEventType
+  at: string
+  // 操作したログインユーザー名（システムが自動記録）
+  actor: string
+  // type==="confirm" のときの確認者名。手入力・自由記述（複数人可）
+  confirmerName?: string
+  // type==="edit" のときに変更されたフィールドキー
+  editedFields?: string[]
+}
+
 export type Project = {
   id: string
   name: string
@@ -22,6 +46,7 @@ export type OntologyClass = {
   updatedBy?: string
   createdAt: string
   updatedAt: string
+  confirmations?: ConfirmationEvent[]
 }
 
 export type ClassPair = {
@@ -41,6 +66,7 @@ export type OntologyRelation = {
   updatedBy?: string
   createdAt: string
   updatedAt: string
+  confirmations?: ConfirmationEvent[]
 }
 
 export type AttributeRequired = "必須" | "任意"
@@ -93,6 +119,7 @@ export type OntologyInstance = {
   aliases?: string[]
   // status==="merged" のとき、統合先（代表）インスタンスの id
   mergedInto?: string | null
+  confirmations?: ConfirmationEvent[]
 }
 
 // 名寄せ辞書（確定した名寄せ結果の永続レコード）。1件＝1つの「別名→代表」対応。
@@ -173,6 +200,7 @@ export type Triplet = {
   createdAt: string
   updatedBy: string
   updatedAt: string
+  confirmations?: ConfirmationEvent[]
 }
 
 export type CandidateType = "class" | "relation"

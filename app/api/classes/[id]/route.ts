@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { getContainer } from "@/lib/cosmos"
 import { getPrincipalName } from "@/lib/auth"
 import { checkProjectAccess } from "@/lib/project-access"
+import { appendEditEvent, diffClassFields } from "@/lib/confirmation"
 import type { OntologyClass } from "@/lib/types"
 
 const CONTAINER = "classes"
@@ -31,14 +32,20 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
     if (!existing) return NextResponse.json({ error: "見つかりません" }, { status: 404 })
     const access = await checkProjectAccess(request, existing.projectId)
     if ("error" in access) return access.error
-    const updated: OntologyClass = {
+    const actor = getPrincipalName(request)
+    const merged: OntologyClass = {
       ...existing,
       name: body.name ?? existing.name,
       nameEn: body.nameEn !== undefined ? body.nameEn : (existing.nameEn ?? ""),
       description: body.description ?? existing.description,
       parentId: body.parentId !== undefined ? body.parentId : existing.parentId,
-      updatedBy: getPrincipalName(request),
+      updatedBy: actor,
       updatedAt: new Date().toISOString(),
+    }
+    const changedFields = diffClassFields(existing, merged)
+    const updated: OntologyClass = {
+      ...merged,
+      confirmations: appendEditEvent(existing.confirmations, actor, changedFields, merged.updatedAt),
     }
     const { resource } = await container.item(id, id).replace(updated)
     return NextResponse.json(resource)
