@@ -11,7 +11,7 @@ import { ProjectSettingsDialog } from "@/components/project-settings-dialog"
 
 export type ScreenId = "dashboard" | "review" | "classes" | "relations" | "instances" | "triplets" | "triplet-review" | "graph" | "ontology-info"
 
-type NavItem = { id: ScreenId; label: string }
+type NavItem = { id: ScreenId; label: string; ai?: boolean }
 type NavGroup = { label: string; icon: React.ElementType; items: NavItem[] }
 
 const navGroups: NavGroup[] = [
@@ -27,7 +27,7 @@ const navGroups: NavGroup[] = [
     label: "オントロジー設計",
     icon: Boxes,
     items: [
-      { id: "review", label: "オントロジー抽出" },
+      { id: "review", label: "オントロジー抽出", ai: true },
       { id: "classes", label: "クラス管理" },
       { id: "relations", label: "リレーション管理" },
     ],
@@ -41,7 +41,7 @@ const navGroups: NavGroup[] = [
     label: "ナレッジグラフ作成",
     icon: Waypoints,
     items: [
-      { id: "triplet-review", label: "トリプレット抽出" },
+      { id: "triplet-review", label: "トリプレット抽出", ai: true },
       { id: "triplets", label: "トリプレット管理" },
     ],
   },
@@ -148,13 +148,21 @@ export function Sidebar({
                         key={item.id}
                         onClick={() => onNavigate(item.id)}
                         className={cn(
-                          "flex w-full items-center rounded-md py-2 pl-8 pr-2.5 text-sm transition-colors",
+                          "flex w-full items-center gap-2 rounded-md py-2 pl-8 pr-2.5 text-sm transition-colors",
                           isActive
                             ? "bg-white/10 font-medium text-white"
                             : "text-zinc-300 hover:bg-white/5 hover:text-white",
                         )}
                       >
-                        <span>{item.label}</span>
+                        <span className="flex-1 text-left">{item.label}</span>
+                        {item.ai && (
+                          <span
+                            className="shrink-0 rounded-sm bg-gradient-to-br from-fuchsia-500 to-indigo-600 px-1.5 py-0.5 text-[9px] font-bold leading-none tracking-wider text-white shadow-sm"
+                            aria-label="AIを使用する機能"
+                          >
+                            AI
+                          </span>
+                        )}
                       </button>
                     )
                   })}
