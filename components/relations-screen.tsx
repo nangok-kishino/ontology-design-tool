@@ -33,7 +33,7 @@ import { Tooltip } from "@/components/ui/tooltip"
 import { ImportDialog } from "@/components/import-dialog"
 import { SectionHeader } from "@/components/section-header"
 import { cn } from "@/lib/utils"
-import type { OntologyRelation, OntologyClass, OntologyAttribute, AttributeRequired, ClassPair } from "@/lib/types"
+import type { OntologyRelation, OntologyClass, OntologyAttribute, AttributeRequired, ClassPair, RelationCondition, RelationConditionOperator } from "@/lib/types"
 import {
   buildRelationsYaml,
   downloadYaml,
@@ -42,9 +42,10 @@ import {
   executeRelationsImport,
   type RelationExportItem,
 } from "@/lib/import-export"
-import { ArrowRight, Plus, Pencil, Trash2, Loader2, X, AlertTriangle, Info, Download, Upload, FileText, Tags, CheckCircle2 } from "lucide-react"
+import { ArrowRight, Plus, Pencil, Trash2, Loader2, X, AlertTriangle, Info, Download, Upload, FileText, Tags, CheckCircle2, Filter } from "lucide-react"
 import { useProject } from "@/app/project-context"
 import { deriveConfirmationStatus, type ConfirmationState } from "@/lib/confirmation"
+import { formatRelationConditions, hasConditions } from "@/lib/relation-conditions"
 import { ConfirmationBadge } from "@/components/confirmation-badge"
 import { ConfirmDialog } from "@/components/confirm-dialog"
 import { ConfirmationSummary } from "@/components/confirmation-summary"
@@ -57,8 +58,39 @@ const RELATION_FIELD_LABEL: Record<string, string> = {
   description: "説明",
   classPairs: "始点/終点",
   parentRelationId: "上位リレーション",
+  conditions: "成立条件",
   attributes: "属性",
 }
+
+// 成立条件の演算子カタログ（表示ラベル・略記号・分類）
+const CONDITION_OPERATORS: { value: RelationConditionOperator; symbol: string; label: string; group: "比較" | "範囲" | "集合" }[] = [
+  { value: "eq", symbol: "＝", label: "に等しい", group: "比較" },
+  { value: "ne", symbol: "≠", label: "に等しくない", group: "比較" },
+  { value: "gte", symbol: "≥", label: "以上", group: "比較" },
+  { value: "gt", symbol: "＞", label: "より大きい", group: "比較" },
+  { value: "lte", symbol: "≤", label: "以下", group: "比較" },
+  { value: "lt", symbol: "＜", label: "より小さい", group: "比較" },
+  { value: "between", symbol: "範囲内", label: "下限〜上限（両端含む）", group: "範囲" },
+  { value: "notBetween", symbol: "範囲外", label: "下限〜上限（両端含む）", group: "範囲" },
+  { value: "in", symbol: "IN", label: "いずれかに一致", group: "集合" },
+  { value: "notIn", symbol: "NOT IN", label: "いずれにも一致しない", group: "集合" },
+]
+
+const isRangeOperator = (op: RelationConditionOperator) => op === "between" || op === "notBetween"
+const isSetOperator = (op: RelationConditionOperator) => op === "in" || op === "notIn"
+const isScalarOperator = (op: RelationConditionOperator) => !isRangeOperator(op) && !isSetOperator(op)
+
+// 集合演算子の入力欄（カンマ区切り）↔ values 配列
+const parseValues = (text: string): string[] =>
+  text.split(",").map((s) => s.trim()).filter((s) => s.length > 0)
+const formatValues = (vs: string[] | undefined) => (vs ?? []).join(", ")
+
+// 新規条件のデフォルト
+const newDefaultCondition = (): RelationCondition => ({
+  variable: "",
+  operator: "gte",
+  value: "",
+})
 
 function formatDateTime(iso: string | undefined): string {
   if (!iso) return "—"
@@ -81,6 +113,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
   const [newDesc, setNewDesc] = useState("")
   const [newPairs, setNewPairs] = useState<ClassPair[]>([{ sourceClassId: "", targetClassId: "" }])
   const [newIncludeChildren, setNewIncludeChildren] = useState(true)
+  const [newConditions, setNewConditions] = useState<RelationCondition[]>([])
   const [editIncludeChildren, setEditIncludeChildren] = useState(true)
   const [adding, setAdding] = useState(false)
 
@@ -89,6 +122,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
   const [editNameEn, setEditNameEn] = useState("")
   const [editDesc, setEditDesc] = useState("")
   const [editPairs, setEditPairs] = useState<ClassPair[]>([])
+  const [editConditions, setEditConditions] = useState<RelationCondition[]>([])
   const [saving, setSaving] = useState(false)
 
   // 削除確認ダイアログ
@@ -205,6 +239,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
       setEditNameEn(rel.nameEn ?? "")
       setEditDesc(rel.description ?? "")
       setEditPairs(rel.classPairs ?? [])
+      setEditConditions(rel.conditions ?? [])
       setEditIncludeChildren(true)
     }
     fetchAllAttrs(selectedId, currentProject.id)
@@ -212,6 +247,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
 
   const handleAdd = async () => {
     if (!newName.trim() || !currentProject || newPairs.length === 0 || newPairs.some(p => !p.sourceClassId || !p.targetClassId)) return
+    if (!conditionsValid(newConditions)) return
     setAdding(true)
     try {
       const res = await fetch("/api/relations", {
@@ -223,13 +259,14 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
           nameEn: newNameEn.trim(),
           description: newDesc.trim(),
           classPairs: newIncludeChildren ? expandPairs(newPairs) : newPairs,
+          conditions: normalizeConditions(newConditions),
         }),
       })
       const created: OntologyRelation = await res.json()
       await fetchRelations()
       setSelectedId(created.id)
       setShowAdd(false)
-      setNewName(""); setNewNameEn(""); setNewDesc(""); setNewPairs([{ sourceClassId: "", targetClassId: "" }])
+      setNewName(""); setNewNameEn(""); setNewDesc(""); setNewPairs([{ sourceClassId: "", targetClassId: "" }]); setNewConditions([])
     } finally {
       setAdding(false)
     }
@@ -247,6 +284,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
 
   const handleSave = async () => {
     if (!editName.trim() || !selected || editPairs.length === 0 || editPairs.some(p => !p.sourceClassId || !p.targetClassId)) return
+    if (!conditionsValid(editConditions)) return
     setSaving(true)
     try {
       await fetch(`/api/relations/${selected.id}`, {
@@ -257,6 +295,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
           nameEn: editNameEn.trim(),
           description: editDesc.trim(),
           classPairs: editIncludeChildren ? expandPairs(editPairs) : editPairs,
+          conditions: normalizeConditions(editConditions),
         }),
       })
       await fetchRelations()
@@ -491,14 +530,88 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
     (r.classPairs ?? []).length === 0 ||
     (r.classPairs ?? []).some((p) => classMissing(p.sourceClassId) || classMissing(p.targetClassId))
 
+  // 成立条件の妥当性判定：対象データ名は必須、演算子ごとに必要な値欄が埋まっている必要がある
+  const conditionsValid = (list: RelationCondition[]): boolean =>
+    list.every((c) => {
+      if (!c.variable || !c.variable.trim()) return false
+      if (isRangeOperator(c.operator)) {
+        return (c.valueMin ?? "").trim() !== "" && (c.valueMax ?? "").trim() !== ""
+      }
+      if (isSetOperator(c.operator)) {
+        return (c.values ?? []).length > 0
+      }
+      return (c.value ?? "").trim() !== ""
+    })
+
+  // 保存前に条件を正規化（trim・不要フィールド除去）
+  const normalizeConditions = (list: RelationCondition[]): RelationCondition[] =>
+    list.map((c) => {
+      const base: RelationCondition = {
+        variable: c.variable.trim(),
+        operator: c.operator,
+      }
+      const unit = (c.unit ?? "").trim()
+      if (unit) base.unit = unit
+      if (isRangeOperator(c.operator)) {
+        base.valueMin = (c.valueMin ?? "").trim()
+        base.valueMax = (c.valueMax ?? "").trim()
+      } else if (isSetOperator(c.operator)) {
+        base.values = (c.values ?? []).map((v) => v.trim()).filter((v) => v.length > 0)
+      } else {
+        base.value = (c.value ?? "").trim()
+      }
+      return base
+    })
+
+  // 条件行の更新ヘルパー
+  const updateCondition = (
+    setter: (updater: (prev: RelationCondition[]) => RelationCondition[]) => void,
+    index: number,
+    patch: Partial<RelationCondition>,
+  ) => {
+    setter((prev) => prev.map((c, i) => {
+      if (i !== index) return c
+      const merged: RelationCondition = { ...c, ...patch }
+      const nextOp = patch.operator ?? c.operator
+      // 演算子の種類が変わったら値フィールドを演算子に合わせて初期化する
+      if (isRangeOperator(nextOp)) {
+        merged.value = undefined
+        merged.values = undefined
+        if (merged.valueMin === undefined) merged.valueMin = ""
+        if (merged.valueMax === undefined) merged.valueMax = ""
+      } else if (isSetOperator(nextOp)) {
+        merged.value = undefined
+        merged.valueMin = undefined
+        merged.valueMax = undefined
+        if (!merged.values) merged.values = []
+      } else {
+        merged.valueMin = undefined
+        merged.valueMax = undefined
+        merged.values = undefined
+        if (merged.value === undefined) merged.value = ""
+      }
+      return merged
+    }))
+  }
+  const addCondition = (
+    setter: (updater: (prev: RelationCondition[]) => RelationCondition[]) => void,
+    condition: RelationCondition = newDefaultCondition(),
+  ) => setter((prev) => [...prev, condition])
+  const removeCondition = (
+    setter: (updater: (prev: RelationCondition[]) => RelationCondition[]) => void,
+    index: number,
+  ) => setter((prev) => prev.filter((_, i) => i !== index))
+
   // 保存ボタンの妥当性・変更検知
   const relValid = editName.trim() !== "" && editPairs.length > 0 &&
-    !editPairs.some((p) => !p.sourceClassId || !p.targetClassId)
+    !editPairs.some((p) => !p.sourceClassId || !p.targetClassId) &&
+    conditionsValid(editConditions)
   const relDirty = !!selected && (
     editName !== selected.name ||
     editNameEn !== (selected.nameEn ?? "") ||
     editDesc !== (selected.description ?? "") ||
-    JSON.stringify(editPairs) !== JSON.stringify(selected.classPairs ?? [])
+    JSON.stringify(editPairs) !== JSON.stringify(selected.classPairs ?? []) ||
+    JSON.stringify(normalizeConditions(editConditions)) !== JSON.stringify(selected.conditions ?? [])
   )
 
   const renderAttrSection = (title: string, attrs: OntologyAttribute[], section: AttrSectionKey) => {
@@ -573,6 +686,103 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
       ? "この属性はプロジェクト全体で共有されます。変更はすべてのクラス・リレーションに影響します。"
       : null
 
+  // 成立条件エディタ（追加ダイアログ・詳細パネルの双方で使用）
+  const renderConditionsEditor = (
+    conditions: RelationCondition[],
+    setConditions: (updater: (prev: RelationCondition[]) => RelationCondition[]) => void,
+  ) => (
+    <div className="space-y-2">
+      <p className="text-[11px] text-muted-foreground">
+        ※ 以下の条件を<strong className="font-medium text-foreground">「すべて満たす場合」</strong>に成立します。
+      </p>
+      {conditions.length === 0 ? (
+        <p className="rounded-md border border-dashed border-border py-2 text-center text-xs text-muted-foreground">
+          条件なし（常に成立）
+        </p>
+      ) : (
+        <div className="space-y-1.5">
+          {conditions.map((c, i) => (
+            <div key={i} className="flex items-center gap-1.5">
+              <Input
+                className="h-8 min-w-0 flex-1"
+                placeholder="変数名"
+                value={c.variable}
+                onChange={(e) => updateCondition(setConditions, i, { variable: e.target.value })}
+              />
+              <Select
+                value={c.operator}
+                onValueChange={(v) => updateCondition(setConditions, i, { operator: v as RelationConditionOperator })}
+              >
+                <SelectTrigger className="h-8 w-24 shrink-0">
+                  <SelectValue>
+                    {CONDITION_OPERATORS.find((o) => o.value === c.operator)?.symbol ?? c.operator}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  {CONDITION_OPERATORS.map((o) => (
+                    <SelectItem key={o.value} value={o.value}>
+                      <span className="inline-block w-16 font-mono">{o.symbol}</span>
+                      <span className="text-muted-foreground">{o.label}</span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {isRangeOperator(c.operator) ? (
+                <div className="flex min-w-0 flex-1 items-center gap-1">
+                  <Input
+                    className="h-8 min-w-0 flex-1"
+                    placeholder="下限"
+                    value={c.valueMin ?? ""}
+                    onChange={(e) => updateCondition(setConditions, i, { valueMin: e.target.value })}
+                  />
+                  <span className="shrink-0 text-xs text-muted-foreground">〜</span>
+                  <Input
+                    className="h-8 min-w-0 flex-1"
+                    placeholder="上限"
+                    value={c.valueMax ?? ""}
+                    onChange={(e) => updateCondition(setConditions, i, { valueMax: e.target.value })}
+                  />
+                </div>
+              ) : isSetOperator(c.operator) ? (
+                <Input
+                  className="h-8 min-w-0 flex-1"
+                  placeholder="値1, 値2, ... (カンマ区切り)"
+                  value={formatValues(c.values)}
+                  onChange={(e) => updateCondition(setConditions, i, { values: parseValues(e.target.value) })}
+                />
+              ) : (
+                <Input
+                  className="h-8 min-w-0 flex-1"
+                  placeholder="値"
+                  value={c.value ?? ""}
+                  onChange={(e) => updateCondition(setConditions, i, { value: e.target.value })}
+                />
+              )}
+              <Input
+                className="h-8 w-16 shrink-0"
+                placeholder="単位"
+                value={c.unit ?? ""}
+                onChange={(e) => updateCondition(setConditions, i, { unit: e.target.value })}
+              />
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-8 w-8 shrink-0 text-muted-foreground"
+                onClick={() => removeCondition(setConditions, i)}
+                aria-label="この条件を削除"
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+      <Button size="sm" variant="outline" className="gap-1 bg-transparent" onClick={() => addCondition(setConditions)}>
+        <Plus className="h-3.5 w-3.5" />条件を追加
+      </Button>
+    </div>
+  )
+
   return (
     <div className="flex h-full flex-col">
       <TopBar group="オントロジー設計" title="リレーション管理">
@@ -592,7 +802,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
           <div className="flex items-center justify-between px-6 py-3">
             <h2 className="text-base font-semibold text-foreground">リレーション一覧</h2>
             <Button size="sm" variant="outline" className="h-8 gap-1.5 bg-transparent"
-              onClick={() => { setNewName(""); setNewNameEn(""); setNewDesc(""); setNewPairs([{ sourceClassId: "", targetClassId: "" }]); setNewIncludeChildren(true); setShowAdd(true) }}>
+              onClick={() => { setNewName(""); setNewNameEn(""); setNewDesc(""); setNewPairs([{ sourceClassId: "", targetClassId: "" }]); setNewIncludeChildren(true); setNewConditions([]); setShowAdd(true) }}>
               <Plus className="h-3.5 w-3.5" />追加
             </Button>
           </div>
@@ -697,6 +907,16 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                               <span className="truncate" title={r.name}>{r.name}</span>
                               {relationIncomplete(r) && (
                                 <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-500" />
+                              )}
+                              {hasConditions(r.conditions) && (
+                                <Tooltip content={<span className="whitespace-pre-line">{formatRelationConditions(r.conditions)}</span>}>
+                                  <Badge
+                                    variant="secondary"
+                                    className="shrink-0 gap-0.5 border-indigo-300 bg-indigo-100 px-1.5 py-0 text-[10px] font-normal text-indigo-800 dark:border-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-200"
+                                  >
+                                    <Filter className="h-2.5 w-2.5" />条件{(r.conditions ?? []).length}
+                                  </Badge>
+                                </Tooltip>
                               )}
                             </span>
                             {r.nameEn && <span className="block truncate text-xs text-muted-foreground">{r.nameEn}</span>}
@@ -823,6 +1043,12 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                   </div>
                 </section>
 
+                {/* 成立条件 */}
+                <section className="space-y-3">
+                  <SectionHeader icon={Filter} title="リレーション成立条件" />
+                  {renderConditionsEditor(editConditions, setEditConditions)}
+                </section>
+
                 {/* 属性 */}
                 <section className="space-y-4">
                   <SectionHeader icon={Tags} title="属性" />
@@ -935,11 +1161,15 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
               <Textarea rows={3} value={newDesc} onChange={(e) => setNewDesc(e.target.value)}
                 placeholder="リレーションの意味・用途を記述" />
             </div>
+            <div className="space-y-2">
+              <Label>リレーション成立条件</Label>
+              {renderConditionsEditor(newConditions, setNewConditions)}
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowAdd(false)}>キャンセル</Button>
             <Button onClick={handleAdd}
-              disabled={!newName.trim() || newPairs.length === 0 || newPairs.some(p => !p.sourceClassId || !p.targetClassId) || adding}>
+              disabled={!newName.trim() || newPairs.length === 0 || newPairs.some(p => !p.sourceClassId || !p.targetClassId) || !conditionsValid(newConditions) || adding}>
               {adding ? "登録中..." : "登録"}
             </Button>
           </DialogFooter>

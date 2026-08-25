@@ -42,6 +42,7 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
       description: body.description ?? existing.description,
       classPairs: body.classPairs ?? existing.classPairs,
       parentRelationId: body.parentRelationId !== undefined ? body.parentRelationId : existing.parentRelationId,
+      conditions: Array.isArray(body.conditions) ? body.conditions : (existing.conditions ?? []),
       updatedBy: actor,
       updatedAt: new Date().toISOString(),
     }

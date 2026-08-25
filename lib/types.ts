@@ -54,6 +54,40 @@ export type ClassPair = {
   targetClassId: string
 }
 
+// リレーション成立条件の演算子
+//   比較（数値比較・等価判定）: eq/ne/gt/gte/lt/lte
+//   範囲                     : between/notBetween（下限～上限、両端含む）
+//   集合                     : in/notIn
+export type RelationConditionOperator =
+  | "eq"
+  | "ne"
+  | "gt"
+  | "gte"
+  | "lt"
+  | "lte"
+  | "between"
+  | "notBetween"
+  | "in"
+  | "notIn"
+
+// リレーション成立条件（1件＝1つの述語）。同一リレーションに紐づく複数条件は
+// すべて満たされたとき（AND）に成立とみなす。
+//   例）気温 ≥ 30℃／設置場所 = 屋外／長さ が 0.5〜0.8m の範囲内
+export type RelationCondition = {
+  // 対象データ名（自由記述）。例："気温", "設置場所", "長さ"
+  variable: string
+  // 単位（任意）。例："℃", "m", "kg"
+  unit?: string
+  operator: RelationConditionOperator
+  // 比較演算(eq/ne/gt/gte/lt/lte)で用いる単一値
+  value?: string
+  // 範囲演算(between/notBetween)で用いる下限・上限（両端を含む）
+  valueMin?: string
+  valueMax?: string
+  // 集合演算(in/notIn)で用いる値の集合
+  values?: string[]
+}
+
 export type OntologyRelation = {
   id: string
   projectId: string
@@ -62,6 +96,8 @@ export type OntologyRelation = {
   description: string
   classPairs: ClassPair[]
   parentRelationId: string | null
+  // 成立条件（AND評価）。未設定＝条件なし（常に成立）
+  conditions?: RelationCondition[]
   createdBy?: string
   updatedBy?: string
   createdAt: string

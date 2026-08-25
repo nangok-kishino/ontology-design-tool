@@ -7,7 +7,7 @@
 import { useLayoutEffect, useEffect, useRef, useState } from "react"
 import dynamic from "next/dynamic"
 import { Loader2 } from "lucide-react"
-import type { Triplet, OntologyInstance } from "@/lib/types"
+import type { Triplet, OntologyInstance, RelationCondition } from "@/lib/types"
 
 const TripletGraphCanvas = dynamic(() => import("./triplet-graph-canvas"), {
   ssr: false,
@@ -23,12 +23,14 @@ export function TripletGraph({
   instById,
   classNameById,
   attrNameById,
+  conditionsByRelationId,
   onSelectNode,
 }: {
   triplets: Triplet[]
   instById: Map<string, OntologyInstance>
   classNameById: Map<string, string>
   attrNameById?: Map<string, string>
+  conditionsByRelationId?: Map<string, RelationCondition[]>
   onSelectNode?: (instanceId: string) => void
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -60,6 +62,7 @@ export function TripletGraph({
           instById={instById}
           classNameById={classNameById}
           attrNameById={attrNameById}
+          conditionsByRelationId={conditionsByRelationId}
           width={size.w}
           height={size.h}
           onSelectNode={onSelectNode}

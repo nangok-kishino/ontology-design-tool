@@ -52,6 +52,7 @@ export async function POST(request: NextRequest) {
       description: body.description ?? "",
       classPairs: body.classPairs ?? [],
       parentRelationId: body.parentRelationId ?? null,
+      conditions: Array.isArray(body.conditions) ? body.conditions : [],
       createdBy: actor,
       updatedBy: actor,
       createdAt: now,

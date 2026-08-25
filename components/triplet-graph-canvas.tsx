@@ -8,7 +8,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import ForceGraph2D from "react-force-graph-2d"
-import type { Triplet, OntologyInstance } from "@/lib/types"
+import type { Triplet, OntologyInstance, RelationCondition } from "@/lib/types"
+import { formatRelationCondition } from "@/lib/relation-conditions"
 
 type GraphNode = {
   id: string
@@ -30,6 +31,7 @@ type GraphLink = {
   source: string | GraphNode
   target: string | GraphNode
   label: string
+  predicateRelationId: string
   attributes: Record<string, string>
 }
 
@@ -72,6 +74,7 @@ export default function TripletGraphCanvas({
   instById,
   classNameById,
   attrNameById,
+  conditionsByRelationId,
   width,
   height,
   onSelectNode,
@@ -80,6 +83,7 @@ export default function TripletGraphCanvas({
   instById: Map<string, OntologyInstance>
   classNameById: Map<string, string>
   attrNameById?: Map<string, string>
+  conditionsByRelationId?: Map<string, RelationCondition[]>
   width: number
   height: number
   onSelectNode?: (instanceId: string) => void
@@ -126,6 +130,7 @@ export default function TripletGraphCanvas({
         source: t.subjectInstanceId,
         target: t.objectInstanceId,
         label: t.predicateName,
+        predicateRelationId: t.predicateRelationId,
         attributes: t.attributes ?? {},
       })
       if (!adjacency.has(t.subjectInstanceId)) adjacency.set(t.subjectInstanceId, new Set())
@@ -364,7 +369,22 @@ export default function TripletGraphCanvas({
               `<span class="gv-tt-attr-key">${esc(attrNameById?.get(id) ?? id)}</span>` +
               `<span class="gv-tt-attr-val">${esc(String(v))}</span>`,
           )
-        return rows.length ? `${head}<div class="gv-tt-attrs">${rows.join("")}</div>` : head
+        // 述語リレーションに紐づく成立条件（AND評価）を「IF ... / AND ...」で表示
+        const conds = conditionsByRelationId?.get(l.predicateRelationId) ?? []
+        const condHtml = conds.length
+          ? `<div class="gv-tt-cond-title">成立条件（すべて満たす場合）</div>` +
+            conds
+              .map(
+                (c, i) =>
+                  `<div class="gv-tt-cond-row">` +
+                  `<span class="gv-tt-cond-tag">${i === 0 ? "IF" : "AND"}</span>` +
+                  `<span class="gv-tt-cond-text">${esc(formatRelationCondition(c))}</span>` +
+                  `</div>`,
+              )
+              .join("")
+          : ""
+        const attrsHtml = rows.length ? `<div class="gv-tt-attrs">${rows.join("")}</div>` : ""
+        return `${head}${attrsHtml}${condHtml}`
       }) as any}
       linkColor={((l: GraphLink) => {
         const hue = linkEndNode(l.source)?.hue ?? 210

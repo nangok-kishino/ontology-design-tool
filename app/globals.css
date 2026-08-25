@@ -174,3 +174,31 @@
 .float-tooltip-kap .gv-tt-attr-val {
   font-weight: 500;
 }
+/* エッジツールチップのリレーション成立条件（IF/AND 表示） */
+.float-tooltip-kap .gv-tt-cond-title {
+  margin-top: 6px;
+  padding-top: 5px;
+  border-top: 1px solid rgba(255, 255, 255, 0.14);
+  font-size: 0.78em;
+  opacity: 0.7;
+  letter-spacing: 0.02em;
+}
+.float-tooltip-kap .gv-tt-cond-row {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  font-size: 0.85em;
+  line-height: 1.35;
+  margin-top: 2px;
+}
+.float-tooltip-kap .gv-tt-cond-tag {
+  flex-shrink: 0;
+  min-width: 26px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85em;
+  opacity: 0.55;
+  letter-spacing: 0.04em;
+}
+.float-tooltip-kap .gv-tt-cond-text {
+  font-weight: 500;
+}

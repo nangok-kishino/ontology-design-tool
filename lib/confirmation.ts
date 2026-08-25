@@ -57,7 +57,7 @@ export function diffClassFields(before: OntologyClass, after: OntologyClass): st
 }
 
 // リレーション編集で確認履歴の [edit] を積むべきフィールドを比較。
-// 対象: ラベル(name)・英名(nameEn)・説明(description)・始点/終点(classPairs)・上位リレーション(parentRelationId)
+// 対象: ラベル(name)・英名(nameEn)・説明(description)・始点/終点(classPairs)・上位リレーション(parentRelationId)・成立条件(conditions)
 export function diffRelationFields(before: OntologyRelation, after: OntologyRelation): string[] {
   const changed: string[] = []
   if ((before.name ?? "") !== (after.name ?? "")) changed.push("name")
@@ -67,6 +67,7 @@ export function diffRelationFields(before: OntologyRelation, after: OntologyRela
   const afterPairs = JSON.stringify([...(after.classPairs ?? [])].sort(byPair))
   if (beforePairs !== afterPairs) changed.push("classPairs")
   if ((before.parentRelationId ?? null) !== (after.parentRelationId ?? null)) changed.push("parentRelationId")
+  if (JSON.stringify(before.conditions ?? []) !== JSON.stringify(after.conditions ?? [])) changed.push("conditions")
   return changed
 }
 
