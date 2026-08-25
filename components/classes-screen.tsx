@@ -734,9 +734,9 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
             <span className="text-muted-foreground">表示：</span>
             {([
               { key: "all", label: "全て" },
-              { key: "unconfirmed", label: "未確認のみ" },
-              { key: "confirmed_edited", label: "確認済み*のみ" },
-              { key: "confirmed", label: "確認済みのみ" },
+              { key: "confirmed", label: "確認済み" },
+              { key: "confirmed_edited", label: "確認済み*" },
+              { key: "unconfirmed", label: "未確認" },
             ] as { key: "all" | ConfirmationState; label: string }[]).map((opt) => (
               <button
                 key={opt.key}
@@ -844,7 +844,6 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
                       const events = [...(selected.confirmations ?? [])].sort((a, b) => b.at.localeCompare(a.at))
                       return (
                         <div className="space-y-1">
-                          <ConfirmationBadge state={status.state} />
                           <div className="space-y-0.5 text-xs text-muted-foreground">
                             {status.latestConfirm && (
                               <p className="flex items-center gap-2">
