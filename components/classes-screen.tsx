@@ -42,7 +42,11 @@ import {
   executeClassesImport,
   type ClassExportItem,
 } from "@/lib/import-export"
-import { Plus, Pencil, Trash2, Loader2, AlertTriangle, Info, Download, Upload, FileText, Tags, Link2 } from "lucide-react"
+import { deriveConfirmationStatus, type ConfirmationState } from "@/lib/confirmation"
+import { ConfirmationBadge } from "@/components/confirmation-badge"
+import { ConfirmationSection } from "@/components/confirmation-section"
+import { ConfirmDialog } from "@/components/confirm-dialog"
+import { Plus, Pencil, Trash2, Loader2, AlertTriangle, Info, Download, Upload, FileText, Tags, Link2, CheckCircle2 } from "lucide-react"
 import { useProject } from "@/app/project-context"
 
 type TreeNode = OntologyClass & { children: TreeNode[] }
@@ -134,6 +138,12 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
   const [scopeAlertMsg, setScopeAlertMsg] = useState("")
   const [scopeAlertIsWarning, setScopeAlertIsWarning] = useState(false)
   const [pendingAction, setPendingAction] = useState<{ fn: () => Promise<void> } | null>(null)
+
+  // 確認機構
+  const [filterState, setFilterState] = useState<"all" | ConfirmationState>("all")
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [showBulkConfirm, setShowBulkConfirm] = useState(false)
+  const [bulkConfirming, setBulkConfirming] = useState(false)
 
   const fetchClasses = useCallback(async () => {
     if (!currentProject) return
@@ -438,14 +448,67 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
   const tree = buildTree(classes)
 
   // ツリーを深さ付きで平坦化（一覧テーブルのインデント表示用）
-  const flatClasses: { node: TreeNode; depth: number }[] = []
+  const flatClassesAll: { node: TreeNode; depth: number }[] = []
   const walkTree = (nodes: TreeNode[], depth: number) => {
     for (const n of nodes) {
-      flatClasses.push({ node: n, depth })
+      flatClassesAll.push({ node: n, depth })
       if (n.children.length) walkTree(n.children, depth + 1)
     }
   }
   walkTree(tree, 0)
+
+  // 確認状態フィルタ
+  const flatClasses = filterState === "all"
+    ? flatClassesAll
+    : flatClassesAll.filter(({ node }) => deriveConfirmationStatus(node.confirmations).state === filterState)
+
+  // 一括確認: 現在選択している ID 群 に対して確認レコードを追加
+  const handleBulkConfirm = async (confirmerName: string) => {
+    if (selectedIds.size === 0) return
+    setBulkConfirming(true)
+    try {
+      await Promise.all(
+        Array.from(selectedIds).map((id) =>
+          fetch(`/api/classes/${id}/confirmations`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ confirmerName }),
+          })
+        )
+      )
+      await fetchClasses()
+      setSelectedIds(new Set())
+      setShowBulkConfirm(false)
+    } finally {
+      setBulkConfirming(false)
+    }
+  }
+
+  // 単体確認
+  const handleConfirmSelected = async (confirmerName: string) => {
+    if (!selected) return
+    await fetch(`/api/classes/${selected.id}/confirmations`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ confirmerName }),
+    })
+    await fetchClasses()
+  }
+
+  const handleUnconfirmSelected = async () => {
+    if (!selected) return
+    await fetch(`/api/classes/${selected.id}/confirmations`, { method: "DELETE" })
+    await fetchClasses()
+  }
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
 
   // 初回訪問（未選択）時は先頭のクラスを自動選択する。再訪問時は前回の選択を維持する
   useEffect(() => {
@@ -610,10 +673,46 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
         <div className="flex flex-1 flex-col overflow-hidden border-r border-border">
           <div className="flex items-center justify-between px-6 py-3">
             <h2 className="text-base font-semibold text-foreground">クラス一覧</h2>
-            <Button size="sm" variant="outline" className="h-8 gap-1.5 bg-transparent"
-              onClick={openAddDialog}>
-              <Plus className="h-3.5 w-3.5" />クラスを追加
-            </Button>
+            <div className="flex items-center gap-2">
+              {selectedIds.size > 0 && (
+                <Button
+                  size="sm"
+                  variant="success"
+                  className="h-8 gap-1.5"
+                  onClick={() => setShowBulkConfirm(true)}
+                >
+                  <CheckCircle2 className="h-3.5 w-3.5" />
+                  選択した{selectedIds.size}件を確認
+                </Button>
+              )}
+              <Button size="sm" variant="outline" className="h-8 gap-1.5 bg-transparent"
+                onClick={openAddDialog}>
+                <Plus className="h-3.5 w-3.5" />クラスを追加
+              </Button>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 px-6 pb-3 text-xs">
+            <span className="text-muted-foreground">表示：</span>
+            {([
+              { key: "all", label: "全て" },
+              { key: "unconfirmed", label: "未確認のみ" },
+              { key: "confirmed_edited", label: "確認済み*のみ" },
+              { key: "confirmed", label: "確認済みのみ" },
+            ] as { key: "all" | ConfirmationState; label: string }[]).map((opt) => (
+              <button
+                key={opt.key}
+                type="button"
+                className={cn(
+                  "rounded-full border px-2.5 py-0.5 transition-colors",
+                  filterState === opt.key
+                    ? "border-indigo-400 bg-indigo-100 text-indigo-800 dark:border-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-200"
+                    : "border-border text-muted-foreground hover:bg-muted",
+                )}
+                onClick={() => setFilterState(opt.key)}
+              >
+                {opt.label}
+              </button>
+            ))}
           </div>
           <div className="flex-1 overflow-auto px-6 pb-6">
             {loading ? (
@@ -629,7 +728,21 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
                 <Table>
                   <TableHeader>
                     <TableRow className="bg-muted/50 hover:bg-muted/50">
+                      <TableHead className="w-10">
+                        <input
+                          type="checkbox"
+                          aria-label="表示中のクラスをすべて選択"
+                          checked={flatClasses.length > 0 && flatClasses.every(({ node }) => selectedIds.has(node.id))}
+                          onChange={(e) => {
+                            const next = new Set(selectedIds)
+                            if (e.target.checked) flatClasses.forEach(({ node }) => next.add(node.id))
+                            else flatClasses.forEach(({ node }) => next.delete(node.id))
+                            setSelectedIds(next)
+                          }}
+                        />
+                      </TableHead>
                       <TableHead className="font-semibold text-foreground">クラス名</TableHead>
+                      <TableHead className="w-32 font-semibold text-foreground">確認</TableHead>
                       <TableHead className="w-40 font-semibold text-foreground">親クラス</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -637,6 +750,8 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
                     {flatClasses.map(({ node, depth }) => {
                       const isSel = selectedId === node.id
                       const parent = node.parentId ? classes.find((c) => c.id === node.parentId) : null
+                      const state = deriveConfirmationStatus(node.confirmations).state
+                      const isChecked = selectedIds.has(node.id)
                       return (
                         <TableRow
                           key={node.id}
@@ -648,6 +763,14 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
                           )}
                           onClick={() => setSelectedId(node.id)}
                         >
+                          <TableCell onClick={(e) => e.stopPropagation()}>
+                            <input
+                              type="checkbox"
+                              aria-label={`${node.name}を選択`}
+                              checked={isChecked}
+                              onChange={() => toggleSelect(node.id)}
+                            />
+                          </TableCell>
                           <TableCell className="font-medium text-foreground">
                             <span className="flex items-start" style={{ paddingLeft: depth * 16 }}>
                               {depth > 0 && <span className="mr-1 text-muted-foreground/70">└</span>}
@@ -656,6 +779,9 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
                                 {node.nameEn && <span className="text-xs font-normal text-muted-foreground">{node.nameEn}</span>}
                               </span>
                             </span>
+                          </TableCell>
+                          <TableCell>
+                            <ConfirmationBadge state={state} />
                           </TableCell>
                           <TableCell className="text-sm text-muted-foreground">{parent?.name ?? "—"}</TableCell>
                         </TableRow>
@@ -718,6 +844,14 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
                     </div>
                   </div>
                 </section>
+
+                {/* 確認 */}
+                <ConfirmationSection
+                  events={selected.confirmations}
+                  targetLabel="このクラス"
+                  onConfirm={handleConfirmSelected}
+                  onUnconfirm={handleUnconfirmSelected}
+                />
 
                 {/* 属性 */}
                 <section className="space-y-4">
@@ -1157,6 +1291,16 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
           setSelectedId(null)
           await fetchClasses()
         }}
+      />
+
+      {/* 一括確認ダイアログ */}
+      <ConfirmDialog
+        open={showBulkConfirm}
+        onOpenChange={setShowBulkConfirm}
+        title={`選択した${selectedIds.size}件のクラスを確認する`}
+        description="選択したすべてのクラスに同一の確認レコードが追加されます。"
+        submitting={bulkConfirming}
+        onSubmit={handleBulkConfirm}
       />
     </div>
   )
