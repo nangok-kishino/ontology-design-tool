@@ -697,7 +697,7 @@ export function InstancesScreen({ initialSelectedClassId, active }: { initialSel
     setShowAdd(true)
   }
 
-  const handleAdd = async () => {
+  const handleAdd = async (keepOpen = false) => {
     if (!newName.trim() || !selectedClass || !currentProject) return
     setAdding(true)
     try {
@@ -716,10 +716,19 @@ export function InstancesScreen({ initialSelectedClassId, active }: { initialSel
         return
       }
       if (!res.ok) throw new Error()
-      setShowAdd(false)
       await fetchInstances(selectedClass.id)
       // 追加した新規インスタンスは名寄せ未チェックで着地するため、未チェック件数（名寄せチェックボタンの活性）を更新する
       await fetchAllCounts(classes, currentProject.id)
+      if (keepOpen) {
+        // 入力内容をクリアして次のインスタンス生成に備える（日付/日時属性のみ本日日付を初期化）
+        const today = new Date().toISOString().split("T")[0]
+        const defaults: Record<string, string> = {}
+        allAttrs.forEach((a) => { if (a.dataType === "日付" || a.dataType === "日時") defaults[a.id] = today })
+        setNewName("")
+        setNewAttrValues(defaults)
+      } else {
+        setShowAdd(false)
+      }
     } catch {
       alert("インスタンスの追加に失敗しました")
     } finally {
@@ -1239,7 +1248,15 @@ export function InstancesScreen({ initialSelectedClassId, active }: { initialSel
               キャンセル
             </Button>
             <Button
-              onClick={handleAdd}
+              variant="outline"
+              onClick={() => handleAdd(true)}
+              disabled={!newName.trim() || adding || hasMissingRequired(allAttrs, newAttrValues)}
+            >
+              {adding && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}
+              続けて追加
+            </Button>
+            <Button
+              onClick={() => handleAdd(false)}
               disabled={!newName.trim() || adding || hasMissingRequired(allAttrs, newAttrValues)}
             >
               {adding && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}
