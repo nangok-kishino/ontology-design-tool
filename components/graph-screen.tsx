@@ -83,8 +83,9 @@ export function GraphScreen({ active }: { active?: boolean }) {
       </TopBar>
       <div className="flex-1 overflow-hidden">
         {loading ? (
-          <div className="flex h-full items-center justify-center bg-[#0a0b14]">
-            <Loader2 className="h-6 w-6 animate-spin text-indigo-300" />
+          <div className="flex h-full flex-col items-center justify-center gap-4 bg-[#0a0b14]">
+            <Loader2 className="h-16 w-16 animate-spin text-indigo-300" />
+            <p className="text-sm text-indigo-100/80">読込中...</p>
           </div>
         ) : !currentProject ? (
           <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
