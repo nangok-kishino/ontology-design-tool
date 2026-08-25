@@ -45,7 +45,7 @@ import {
 import { ArrowRight, Plus, Pencil, Trash2, Loader2, X, AlertTriangle, Info, Download, Upload, FileText, Tags, CheckCircle2, Filter } from "lucide-react"
 import { useProject } from "@/app/project-context"
 import { deriveConfirmationStatus, type ConfirmationState } from "@/lib/confirmation"
-import { formatRelationConditions, hasConditions } from "@/lib/relation-conditions"
+import { hasConditions } from "@/lib/relation-conditions"
 import { ConfirmationBadge } from "@/components/confirmation-badge"
 import { ConfirmDialog } from "@/components/confirm-dialog"
 import { ConfirmationSummary } from "@/components/confirmation-summary"
@@ -872,9 +872,9 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                           }}
                         />
                       </TableHead>
-                      <TableHead className="w-[32%] font-semibold text-foreground">リレーション名</TableHead>
-                      <TableHead className="w-32 font-semibold text-foreground">確認</TableHead>
-                      <TableHead className="w-16 font-semibold text-foreground">条件</TableHead>
+                      <TableHead className="w-[30%] font-semibold text-foreground">リレーション名</TableHead>
+                      <TableHead className="w-28 font-semibold text-foreground">確認</TableHead>
+                      <TableHead className="w-20 font-semibold text-foreground">条件</TableHead>
                       <TableHead className="font-semibold text-foreground">始点 → 終点クラス</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -915,12 +915,8 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                           <TableCell className="align-top">
                             <ConfirmationBadge state={state} />
                           </TableCell>
-                          <TableCell className="align-top text-sm">
-                            {hasConditions(r.conditions) ? (
-                              <Tooltip content={<span className="whitespace-pre-line">{formatRelationConditions(r.conditions)}</span>}>
-                                <span className="cursor-help text-foreground underline decoration-dotted underline-offset-2">あり</span>
-                              </Tooltip>
-                            ) : null}
+                          <TableCell className="align-top text-sm text-foreground">
+                            {hasConditions(r.conditions) ? "あり" : null}
                           </TableCell>
                           <TableCell className="align-top text-sm text-muted-foreground">
                             {pairs.length > 0 ? (
