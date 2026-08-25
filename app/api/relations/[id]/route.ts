@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { getContainer } from "@/lib/cosmos"
 import { getPrincipalName } from "@/lib/auth"
 import { checkProjectAccess } from "@/lib/project-access"
+import { appendEditEvent, diffRelationFields } from "@/lib/confirmation"
 import type { OntologyRelation } from "@/lib/types"
 
 const CONTAINER = "relations"
@@ -33,15 +34,21 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
     const access = await checkProjectAccess(request, rawExisting.projectId)
     if ("error" in access) return access.error
     const existing: OntologyRelation = rawExisting.classPairs ? rawExisting : { ...rawExisting, classPairs: [{ sourceClassId: rawExisting.sourceClassId, targetClassId: rawExisting.targetClassId }] }
-    const updated: OntologyRelation = {
+    const actor = getPrincipalName(request)
+    const merged: OntologyRelation = {
       ...existing,
       name: body.name ?? existing.name,
       nameEn: body.nameEn !== undefined ? body.nameEn : (existing.nameEn ?? ""),
       description: body.description ?? existing.description,
       classPairs: body.classPairs ?? existing.classPairs,
       parentRelationId: body.parentRelationId !== undefined ? body.parentRelationId : existing.parentRelationId,
-      updatedBy: getPrincipalName(request),
+      updatedBy: actor,
       updatedAt: new Date().toISOString(),
+    }
+    const changedFields = diffRelationFields(existing, merged)
+    const updated: OntologyRelation = {
+      ...merged,
+      confirmations: appendEditEvent(existing.confirmations, actor, changedFields, merged.updatedAt),
     }
     const { resource } = await container.item(id, id).replace(updated)
     return NextResponse.json(resource)

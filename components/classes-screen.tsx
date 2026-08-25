@@ -45,7 +45,8 @@ import {
 import { deriveConfirmationStatus, type ConfirmationState } from "@/lib/confirmation"
 import { ConfirmationBadge } from "@/components/confirmation-badge"
 import { ConfirmDialog } from "@/components/confirm-dialog"
-import { Plus, Pencil, Trash2, Loader2, AlertTriangle, Info, Download, Upload, FileText, Tags, Link2, CheckCircle2, ChevronDown, ChevronRight, X } from "lucide-react"
+import { ConfirmationSummary } from "@/components/confirmation-summary"
+import { Plus, Pencil, Trash2, Loader2, AlertTriangle, Info, Download, Upload, FileText, Tags, Link2, CheckCircle2, X } from "lucide-react"
 import { useProject } from "@/app/project-context"
 
 type TreeNode = OntologyClass & { children: TreeNode[] }
@@ -152,7 +153,6 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
   const [showBulkConfirm, setShowBulkConfirm] = useState(false)
   const [bulkConfirming, setBulkConfirming] = useState(false)
   const [bulkUnconfirming, setBulkUnconfirming] = useState(false)
-  const [confirmHistoryOpen, setConfirmHistoryOpen] = useState(false)
 
   const fetchClasses = useCallback(async () => {
     if (!currentProject) return
@@ -842,60 +842,11 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
                 <section className="space-y-3">
                   <SectionHeader icon={FileText} title="基本情報" />
                   <div className="space-y-3">
-                    {(() => {
-                      const status = deriveConfirmationStatus(selected.confirmations)
-                      const events = [...(selected.confirmations ?? [])].sort((a, b) => b.at.localeCompare(a.at))
-                      return (
-                        <div className="space-y-1 text-xs text-muted-foreground">
-                          {status.latestConfirm && (
-                            <>
-                              <p className="flex items-center gap-2">
-                                <span>
-                                  確認日 {formatDateTime(status.latestConfirm.at)}
-                                  {status.latestConfirm.confirmerName && `（${status.latestConfirm.confirmerName}）`}
-                                </span>
-                                <button
-                                  type="button"
-                                  className="inline-flex items-center gap-0.5 text-muted-foreground/80 hover:text-foreground"
-                                  onClick={() => setConfirmHistoryOpen((v) => !v)}
-                                >
-                                  {confirmHistoryOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-                                  確認履歴
-                                </button>
-                              </p>
-                              {confirmHistoryOpen && (
-                                <div className="space-y-1.5 rounded-lg border border-border p-2">
-                                  {events.length === 0 ? (
-                                    <p>まだ履歴はありません</p>
-                                  ) : (
-                                    events.map((e, i) => (
-                                      <div key={i} className="flex items-start gap-2">
-                                        <span className="mt-0.5 shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium">
-                                          {e.type === "confirm" ? "確認" : e.type === "unconfirm" ? "取消" : "編集"}
-                                        </span>
-                                        <div className="flex-1 space-y-0.5">
-                                          <p>{formatDateTime(e.at)}{e.actor && <span className="ml-1">（{e.actor}）</span>}</p>
-                                          {e.type === "confirm" && e.confirmerName && (
-                                            <p className="text-foreground">確認者：{e.confirmerName}</p>
-                                          )}
-                                          {e.type === "edit" && e.editedFields && e.editedFields.length > 0 && (
-                                            <p className="text-foreground">
-                                              変更フィールド：{e.editedFields.map((f) => CLASS_FIELD_LABEL[f] ?? f).join("、")}
-                                            </p>
-                                          )}
-                                        </div>
-                                      </div>
-                                    ))
-                                  )}
-                                </div>
-                              )}
-                            </>
-                          )}
-                          <p>登録日 {formatDateTime(selected.createdAt)}{selected.createdBy ? `（${selected.createdBy}）` : ""}</p>
-                          <p>更新日 {formatDateTime(selected.updatedAt)}{selected.updatedBy ? `（${selected.updatedBy}）` : ""}</p>
-                        </div>
-                      )
-                    })()}
+                    <div className="space-y-1 text-xs text-muted-foreground">
+                      <ConfirmationSummary events={selected.confirmations} fieldLabels={CLASS_FIELD_LABEL} />
+                      <p>登録日 {formatDateTime(selected.createdAt)}{selected.createdBy ? `（${selected.createdBy}）` : ""}</p>
+                      <p>更新日 {formatDateTime(selected.updatedAt)}{selected.updatedBy ? `（${selected.updatedBy}）` : ""}</p>
+                    </div>
                     <div className="space-y-1.5">
                       <Label className="text-sm font-medium">クラス名（日本語名） <span className="text-destructive">*</span></Label>
                       <Input value={editName} onChange={(e) => setEditName(e.target.value)}

@@ -42,10 +42,23 @@ import {
   executeRelationsImport,
   type RelationExportItem,
 } from "@/lib/import-export"
-import { ArrowRight, Plus, Pencil, Trash2, Loader2, X, AlertTriangle, Info, Download, Upload, FileText, Tags } from "lucide-react"
+import { ArrowRight, Plus, Pencil, Trash2, Loader2, X, AlertTriangle, Info, Download, Upload, FileText, Tags, CheckCircle2 } from "lucide-react"
 import { useProject } from "@/app/project-context"
+import { deriveConfirmationStatus, type ConfirmationState } from "@/lib/confirmation"
+import { ConfirmationBadge } from "@/components/confirmation-badge"
+import { ConfirmDialog } from "@/components/confirm-dialog"
+import { ConfirmationSummary } from "@/components/confirmation-summary"
 
 type AttrSectionKey = "project" | "own"
+
+const RELATION_FIELD_LABEL: Record<string, string> = {
+  name: "リレーション名",
+  nameEn: "英語名",
+  description: "説明",
+  classPairs: "始点/終点",
+  parentRelationId: "上位リレーション",
+  attributes: "属性",
+}
 
 function formatDateTime(iso: string | undefined): string {
   if (!iso) return "—"
@@ -115,6 +128,13 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
   const [attrAlertMsg, setAttrAlertMsg] = useState("")
   const [attrAlertIsWarning, setAttrAlertIsWarning] = useState(false)
   const [pendingAttrAction, setPendingAttrAction] = useState<{ fn: () => Promise<void> } | null>(null)
+
+  // 確認機構
+  const [filterState, setFilterState] = useState<"all" | ConfirmationState>("all")
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [showBulkConfirm, setShowBulkConfirm] = useState(false)
+  const [bulkConfirming, setBulkConfirming] = useState(false)
+  const [bulkUnconfirming, setBulkUnconfirming] = useState(false)
 
   const fetchRelations = useCallback(async () => {
     if (!currentProject) return
@@ -364,6 +384,73 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
   }, [loading, selectedId, relations.length])
 
   const selected = relations.find((r) => r.id === selectedId)
+
+  // 表示中のリレーション（確認状態フィルタ）
+  const displayedRelations = filterState === "all"
+    ? relations
+    : relations.filter((r) => deriveConfirmationStatus(r.confirmations).state === filterState)
+
+  const selectedStates = Array.from(selectedIds).map((id) => {
+    const r = relations.find((rr) => rr.id === id)
+    return deriveConfirmationStatus(r?.confirmations).state
+  })
+  const canBulkConfirm = selectedStates.some((s) => s === "unconfirmed" || s === "confirmed_edited")
+  const canBulkUnconfirm = selectedStates.some((s) => s === "confirmed" || s === "confirmed_edited")
+
+  const handleBulkConfirm = async (confirmerName: string) => {
+    const targets = Array.from(selectedIds).filter((id) => {
+      const r = relations.find((rr) => rr.id === id)
+      const s = deriveConfirmationStatus(r?.confirmations).state
+      return s === "unconfirmed" || s === "confirmed_edited"
+    })
+    if (targets.length === 0) return
+    setBulkConfirming(true)
+    try {
+      await Promise.all(
+        targets.map((id) =>
+          fetch(`/api/relations/${id}/confirmations`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ confirmerName }),
+          })
+        )
+      )
+      await fetchRelations()
+      setSelectedIds(new Set())
+      setShowBulkConfirm(false)
+    } finally {
+      setBulkConfirming(false)
+    }
+  }
+
+  const handleBulkUnconfirm = async () => {
+    const targets = Array.from(selectedIds).filter((id) => {
+      const r = relations.find((rr) => rr.id === id)
+      const s = deriveConfirmationStatus(r?.confirmations).state
+      return s === "confirmed" || s === "confirmed_edited"
+    })
+    if (targets.length === 0) return
+    setBulkUnconfirming(true)
+    try {
+      await Promise.all(
+        targets.map((id) => fetch(`/api/relations/${id}/confirmations`, { method: "DELETE" }))
+      )
+      await fetchRelations()
+      setSelectedIds(new Set())
+    } finally {
+      setBulkUnconfirming(false)
+    }
+  }
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
   const className = (id: string | null) => id ? (classes.find((c) => c.id === id)?.name ?? "不明") : "—"
   // 参照先クラスが削除された（存在しない）／未設定の端点を「不明」とみなす
   const classMissing = (id: string | null | undefined) => !id || !classes.some((c) => c.id === id)
@@ -509,6 +596,45 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
               <Plus className="h-3.5 w-3.5" />追加
             </Button>
           </div>
+          <div className="flex items-center gap-2 px-6 pb-3 text-xs">
+            <span className="text-muted-foreground">表示：</span>
+            {([
+              { key: "all", label: "全て" },
+              { key: "confirmed", label: "確認済み" },
+              { key: "confirmed_edited", label: "確認済み*" },
+              { key: "unconfirmed", label: "未確認" },
+            ] as { key: "all" | ConfirmationState; label: string }[]).map((opt) => (
+              <button
+                key={opt.key}
+                type="button"
+                className={cn(
+                  "rounded-full border px-2.5 py-0.5 transition-colors",
+                  filterState === opt.key
+                    ? "border-indigo-400 bg-indigo-100 text-indigo-800 dark:border-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-200"
+                    : "border-border text-muted-foreground hover:bg-muted",
+                )}
+                onClick={() => setFilterState(opt.key)}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          {selectedIds.size > 0 && (canBulkConfirm || canBulkUnconfirm) && (
+            <div className="flex items-center gap-2 px-6 pb-3 text-xs">
+              <span className="text-muted-foreground">{selectedIds.size}件を：</span>
+              {canBulkConfirm && (
+                <Button size="sm" variant="outline" className="h-7 gap-1.5 bg-transparent" onClick={() => setShowBulkConfirm(true)}>
+                  <CheckCircle2 className="h-3.5 w-3.5" />確認する
+                </Button>
+              )}
+              {canBulkUnconfirm && (
+                <Button size="sm" variant="outline" className="h-7 gap-1.5 bg-transparent" onClick={handleBulkUnconfirm} disabled={bulkUnconfirming}>
+                  {bulkUnconfirming ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <X className="h-3.5 w-3.5" />}
+                  確認を取り消す
+                </Button>
+              )}
+            </div>
+          )}
           <div className="flex-1 overflow-auto px-6 pb-6">
             {loading ? (
               <div className="flex h-32 items-center justify-center text-muted-foreground">
@@ -523,14 +649,30 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                 <Table className="table-fixed">
                   <TableHeader>
                     <TableRow className="bg-muted/50 hover:bg-muted/50">
-                      <TableHead className="w-[45%] font-semibold text-foreground">リレーション名</TableHead>
-                      <TableHead className="w-[55%] font-semibold text-foreground">始点 → 終点クラス</TableHead>
+                      <TableHead className="w-10">
+                        <input
+                          type="checkbox"
+                          aria-label="表示中のリレーションをすべて選択"
+                          checked={displayedRelations.length > 0 && displayedRelations.every((r) => selectedIds.has(r.id))}
+                          onChange={(e) => {
+                            const next = new Set(selectedIds)
+                            if (e.target.checked) displayedRelations.forEach((r) => next.add(r.id))
+                            else displayedRelations.forEach((r) => next.delete(r.id))
+                            setSelectedIds(next)
+                          }}
+                        />
+                      </TableHead>
+                      <TableHead className="w-[35%] font-semibold text-foreground">リレーション名</TableHead>
+                      <TableHead className="w-32 font-semibold text-foreground">確認</TableHead>
+                      <TableHead className="font-semibold text-foreground">始点 → 終点クラス</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {relations.map((r) => {
+                    {displayedRelations.map((r) => {
                       const isSel = selectedId === r.id
                       const pairs = r.classPairs ?? []
+                      const state = deriveConfirmationStatus(r.confirmations).state
+                      const isChecked = selectedIds.has(r.id)
                       return (
                         <TableRow
                           key={r.id}
@@ -542,6 +684,14 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                           )}
                           onClick={() => setSelectedId(r.id)}
                         >
+                          <TableCell className="align-top" onClick={(e) => e.stopPropagation()}>
+                            <input
+                              type="checkbox"
+                              aria-label={`${r.name}を選択`}
+                              checked={isChecked}
+                              onChange={() => toggleSelect(r.id)}
+                            />
+                          </TableCell>
                           <TableCell className="align-top">
                             <span className="flex items-center gap-1 font-medium text-foreground">
                               <span className="truncate" title={r.name}>{r.name}</span>
@@ -550,6 +700,9 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                               )}
                             </span>
                             {r.nameEn && <span className="block truncate text-xs text-muted-foreground">{r.nameEn}</span>}
+                          </TableCell>
+                          <TableCell className="align-top">
+                            <ConfirmationBadge state={state} />
                           </TableCell>
                           <TableCell className="align-top text-sm text-muted-foreground">
                             {pairs.length > 0 ? (
@@ -599,7 +752,8 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                 <section className="space-y-3">
                   <SectionHeader icon={FileText} title="基本情報" />
                   <div className="space-y-3">
-                    <div className="space-y-0.5 text-xs text-muted-foreground">
+                    <div className="space-y-1 text-xs text-muted-foreground">
+                      <ConfirmationSummary events={selected.confirmations} fieldLabels={RELATION_FIELD_LABEL} />
                       <p>登録日 {formatDateTime(selected.createdAt)}{selected.createdBy ? `（${selected.createdBy}）` : ""}</p>
                       <p>更新日 {formatDateTime(selected.updatedAt)}{selected.updatedBy ? `（${selected.updatedBy}）` : ""}</p>
                     </div>
@@ -960,6 +1114,16 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
           setSelectedId(null)
           await fetchRelations()
         }}
+      />
+
+      {/* 一括確認ダイアログ */}
+      <ConfirmDialog
+        open={showBulkConfirm}
+        onOpenChange={setShowBulkConfirm}
+        title={`選択した${selectedIds.size}件のリレーションを確認する`}
+        description="選択したすべてのリレーションに同一の確認レコードが追加されます。"
+        submitting={bulkConfirming}
+        onSubmit={handleBulkConfirm}
       />
     </div>
   )
