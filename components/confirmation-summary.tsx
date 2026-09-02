@@ -3,14 +3,7 @@
 import { useState } from "react"
 import { ChevronDown, ChevronRight } from "lucide-react"
 import type { ConfirmationEvent } from "@/lib/types"
-import { deriveConfirmationStatus } from "@/lib/confirmation"
-
-function formatDateTime(iso: string | undefined): string {
-  if (!iso) return "—"
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return "—"
-  return d.toLocaleString("ja-JP", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })
-}
+import { deriveConfirmationStatus, formatConfirmDateTime } from "@/lib/confirmation"
 
 // 詳細パネルの基本情報エリア用: 「確認日 xxx（xxx）▽確認履歴」＋履歴の折りたたみを描画する。
 // 確認レコードが1件も無い（未確認）場合は何も描画しない（呼び出し側の登録日/更新日だけ残る）。
@@ -33,7 +26,7 @@ export function ConfirmationSummary({
     <>
       <p className="flex items-center gap-2">
         <span>
-          確認日 {formatDateTime(status.latestConfirm.at)}
+          確認日 {formatConfirmDateTime(status.latestConfirm.at)}
           {status.latestConfirm.confirmerName && `（${status.latestConfirm.confirmerName}）`}
         </span>
         <button
@@ -56,7 +49,7 @@ export function ConfirmationSummary({
                   {e.type === "confirm" ? "確認" : e.type === "unconfirm" ? "取消" : "編集"}
                 </span>
                 <div className="flex-1 space-y-0.5">
-                  <p>{formatDateTime(e.at)}{e.actor && <span className="ml-1">（{e.actor}）</span>}</p>
+                  <p>{formatConfirmDateTime(e.at)}{e.actor && <span className="ml-1">（{e.actor}）</span>}</p>
                   {e.type === "confirm" && e.confirmerName && (
                     <p className="text-foreground">確認者：{e.confirmerName}</p>
                   )}

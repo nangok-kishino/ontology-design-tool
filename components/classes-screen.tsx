@@ -790,7 +790,8 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
                   <TableBody>
                     {flatClasses.map(({ node, depth }) => {
                       const isSel = selectedId === node.id
-                      const state = deriveConfirmationStatus(node.confirmations).state
+                      const confirmStatus = deriveConfirmationStatus(node.confirmations)
+                      const state = confirmStatus.state
                       const isChecked = selectedIds.has(node.id)
                       return (
                         <TableRow
@@ -821,7 +822,7 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
                             </span>
                           </TableCell>
                           <TableCell>
-                            <ConfirmationBadge state={state} />
+                            <ConfirmationBadge state={state} latestConfirm={confirmStatus.latestConfirm} />
                           </TableCell>
                         </TableRow>
                       )

@@ -882,7 +882,8 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                     {displayedRelations.map((r) => {
                       const isSel = selectedId === r.id
                       const pairs = r.classPairs ?? []
-                      const state = deriveConfirmationStatus(r.confirmations).state
+                      const confirmStatus = deriveConfirmationStatus(r.confirmations)
+                      const state = confirmStatus.state
                       const isChecked = selectedIds.has(r.id)
                       return (
                         <TableRow
@@ -913,7 +914,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                             {r.nameEn && <span className="block truncate text-xs text-muted-foreground">{r.nameEn}</span>}
                           </TableCell>
                           <TableCell className="align-top pr-4">
-                            <ConfirmationBadge state={state} />
+                            <ConfirmationBadge state={state} latestConfirm={confirmStatus.latestConfirm} />
                           </TableCell>
                           <TableCell className="align-top text-sm text-foreground">
                             {hasConditions(r.conditions) ? "あり" : null}

@@ -542,7 +542,8 @@ export function TripletsScreen({ active }: { active?: boolean }) {
                   </TableHeader>
                   <TableBody>
                     {displayedTriplets.map((t) => {
-                      const state = deriveConfirmationStatus(t.confirmations).state
+                      const confirmStatus = deriveConfirmationStatus(t.confirmations)
+                      const state = confirmStatus.state
                       const isChecked = selectedIds.has(t.id)
                       return (
                         <TableRow key={t.id}
@@ -563,7 +564,7 @@ export function TripletsScreen({ active }: { active?: boolean }) {
                           </TableCell>
                           <TableCell className="align-middle"><TripleView t={t} /></TableCell>
                           <TableCell className="align-middle">
-                            <ConfirmationBadge state={state} />
+                            <ConfirmationBadge state={state} latestConfirm={confirmStatus.latestConfirm} />
                           </TableCell>
                           <TableCell className="align-middle text-sm text-muted-foreground">{t.sourceDocName || "—"}</TableCell>
                         </TableRow>

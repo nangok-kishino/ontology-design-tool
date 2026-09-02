@@ -309,7 +309,8 @@ function SortableInstRow({
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: inst.id })
   // 本登録は全インスタンス完了済み。行が示すのは「名寄せチェック」の済/未。
   const nameUnchecked = instanceStatus(inst) === "provisional"
-  const confirmState = deriveConfirmationStatus(inst.confirmations).state
+  const confirmStatus = deriveConfirmationStatus(inst.confirmations)
+  const confirmState = confirmStatus.state
   const style: React.CSSProperties = {
     transform: CSS.Translate.toString(transform),
     transition,
@@ -351,7 +352,7 @@ function SortableInstRow({
         {inst.name}
       </TableCell>
       <TableCell className="w-32">
-        <ConfirmationBadge state={confirmState} />
+        <ConfirmationBadge state={confirmState} latestConfirm={confirmStatus.latestConfirm} />
       </TableCell>
       <TableCell className="w-24 pr-4 text-right">
         {nameUnchecked ? (

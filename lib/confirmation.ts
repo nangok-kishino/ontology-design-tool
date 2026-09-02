@@ -129,3 +129,11 @@ export function appendEditEvent(
   if (!editedFields || editedFields.length === 0) return events
   return [...(events ?? []), { type: "edit", at, actor, editedFields }]
 }
+
+// 確認日時の表示フォーマット（基本情報エリア／一覧のツールチップで共用）
+export function formatConfirmDateTime(iso: string | undefined): string {
+  if (!iso) return "—"
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return "—"
+  return d.toLocaleString("ja-JP", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })
+}
