@@ -169,14 +169,18 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
     }
   }, [currentProject?.id])
 
+  // プロジェクトが切り替わったら前プロジェクトのデータを捨てる（取得は下の表示時 effect が行う）。
+  // 同一プロジェクト内では state を保持したままにして、画面を戻したときに即座に一覧を出す。
   useEffect(() => {
     if (projectLoading) return
-    if (!currentProject) { setClasses([]); setRelations([]); setLoading(false); return }
     setSelectedId(null)
-    fetchClasses()
+    setClasses([])
+    setRelations([])
+    setLoading(!!currentProject)
   }, [currentProject?.id, projectLoading])
 
-  // この画面が表示状態になったら再取得する（マウント維持のため、他画面での変更を反映）
+  // この画面が表示状態になったら再取得する（マウント維持のため、他画面での変更を反映）。
+  // 取得中も既存データは表示したままにする（下の描画条件を参照）ので、切替時にちらつかない。
   useEffect(() => {
     if (active && currentProject) fetchClasses()
   }, [active, currentProject?.id, fetchClasses])
@@ -757,7 +761,7 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
             </div>
           )}
           <div className="flex-1 overflow-auto px-6 pb-6">
-            {loading ? (
+            {loading && classes.length === 0 ? (
               <div className="flex h-32 items-center justify-center text-muted-foreground">
                 <Loader2 className="h-5 w-5 animate-spin" />
               </div>

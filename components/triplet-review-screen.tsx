@@ -78,9 +78,10 @@ export function TripletReviewScreen({ active, ingestVersion, onIngested }: { act
     }
   }, [currentProject?.id])
 
+  // プロジェクト切替時のみデータを捨てる。取得は下の表示時 effect に任せる。
   useEffect(() => {
-    if (!currentProject) { setRows([]); setClasses([]); setLoading(false); return }
-    fetchCandidates()
+    setRows([]); setClasses([])
+    setLoading(!!currentProject)
   }, [currentProject?.id])
 
   useEffect(() => {
@@ -286,7 +287,7 @@ export function TripletReviewScreen({ active, ingestVersion, onIngested }: { act
                   文書を解析しています。完了すると、定義済みオントロジー（登録済みインスタンス・定義済みリレーション）に基づくトリプレットが表示されます。
                 </p>
               </div>
-            ) : loading ? (
+            ) : loading && rows.length === 0 ? (
               <div className="flex h-24 items-center justify-center text-muted-foreground"><Loader2 className="h-5 w-5 animate-spin" /></div>
             ) : rows.length === 0 ? (
               <p className="py-8 text-center text-sm text-muted-foreground">

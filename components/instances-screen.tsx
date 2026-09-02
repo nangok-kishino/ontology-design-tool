@@ -628,18 +628,23 @@ export function InstancesScreen({ initialSelectedClassId, active }: { initialSel
 
   // === effects ===
 
-  // プロジェクトが切り替わったら選択状態をリセットする（別プロジェクトの選択を持ち込まない）
+  // プロジェクトが切り替わったら選択状態と前プロジェクトのデータをリセットする
+  // （別プロジェクトの選択・一覧を持ち込まない）。取得は下の表示時 effect に任せる。
   useEffect(() => {
     setSelectedClass(null)
     setIsUnclassifiedSelected(false)
     setSelectedInst(null)
     lastInstanceByClassRef.current = {}
+    setClasses([])
+    setInstances([])
+    setInstanceCounts({})
+    setLoadingClasses(!!currentProject)
   }, [currentProject?.id])
 
-  useEffect(() => { fetchClasses() }, [currentProject?.id])
   // この画面が表示状態になったら再取得する（画面はマウント維持されるため、
   // 文書取込みでインスタンスを本登録した結果などを自動反映するのに必要）。
   // fetchClasses が classes を更新することで、件数・一覧の再取得へ連鎖する。
+  // 取得中も既存の一覧は表示したままにする（描画条件を参照）ので、画面切替でちらつかない。
   useEffect(() => {
     if (active && currentProject) fetchClasses()
   }, [active, currentProject?.id, fetchClasses])
@@ -1009,7 +1014,7 @@ export function InstancesScreen({ initialSelectedClassId, active }: { initialSel
             <h2 className="text-sm font-semibold text-foreground">クラス</h2>
           </div>
           <div className="flex-1 overflow-auto p-2">
-            {loadingClasses ? (
+            {loadingClasses && classes.length === 0 ? (
               <div className="flex h-32 items-center justify-center text-muted-foreground">
                 <Loader2 className="h-5 w-5 animate-spin" />
               </div>
@@ -1123,7 +1128,7 @@ export function InstancesScreen({ initialSelectedClassId, active }: { initialSel
               )}
 
               <div className="flex-1 overflow-auto px-6 pb-6">
-                {loadingInstances ? (
+                {loadingInstances && instances.length === 0 ? (
                   <div className="flex h-32 items-center justify-center text-muted-foreground">
                     <Loader2 className="h-5 w-5 animate-spin" />
                   </div>
@@ -1331,7 +1336,7 @@ export function InstancesScreen({ initialSelectedClassId, active }: { initialSel
               )}
             </div>
           </div>
-        ) : loadingClasses ? (
+        ) : loadingClasses && classes.length === 0 ? (
           <div className="flex flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
             <Loader2 className="h-5 w-5 animate-spin" />
             読み込み中…

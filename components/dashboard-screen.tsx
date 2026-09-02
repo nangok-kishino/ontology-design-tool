@@ -70,6 +70,9 @@ function flattenClassRows(
 
 interface Props {
   onNavigate: (screen: ScreenId, id?: string) => void
+  // この画面が表示中か。他画面と同じくマウントを維持したまま表示切替するため、
+  // 表示状態になったタイミングで再取得する
+  active: boolean
 }
 
 // OWL/RDF エクスポートは未実装のため非表示。実装後に true にする
@@ -83,7 +86,7 @@ function CountBadge({ count }: { count: number }) {
   )
 }
 
-export function DashboardScreen({ onNavigate }: Props) {
+export function DashboardScreen({ onNavigate, active }: Props) {
   const { currentProject, loading: projectLoading } = useProject()
   const [classes, setClasses] = useState<OntologyClass[]>([])
   const [instances, setInstances] = useState<OntologyInstance[]>([])
@@ -109,14 +112,18 @@ export function DashboardScreen({ onNavigate }: Props) {
     }
   }, [currentProject?.id])
 
+  // プロジェクト切替時のみデータを捨てる。取得は下の表示時 effect に任せる。
   useEffect(() => {
     if (projectLoading) return
-    if (!currentProject) {
-      setClasses([]); setInstances([]); setRelations([]); setLoading(false)
-      return
-    }
-    fetchAll()
+    setClasses([]); setInstances([]); setRelations([])
+    setLoading(!!currentProject)
   }, [currentProject?.id, projectLoading])
+
+  // 表示状態になったら再取得する。取得中も既存の集計は表示したままにするので、
+  // 画面を戻したときに読込中表示を挟まない。
+  useEffect(() => {
+    if (active && currentProject) fetchAll()
+  }, [active, currentProject?.id, fetchAll])
 
   const classRows = flattenClassRows(buildTree(classes), instances)
 
@@ -132,7 +139,7 @@ export function DashboardScreen({ onNavigate }: Props) {
     <div className="flex h-full flex-col">
       <TopBar group="全体" title="ダッシュボード" />
 
-      {projectLoading || loading ? (
+      {(projectLoading || loading) && classes.length === 0 && relations.length === 0 && instances.length === 0 ? (
         <div className="flex flex-1 items-center justify-center text-muted-foreground">
           <Loader2 className="h-6 w-6 animate-spin" />
         </div>

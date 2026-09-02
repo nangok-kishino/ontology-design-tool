@@ -191,11 +191,13 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
     setClasses(Array.isArray(data) ? data : [])
   }, [currentProject?.id])
 
+  // プロジェクト切替時のみデータを捨てる。取得は下の表示時 effect に任せる。
   useEffect(() => {
     if (projectLoading) return
-    if (!currentProject) { setRelations([]); setClasses([]); setLoading(false); return }
     setSelectedId(null)
-    Promise.all([fetchRelations(), fetchClasses()])
+    setRelations([])
+    setClasses([])
+    setLoading(!!currentProject)
   }, [currentProject?.id, projectLoading])
 
   useEffect(() => {
@@ -846,7 +848,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
             </div>
           )}
           <div className="flex-1 overflow-auto px-6 pb-6">
-            {loading ? (
+            {loading && relations.length === 0 ? (
               <div className="flex h-32 items-center justify-center text-muted-foreground">
                 <Loader2 className="h-5 w-5 animate-spin" />
               </div>

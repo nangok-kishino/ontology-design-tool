@@ -64,13 +64,11 @@ export function GraphScreen({ active }: { active?: boolean }) {
     }
   }, [currentProject?.id])
 
+  // プロジェクト切替時のみデータを捨てる。取得は下の表示時 effect に任せる。
   useEffect(() => {
     if (projectLoading) return
-    if (!currentProject) {
-      setTriplets([]); setInstances([]); setClasses([]); setLoading(false)
-      return
-    }
-    fetchAll()
+    setTriplets([]); setInstances([]); setClasses([])
+    setLoading(!!currentProject)
   }, [currentProject?.id, projectLoading])
 
   useEffect(() => {
@@ -93,7 +91,7 @@ export function GraphScreen({ active }: { active?: boolean }) {
         )}
       </TopBar>
       <div className="flex-1 overflow-hidden">
-        {loading ? (
+        {loading && triplets.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-4 bg-[#0a0b14]">
             <Loader2 className="h-16 w-16 animate-spin text-indigo-300" />
             <p className="text-sm text-indigo-100/80">読込中...</p>

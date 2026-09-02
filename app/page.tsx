@@ -53,7 +53,9 @@ function AppContent() {
           <ProjectWelcomeScreen />
         ) : (
           <>
-            {screen === "dashboard" && <DashboardScreen onNavigate={navigate} />}
+            <div className={screen === "dashboard" ? "h-full" : "hidden"}>
+              <DashboardScreen onNavigate={navigate} active={screen === "dashboard"} />
+            </div>
             {hasVisitedClasses && (
               <div className={screen === "classes" ? "h-full" : "hidden"}>
                 <ClassesScreen initialSelectedId={initialSelectId} active={screen === "classes"} />

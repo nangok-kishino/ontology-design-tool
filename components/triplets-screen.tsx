@@ -130,14 +130,11 @@ export function TripletsScreen({ active }: { active?: boolean }) {
     }
   }, [currentProject?.id])
 
+  // プロジェクト切替時のみデータを捨てる。取得は下の表示時 effect に任せる。
   useEffect(() => {
     if (projectLoading) return
-    if (!currentProject) {
-      setTriplets([]); setInstances([]); setRelations([]); setClasses([]); setSelectedId(null); setLoading(false)
-      return
-    }
-    setSelectedId(null)
-    fetchAll()
+    setTriplets([]); setInstances([]); setRelations([]); setClasses([]); setSelectedId(null)
+    setLoading(!!currentProject)
   }, [currentProject?.id, projectLoading])
 
   useEffect(() => {
@@ -511,7 +508,7 @@ export function TripletsScreen({ active }: { active?: boolean }) {
             </div>
           )}
           <div className="flex-1 overflow-auto px-6 pb-6">
-            {loading ? (
+            {loading && triplets.length === 0 ? (
               <div className="flex h-32 items-center justify-center text-muted-foreground"><Loader2 className="h-5 w-5 animate-spin" /></div>
             ) : !currentProject ? (
               <p className="p-4 text-center text-sm text-muted-foreground">プロジェクトを選択してください</p>
