@@ -5,7 +5,7 @@
 //   schema-graph.tsx から next/dynamic({ ssr:false }) 経由でのみ読み込む。
 //   グラフビュー(triplet-graph-canvas)と区別できるよう、設計図(ブループリント)調で描く:
 //     背景=濃紺＋ドット方眼＋周辺減光、ノード=クラス名/英語名入りの発光する円
-//     （つながるエッジが多いクラスほど大きくし、矢印が円周に散らばるようにする）、
+//     （既定は全クラス同じ大きさ。切替でつながるエッジが多いクラスほど大きくできる）、
 //     エッジ=リレーション（始点→終点のクラス色のグラデーション＋矢印、光の粒なし）、
 //     継承=点線＋白抜き三角（UML の汎化）。
 //   エッジは線・矢印・ラベルとも自前で描く（矢印を円周で止めるため）。
@@ -20,8 +20,6 @@ type SchemaNode = {
   id: string
   cls: OntologyClass
   hue: number
-  nameW: number // クラス名の描画幅（グラフ座標）
-  enW: number // 英語名の描画幅（英語名なしは 0）
   isolated: boolean // リレーションも親子関係もないクラス
   degree: number // つながるエッジの本数（円の大きさに使う）
   x?: number
@@ -54,9 +52,11 @@ const EN_FONT = 8.5
 const EDGE_FONT = 8.5
 const EDGE_EN_FONT = 7
 const LINE_GAP = 3
-const MIN_R = 22 // 円の最小半径
-const NODE_PAD = 9 // 文字と円周の余白
-const HUB_GROWTH = 3.5 // エッジ本数の平方根あたりの半径の増分（ハブほど大きく）
+const NODE_R = 30 // 円の半径（「均一」表示のとき）
+const NODE_R_MIN = 22 // 「つながり数」表示での最小・最大半径
+const NODE_R_MAX = 54
+const MIN_NAME_FONT = 6.5 // 円に収めるために縮めるクラス名の文字の下限
+const MAX_NAME_LINES = 3
 const ARROW_LEN = 8
 const MAX_ZOOM = 1.8 // 初期フィットの拡大率上限
 const MIN_ZOOM = 0.05
@@ -156,6 +156,56 @@ function overlapArea(a: Rect, b: Rect, gap: number): number {
   return ox > 0 && oy > 0 ? ox * oy : 0
 }
 
+type TextFit = { lines: string[]; font: number }
+
+// 文字列を n 行に分ける。空白があれば単語単位、なければ文字数で均等に分ける（日本語はどこでも改行可）
+function splitLines(text: string, n: number): string[] {
+  if (n <= 1) return [text]
+  const words = text.split(/\s+/).filter(Boolean)
+  if (words.length >= n) {
+    const per = Math.ceil(words.length / n)
+    const out: string[] = []
+    for (let i = 0; i < words.length; i += per) out.push(words.slice(i, i + per).join(" "))
+    return out
+  }
+  const chars = [...text]
+  const per = Math.ceil(chars.length / n)
+  const out: string[] = []
+  for (let i = 0; i < chars.length; i += per) out.push(chars.slice(i, i + per).join(""))
+  return out
+}
+
+// 文字列を半径 r の円に収める行分けと文字サイズを決める。
+//   1行〜maxLines行を試し、最も大きく書ける行分けを採る（指定サイズ maxFont が上限）。
+//   下限サイズでも入らなければ、最終行の末尾を「…」で省く。
+function fitTextInCircle(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  r: number,
+  maxFont: number,
+  weight: string,
+  maxLines = MAX_NAME_LINES,
+): TextFit {
+  const avail = r * 1.5 // 円の中で文字に使える幅
+  const maxHeight = r * 1.25
+  let best: TextFit | null = null
+  for (let n = 1; n <= maxLines; n++) {
+    const lines = splitLines(text, n)
+    ctx.font = `${weight} ${maxFont}px ${FONT}`
+    const widest = Math.max(...lines.map((l) => ctx.measureText(l).width))
+    const font = Math.min(maxFont, (maxFont * avail) / Math.max(widest, 1), maxHeight / (lines.length * 1.15))
+    if (font >= maxFont) return { lines, font } // 縮めずに入る最少の行数
+    if (!best || font > best.font) best = { lines, font } // 最も大きく書ける行数を採る
+  }
+  if (best && best.font >= MIN_NAME_FONT) return best
+  const lines = splitLines(text, maxLines)
+  ctx.font = `${weight} ${MIN_NAME_FONT}px ${FONT}`
+  const last = [...lines[lines.length - 1]]
+  while (last.length > 1 && ctx.measureText(last.join("") + "…").width > avail) last.pop()
+  lines[lines.length - 1] = last.join("") + "…"
+  return { lines, font: MIN_NAME_FONT }
+}
+
 function tracePath(ctx: CanvasRenderingContext2D, g: Geom) {
   ctx.beginPath()
   ctx.moveTo(g.p0.x, g.p0.y)
@@ -182,6 +232,8 @@ export default function SchemaGraphCanvas({
   const [showEdgeLabels, setShowEdgeLabels] = useState(true)
   const [showEnglish, setShowEnglish] = useState(false)
   const [showInherit, setShowInherit] = useState(true)
+  // 円の大きさ：均一（既定）／つながり数（リレーション・親子関係の本数が多いクラスほど大きく）
+  const [sizeByDegree, setSizeByDegree] = useState(false)
   const hasFitRef = useRef(false) // 初期フィット済みか
   const userMovedRef = useRef(false) // ユーザーがズーム/パンしたか（以後は自動フィットしない）
 
@@ -190,7 +242,7 @@ export default function SchemaGraphCanvas({
 
   // classes/relations → {nodes, links} + 隣接情報
   //   リレーションは始点/終点ペアごとに1本。始点/終点のどちらかが存在しないペアは描かない。
-  const { data, adjacency } = useMemo(() => {
+  const { data, adjacency, maxDegree } = useMemo(() => {
     const measure = document.createElement("canvas").getContext("2d")!
     measure.font = `${EDGE_FONT}px ${FONT}`
     const degree = new Map<string, number>()
@@ -251,12 +303,8 @@ export default function SchemaGraphCanvas({
     // 新しく増えたクラスだけが力学計算で空いた場所へ置かれる。
     const saved = loadLayout(layoutKey)
     const nodes: SchemaNode[] = classes.map((c) => {
-      measure.font = `600 ${NAME_FONT}px ${FONT}`
-      const nameW = measure.measureText(c.name).width
-      measure.font = `${EN_FONT}px ${FONT}`
-      const enW = c.nameEn ? measure.measureText(c.nameEn).width : 0
       const d = degree.get(c.id) ?? 0
-      const node: SchemaNode = { id: c.id, cls: c, hue: hueForClass(c.id), nameW, enW, isolated: !d, degree: d }
+      const node: SchemaNode = { id: c.id, cls: c, hue: hueForClass(c.id), isolated: !d, degree: d }
       const pos = saved[c.id]
       if (pos) {
         node.x = node.fx = pos.x
@@ -275,14 +323,35 @@ export default function SchemaGraphCanvas({
       adjacency.get(t)!.add(s)
     }
 
-    return { data: { nodes, links }, adjacency }
+    const maxDegree = Math.max(1, ...nodes.map((n) => n.degree))
+    return { data: { nodes, links }, adjacency, maxDegree }
   }, [classes, relations, classById, layoutKey])
 
-  // 円の半径（文字が収まる大きさ＋つながるエッジが多いほど大きく。英語名の表示有無で幅が変わる）
+  // 円の半径。名前の長さでは変えない（名前は円に収まるよう文字側を縮める）。
+  //   均一：全クラス同じ。つながり数：最多のクラスを最大とし、本数の平方根に比例して大きくする。
   const radiusOf = useCallback(
     (n: SchemaNode) => {
-      const textW = Math.max(n.nameW, showEnglish ? n.enW : 0)
-      return Math.max(MIN_R, textW / 2 + NODE_PAD) + Math.sqrt(n.degree) * HUB_GROWTH
+      if (!sizeByDegree) return NODE_R
+      return NODE_R_MIN + (NODE_R_MAX - NODE_R_MIN) * Math.sqrt(n.degree / maxDegree)
+    },
+    [sizeByDegree, maxDegree],
+  )
+
+  // クラス名・英語名の行分けと文字サイズ（半径・英語名表示が変わったときだけ計算し直す）
+  const textFitCache = useRef(new Map<string, { name: TextFit; en: TextFit | null }>())
+  const textFitOf = useCallback(
+    (ctx: CanvasRenderingContext2D, n: SchemaNode, r: number) => {
+      const withEn = showEnglish && !!n.cls.nameEn
+      const key = `${n.id}|${n.cls.name}|${r.toFixed(1)}|${withEn ? n.cls.nameEn : ""}`
+      let fit = textFitCache.current.get(key)
+      if (!fit) {
+        // 英語名を出すときは、円の上側をクラス名・下側を英語名に使う
+        const name = fitTextInCircle(ctx, n.cls.name, withEn ? r * 0.8 : r, NAME_FONT, "600")
+        const en = withEn ? fitTextInCircle(ctx, n.cls.nameEn!, r * 0.75, EN_FONT, "400", 1) : null
+        fit = { name, en }
+        textFitCache.current.set(key, fit)
+      }
+      return fit
     },
     [showEnglish],
   )
@@ -602,22 +671,27 @@ export default function SchemaGraphCanvas({
       ctx.stroke()
       ctx.setLineDash([])
 
-      // クラス名・英語名（円の中央）
-      const withEn = showEnglish && !!node.cls.nameEn
-      const nameY = withEn ? y - (EN_FONT + LINE_GAP) / 2 : y
+      // クラス名・英語名（円の中央。円に収まるよう行分け・縮小済み）
+      const fit = textFitOf(ctx, node, r)
+      const nameLH = fit.name.font * 1.15
+      const enLH = fit.en ? fit.en.font + LINE_GAP : 0
+      let ty = y - (fit.name.lines.length * nameLH + enLH) / 2 + nameLH / 2
       ctx.textAlign = "center"
       ctx.textBaseline = "middle"
-      ctx.font = `600 ${NAME_FONT}px ${FONT}`
+      ctx.font = `600 ${fit.name.font}px ${FONT}`
       ctx.fillStyle = "#f0f6ff"
-      ctx.fillText(node.cls.name, x, nameY)
-      if (withEn) {
-        ctx.font = `${EN_FONT}px ${FONT}`
+      for (const line of fit.name.lines) {
+        ctx.fillText(line, x, ty)
+        ty += nameLH
+      }
+      if (fit.en) {
+        ctx.font = `${fit.en.font}px ${FONT}`
         ctx.fillStyle = neon(node.hue, 0.9)
-        ctx.fillText(node.cls.nameEn!, x, nameY + (NAME_FONT + EN_FONT) / 2 + LINE_GAP)
+        ctx.fillText(fit.en.lines[0], x, ty - nameLH / 2 + LINE_GAP + fit.en.font / 2)
       }
       ctx.restore()
     },
-    [radiusOf, isNodeHi, hoverId, hovering, showEnglish],
+    [radiusOf, textFitOf, isNodeHi, hoverId, hovering],
   )
 
   const paintNodePointerArea = useCallback(
@@ -795,9 +869,10 @@ export default function SchemaGraphCanvas({
   }, [])
 
   const toggles = [
-    { label: "エッジ名", on: showEdgeLabels, toggle: () => setShowEdgeLabels((v) => !v) },
-    { label: "英語名", on: showEnglish, toggle: () => setShowEnglish((v) => !v) },
-    { label: "継承", on: showInherit, toggle: () => setShowInherit((v) => !v) },
+    { key: "size", text: `円の大きさ: ${sizeByDegree ? "つながり数" : "均一"}`, toggle: () => setSizeByDegree((v) => !v) },
+    { key: "edge", text: `エッジ名: ${showEdgeLabels ? "ON" : "OFF"}`, toggle: () => setShowEdgeLabels((v) => !v) },
+    { key: "en", text: `英語名: ${showEnglish ? "ON" : "OFF"}`, toggle: () => setShowEnglish((v) => !v) },
+    { key: "inherit", text: `継承: ${showInherit ? "ON" : "OFF"}`, toggle: () => setShowInherit((v) => !v) },
   ]
 
   return (
@@ -812,12 +887,12 @@ export default function SchemaGraphCanvas({
       <div className="absolute right-3 top-3 z-10 flex gap-1.5">
         {toggles.map((t) => (
           <button
-            key={t.label}
+            key={t.key}
             type="button"
             onClick={t.toggle}
             className="rounded-md border border-sky-200/20 bg-[#0a1a2f]/80 px-2.5 py-1 text-xs text-sky-50 backdrop-blur-sm transition-colors hover:bg-sky-900/60"
           >
-            {t.label}: {t.on ? "ON" : "OFF"}
+            {t.text}
           </button>
         ))}
         <button
