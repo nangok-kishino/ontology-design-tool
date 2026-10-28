@@ -46,11 +46,12 @@ export function deriveConfirmationStatus(events: ConfirmationEvent[] | undefined
 }
 
 // クラス編集で確認履歴の [edit] を積むべきフィールドを比較。
-// 対象: ラベル(name)・英名(nameEn)・説明(description)・上位クラス(parentId)
+// 対象: ラベル(name)・英名(nameEn)・同義語(synonyms)・説明(description)・上位クラス(parentId)
 export function diffClassFields(before: OntologyClass, after: OntologyClass): string[] {
   const changed: string[] = []
   if ((before.name ?? "") !== (after.name ?? "")) changed.push("name")
   if ((before.nameEn ?? "") !== (after.nameEn ?? "")) changed.push("nameEn")
+  if ((before.synonyms ?? []).join("\n") !== (after.synonyms ?? []).join("\n")) changed.push("synonyms")
   if ((before.description ?? "") !== (after.description ?? "")) changed.push("description")
   if ((before.parentId ?? null) !== (after.parentId ?? null)) changed.push("parentId")
   return changed

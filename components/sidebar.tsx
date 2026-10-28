@@ -9,7 +9,7 @@ import {
 import { useProject } from "@/app/project-context"
 import { ProjectSettingsDialog } from "@/components/project-settings-dialog"
 
-export type ScreenId = "dashboard" | "review" | "classes" | "relations" | "instances" | "triplets" | "triplet-review" | "graph" | "schema" | "ontology-info"
+export type ScreenId = "dashboard" | "review" | "classes" | "relations" | "instances" | "triplets" | "triplet-review" | "graph" | "schema" | "synonyms" | "ontology-info"
 
 type NavItem = { id: ScreenId; label: string; ai?: boolean }
 type NavGroup = { label: string; icon: React.ElementType; items: NavItem[] }
@@ -30,6 +30,7 @@ const navGroups: NavGroup[] = [
       { id: "review", label: "オントロジー抽出", ai: true },
       { id: "classes", label: "クラス管理" },
       { id: "relations", label: "リレーション管理" },
+      { id: "synonyms", label: "同義語辞書" },
       { id: "schema", label: "スキーマビュー" },
     ],
   },

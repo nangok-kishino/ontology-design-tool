@@ -79,6 +79,7 @@ export async function POST(request: NextRequest) {
       r.classPairs ? r : { ...r, classPairs: [{ sourceClassId: r.sourceClassId, targetClassId: r.targetClassId }] },
     )
     const classNameById = new Map(classes.map((c) => [c.id, c.name]))
+    const classSynonymsById = new Map(classes.map((c) => [c.id, c.synonyms ?? []]))
     // トリプレット抽出は本登録済み（provisional/confirmed の両方）のインスタンスを対象にする。
     // 名寄せチェック（confirmed）は必須ゲートにしない方針（統合済み merged のみ除外）。
     const registeredInstances = instancesAll.filter((i) => isRegistered(i))
@@ -92,7 +93,7 @@ export async function POST(request: NextRequest) {
     // オントロジー抽出（主）とトリプレット抽出（従属）を並行実行
     const [ontology, tripletResult] = await Promise.all([
       extractOntology(model, text, { classes, relations, instances: instancesAll }),
-      extractTriplets(model, text, { registeredInstances, relations, classNameById }),
+      extractTriplets(model, text, { registeredInstances, relations, classNameById, classSynonymsById }),
     ])
 
     // オントロジー候補を保留セッションとして保存（全体の文書取込み画面が読む）

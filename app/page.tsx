@@ -11,6 +11,7 @@ import { TripletsScreen } from "@/components/triplets-screen"
 import { TripletReviewScreen } from "@/components/triplet-review-screen"
 import { GraphScreen } from "@/components/graph-screen"
 import { SchemaScreen } from "@/components/schema-screen"
+import { SynonymsScreen } from "@/components/synonyms-screen"
 import { ProjectWelcomeScreen } from "@/components/project-welcome-screen"
 import { OntologyInfoScreen } from "@/components/ontology-info-screen"
 import { ProjectProvider } from "@/app/project-context"
@@ -28,6 +29,7 @@ function AppContent() {
   const [hasVisitedTripletReview, setHasVisitedTripletReview] = useState(false)
   const [hasVisitedGraph, setHasVisitedGraph] = useState(false)
   const [hasVisitedSchema, setHasVisitedSchema] = useState(false)
+  const [hasVisitedSynonyms, setHasVisitedSynonyms] = useState(false)
   // 1回の文書取込み（/api/ingest）を「オントロジー抽出」「トリプレット抽出」両画面で共有するための
   // 通知カウンタ。どちらかの画面で取込みが成功したらインクリメントし、他方が再取得・再反映する。
   const [ingestVersion, setIngestVersion] = useState(0)
@@ -44,6 +46,7 @@ function AppContent() {
     if (s === "triplet-review") setHasVisitedTripletReview(true)
     if (s === "graph") setHasVisitedGraph(true)
     if (s === "schema") setHasVisitedSchema(true)
+    if (s === "synonyms") setHasVisitedSynonyms(true)
   }
 
   return (
@@ -97,6 +100,11 @@ function AppContent() {
             {hasVisitedSchema && (
               <div className={screen === "schema" ? "h-full" : "hidden"}>
                 <SchemaScreen active={screen === "schema"} />
+              </div>
+            )}
+            {hasVisitedSynonyms && (
+              <div className={screen === "synonyms" ? "h-full" : "hidden"}>
+                <SynonymsScreen active={screen === "synonyms"} />
               </div>
             )}
           </>

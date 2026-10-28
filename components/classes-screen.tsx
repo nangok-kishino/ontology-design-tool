@@ -46,6 +46,7 @@ import { deriveConfirmationStatus, type ConfirmationState } from "@/lib/confirma
 import { ConfirmationBadge } from "@/components/confirmation-badge"
 import { ConfirmDialog } from "@/components/confirm-dialog"
 import { ConfirmationSummary } from "@/components/confirmation-summary"
+import { SynonymInput } from "@/components/synonym-input"
 import { Plus, Pencil, Trash2, Loader2, AlertTriangle, Info, Download, Upload, FileText, Tags, Link2, CheckCircle2, X } from "lucide-react"
 import { useProject } from "@/app/project-context"
 
@@ -55,6 +56,7 @@ type AttrSectionKey = "project" | "parent" | "own"
 const CLASS_FIELD_LABEL: Record<string, string> = {
   name: "クラス名",
   nameEn: "英語名",
+  synonyms: "同義語",
   description: "説明",
   parentId: "親クラス",
   attributes: "属性",
@@ -90,6 +92,8 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
   const [showAdd, setShowAdd] = useState(false)
   const [newName, setNewName] = useState("")
   const [newNameEn, setNewNameEn] = useState("")
+  const [newSynonyms, setNewSynonyms] = useState<string[]>([])
+  const [addError, setAddError] = useState<string | null>(null)
   const [newDesc, setNewDesc] = useState("")
   const [newParentId, setNewParentId] = useState<string | null>(null)
   const [adding, setAdding] = useState(false)
@@ -97,6 +101,8 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
   // クラス編集（右詳細パネルで常時編集可）
   const [editName, setEditName] = useState("")
   const [editNameEn, setEditNameEn] = useState("")
+  const [editSynonyms, setEditSynonyms] = useState<string[]>([])
+  const [saveError, setSaveError] = useState<string | null>(null)
   const [editDesc, setEditDesc] = useState("")
   const [editParentId, setEditParentId] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
@@ -221,15 +227,18 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
     if (cls) {
       setEditName(cls.name)
       setEditNameEn(cls.nameEn ?? "")
+      setEditSynonyms(cls.synonyms ?? [])
       setEditDesc(cls.description)
       setEditParentId(cls.parentId)
     }
+    setSaveError(null)
     fetchAllAttrs(selectedId, cls?.parentId ?? null, currentProject.id)
   }, [selectedId, currentProject?.id])
 
   const handleAdd = async () => {
     if (!newName.trim() || !currentProject) return
     setAdding(true)
+    setAddError(null)
     try {
       const res = await fetch("/api/classes", {
         method: "POST",
@@ -238,15 +247,22 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
           projectId: currentProject.id,
           name: newName.trim(),
           nameEn: newNameEn.trim(),
+          synonyms: newSynonyms,
           description: newDesc.trim(),
           parentId: newParentId,
         }),
       })
+      if (!res.ok) {
+        // 同義語・クラス名が他クラスと重複している場合など（409）
+        const err = await res.json().catch(() => ({}))
+        setAddError(err.error ?? "クラスの作成に失敗しました")
+        return
+      }
       const created: OntologyClass = await res.json()
       await fetchClasses()
       setSelectedId(created.id)
       setShowAdd(false)
-      setNewName(""); setNewNameEn(""); setNewDesc(""); setNewParentId(null)
+      setNewName(""); setNewNameEn(""); setNewSynonyms([]); setNewDesc(""); setNewParentId(null)
     } finally {
       setAdding(false)
     }
@@ -255,17 +271,25 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
   const handleSave = async () => {
     if (!editName.trim() || !selected) return
     setSaving(true)
+    setSaveError(null)
     try {
-      await fetch(`/api/classes/${selected.id}`, {
+      const res = await fetch(`/api/classes/${selected.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: editName.trim(),
           nameEn: editNameEn.trim(),
+          synonyms: editSynonyms,
           description: editDesc.trim(),
           parentId: editParentId,
         }),
       })
+      if (!res.ok) {
+        // 同義語・クラス名が他クラスと重複している場合など（409）
+        const err = await res.json().catch(() => ({}))
+        setSaveError(err.error ?? "クラスの更新に失敗しました")
+        return
+      }
       await fetchClasses()
     } finally {
       setSaving(false)
@@ -584,6 +608,7 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
   const classDirty = !!selected && (
     editName !== selected.name ||
     editNameEn !== (selected.nameEn ?? "") ||
+    editSynonyms.join("\n") !== (selected.synonyms ?? []).join("\n") ||
     editDesc !== (selected.description ?? "") ||
     (editParentId ?? null) !== (selected.parentId ?? null)
   )
@@ -863,6 +888,14 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
                         placeholder="例：Defect Case" className="h-8" />
                     </div>
                     <div className="space-y-1.5">
+                      <Label className="text-sm font-medium">同義語</Label>
+                      <SynonymInput value={editSynonyms} onChange={setEditSynonyms} ownName={editName} />
+                      <p className="text-xs text-muted-foreground">
+                        文書中でこのクラスを指す別の呼び方。抽出時に読み替えます（例：商品クラスの「製品」→「製品名：アクトチェア」を商品として登録）
+                      </p>
+                      {saveError && <p className="text-xs text-destructive">{saveError}</p>}
+                    </div>
+                    <div className="space-y-1.5">
                       <Label className="text-sm font-medium">説明</Label>
                       <Textarea rows={4} value={editDesc} onChange={(e) => setEditDesc(e.target.value)} />
                     </div>
@@ -1017,7 +1050,7 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
       </div>
 
       {/* クラス追加ダイアログ */}
-      <Dialog open={showAdd} onOpenChange={setShowAdd}>
+      <Dialog open={showAdd} onOpenChange={(o) => { setShowAdd(o); if (!o) setAddError(null) }}>
         <DialogContent>
           <DialogHeader><DialogTitle>クラスを追加</DialogTitle></DialogHeader>
           <div className="space-y-4 py-2">
@@ -1031,6 +1064,11 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
               <Label htmlFor="cls-name-en">英語名</Label>
               <Input id="cls-name-en" value={newNameEn} onChange={(e) => setNewNameEn(e.target.value)}
                 placeholder="例：Defect Case" />
+            </div>
+            <div className="space-y-2">
+              <Label>同義語</Label>
+              <SynonymInput value={newSynonyms} onChange={setNewSynonyms} ownName={newName} />
+              {addError && <p className="text-xs text-destructive">{addError}</p>}
             </div>
             <div className="space-y-2">
               <Label htmlFor="cls-desc">説明</Label>

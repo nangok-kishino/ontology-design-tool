@@ -1,6 +1,7 @@
 // クラス定義・リレーション定義・インスタンスのインポート/エクスポート（YAML）
 import { parse as parseYamlText, stringify as stringifyYaml } from "yaml"
 import { normalizeName } from "./normalize"
+import { cleanSynonyms, findSynonymConflict } from "./class-synonyms"
 import type {
   OntologyClass,
   OntologyRelation,
@@ -24,6 +25,7 @@ export type AttrExport = {
 export type ClassExportItem = {
   name: string
   nameEn?: string
+  synonyms?: string[]
   description?: string
   parent: string | null
   attributes: AttrExport[]
@@ -76,6 +78,7 @@ export function buildClassesYaml(
   const items: ClassExportItem[] = classes.map((c) => ({
     name: c.name,
     nameEn: c.nameEn ?? "",
+    synonyms: c.synonyms ?? [],
     description: c.description ?? "",
     parent: c.parentId ? (classesById.get(c.parentId)?.name ?? null) : null,
     attributes: toAttrExport(attrsByClassId.get(c.id) ?? []),
@@ -210,6 +213,7 @@ export function parseClassesYaml(text: string): ParseResult<ClassExportItem> {
     items.push({
       name,
       nameEn: typeof c.nameEn === "string" ? c.nameEn : "",
+      synonyms: cleanSynonyms(c.synonyms, name),
       description: typeof c.description === "string" ? c.description : "",
       parent,
       attributes: parseAttributes(c.attributes, name, errors),
@@ -347,6 +351,21 @@ export function previewClassesImport(
   const toDelete = mode === "replace"
     ? existing.filter((c) => !fileNames.has(c.name)).map((c) => c.name)
     : []
+
+  // 取込み後のクラス群で、同じ語（クラス名・同義語）が2つのクラスを指さないかを確認する。
+  //   全差替え＝ファイルの内容がそのまま残る。差分＝既存クラスは据え置き、新規クラスのみファイルの内容。
+  const after: OntologyClass[] = mode === "replace"
+    ? fileItems.map((i) => ({ id: i.name, name: i.name, synonyms: i.synonyms ?? [] }) as OntologyClass)
+    : [
+        ...existing,
+        ...fileItems
+          .filter((i) => !existingNames.has(i.name))
+          .map((i) => ({ id: i.name, name: i.name, synonyms: i.synonyms ?? [] }) as OntologyClass),
+      ]
+  for (const c of after) {
+    const conflict = findSynonymConflict(after, c.id, c.name, c.synonyms ?? [])
+    if (conflict && !errors.includes(conflict)) errors.push(conflict)
+  }
 
   return { toCreate, toUpdate, toDelete, errors }
 }
@@ -511,6 +530,16 @@ async function putJson(url: string, body: unknown) {
   return res.json()
 }
 
+// PUT して成否を返す（同義語の付け替えで一時的に重複＝409 になる場合の再試行に使う）
+async function putOk(url: string, body: unknown): Promise<boolean> {
+  const res = await fetch(url, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+  return res.ok
+}
+
 async function syncAttributes(
   targetId: string,
   projectId: string,
@@ -586,28 +615,26 @@ export async function executeClassesImport(
     }
   }
 
-  // Phase 2: 基本情報・親クラスの更新（全差替え時、または diff で新規作成した分のみ）
+  // Phase 2: 基本情報・同義語・親クラスの更新（全差替え時、または diff で新規作成した分のみ）
+  //   同義語をクラス間で付け替える場合、更新の順番によっては一時的に重複（409）になるため、
+  //   失敗した分は他の更新が済んだ後にもう一度試す。
+  const retry: { id: string; body: unknown }[] = []
   for (const item of fileItems) {
     const id = nameToId.get(item.name)!
     const parentId = item.parent ? (nameToId.get(item.parent) ?? null) : null
     const isNew = !existingNames.has(item.name)
-    if (isNew) {
-      await putJson(`/api/classes/${id}`, {
-        name: item.name,
-        nameEn: item.nameEn ?? "",
-        description: item.description ?? "",
-        parentId,
-      })
-    } else if (mode === "replace") {
-      await putJson(`/api/classes/${id}`, {
-        name: item.name,
-        nameEn: item.nameEn ?? "",
-        description: item.description ?? "",
-        parentId,
-      })
-      updated++
+    if (!isNew && mode !== "replace") continue
+    const body = {
+      name: item.name,
+      nameEn: item.nameEn ?? "",
+      synonyms: item.synonyms ?? [],
+      description: item.description ?? "",
+      parentId,
     }
+    if (!(await putOk(`/api/classes/${id}`, body))) retry.push({ id, body })
+    if (!isNew) updated++
   }
+  for (const r of retry) await putOk(`/api/classes/${r.id}`, r.body)
 
   // Phase 3: 属性の同期
   for (const item of fileItems) {

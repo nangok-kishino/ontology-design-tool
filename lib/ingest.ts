@@ -10,6 +10,7 @@
 import Anthropic from "@anthropic-ai/sdk"
 import type { OntologyClass, OntologyInstance, OntologyRelation } from "./types"
 import { relationAllowsPair } from "./triplet-resolve"
+import { normalizeName } from "./normalize"
 
 export async function extractTextFromFile(file: File): Promise<string> {
   const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")
@@ -74,11 +75,19 @@ export async function runExtraction(model: string, system: string, userContent: 
 
 // ───────────────────────── オントロジー抽出 ─────────────────────────
 
+// クラス名または同義語（正規化一致）からクラスを引く
+function findClassByTerm(classes: OntologyClass[], term: string): OntologyClass | undefined {
+  const key = normalizeName(term)
+  if (!key) return undefined
+  return classes.find((c) => normalizeName(c.name) === key || (c.synonyms ?? []).some((s) => normalizeName(s) === key))
+}
+
 const ONTOLOGY_SYSTEM =
   "あなたはオントロジーエンジニアです。提供された文書と定義済みクラス・リレーション・登録済みインスタンスを参照し、以下を抽出してください。\n\n" +
   "1. インスタンス候補：文書中に登場する【すべての固有名詞・登場人物・場所・組織・道具・成果物・具体的な事例・対象】を漏れなく列挙してください。網羅性が最優先です。判断に迷ったものは省かず候補に含めてください。「新規性のあるものだけ」に絞り込む必要はありません。除外してよいのは、【登録済みインスタンス】と明確に同一・類似のものだけです。\n" +
   "   - 可能であれば既存クラスに割り当ててください（suggestedClassId と suggestedClassName を指定）。\n" +
-  "   - 適切な既存クラスが無い場合も候補から外さず、必ず isNewClass: true として新規クラス名と説明を提案してください（既存クラスに合わないことを理由に候補を省いてはいけません）。\n\n" +
+  "   - 適切な既存クラスが無い場合も候補から外さず、必ず isNewClass: true として新規クラス名と説明を提案してください（既存クラスに合わないことを理由に候補を省いてはいけません）。\n" +
+  "   - 【定義済みクラス】の「同義語」は、文書中でそのクラスを指す別の呼び方です。文書で同義語が使われている場合、または同義語に「名」「名称」「型番」「番号」「コード」などが付いた項目名（例：同義語が「製品」なら「製品名」「製品名称」）が使われている場合は、そのクラスを指すものとして読み替え、その値をそのクラスのインスタンス候補にしてください（例：商品クラスの同義語に「製品」があり、文書に「製品名：アクトチェア」とあれば、「アクトチェア」を商品クラスのインスタンス候補とする）。同義語と同じ意味の新規クラスは提案しないでください。\n\n" +
   "2. リレーション候補：クラス（種類・カテゴリ）どうしの関係を、汎用的で再利用可能な粒度で抽出してください。\n" +
   "   - リレーション名は「始点クラス（主語）—述語—終点クラス（目的語）」の【述語部分だけ】を記述してください。主語となる始点クラスや、目的語となる終点クラスの名詞をリレーション名に含めてはいけません（それらは sourceClassName／targetClassName で別途表します）。\n" +
   "   - リレーション名は簡潔な動詞句にしてください。良い例：「含む」「構成する」「搭載される」「評価される」「準拠する」「影響する」（格助詞を付けた「を含む」「に搭載される」なども可）。悪い例：「潤滑油の低粘度化が燃費・電費を向上させる」（主語・目的語・条件を含む）／「性能に影響する」（目的語の名詞『性能』を含む）。\n" +
@@ -165,7 +174,7 @@ export async function extractOntology(
   const validClassIds = new Set<string>(classes.map((c) => c.id))
 
   const classListText = classes.length > 0
-    ? classes.map((c) => `- ID: ${c.id}, 名前: ${c.name}${c.nameEn ? ` (${c.nameEn})` : ""}, 説明: ${c.description || "なし"}`).join("\n")
+    ? classes.map((c) => `- ID: ${c.id}, 名前: ${c.name}${c.nameEn ? ` (${c.nameEn})` : ""}${c.synonyms?.length ? `, 同義語: ${c.synonyms.join(", ")}` : ""}, 説明: ${c.description || "なし"}`).join("\n")
     : "（定義済みクラスなし）"
   const relListText = relations.length > 0
     ? relations.map((r) => {
@@ -196,8 +205,10 @@ export async function extractOntology(
     if (inst.suggestedClassId && validClassIds.has(inst.suggestedClassId)) {
       classId = inst.suggestedClassId
       className = classIdMap.get(classId) ?? ""
-    } else if (!inst.isNewClass) {
-      const matchByName = classes.find((c) => c.name === inst.suggestedClassName)
+    } else {
+      // クラス名・同義語のどちらで返ってきても既存クラスへ寄せる（同義語を新規クラスとして提案された場合も含む）
+      const matchByName = findClassByTerm(classes, inst.suggestedClassName) ??
+        (inst.isNewClass ? findClassByTerm(classes, inst.newClassName ?? "") : undefined)
       if (matchByName) { classId = matchByName.id; className = matchByName.name }
     }
     return {
@@ -205,8 +216,8 @@ export async function extractOntology(
       name: inst.name,
       classId,
       className,
-      isNewClass: inst.isNewClass || !classId,
-      newClassName: inst.newClassName ?? (inst.isNewClass ? inst.suggestedClassName : ""),
+      isNewClass: !classId,
+      newClassName: classId ? "" : (inst.newClassName ?? (inst.isNewClass ? inst.suggestedClassName : "")),
       newClassDescription: inst.newClassDescription ?? "",
       status: "確認中",
       saving: false,
@@ -245,6 +256,7 @@ const TRIPLET_SYSTEM =
   "2. 述語は必ず【定義済みリレーション】の中から選び、その id を返す。リストに無い関係は使ってはいけない。\n" +
   "3. リレーションには許可されたクラスペア（始点クラス→終点クラス）がある。主語インスタンスのクラスと目的語インスタンスのクラスが、その述語の許可ペアに一致する組み合わせだけを抽出する。\n" +
   "4. 文書に、登録済みインスタンス同士が定義済みリレーションで結ばれる事実が明確に書かれていない場合は、何も出力しない（推測で補完しない）。\n" +
+  "   文書では、インスタンスが【登録済みインスタンス】の「別名」で、クラスが「クラスの同義語」（例：商品クラスの同義語「製品」→「製品アクトチェア」）で書かれていることがある。これらは同じものとして扱う。\n" +
   "5. 各トリプレットには、根拠となった原文の短いスニペットを evidence に入れる。\n\n" +
   "id は必ずリストに記載のものをそのままコピーして使うこと。"
 
@@ -291,16 +303,27 @@ export type ExtractedTriplet = {
 export async function extractTriplets(
   model: string,
   text: string,
-  ctx: { registeredInstances: OntologyInstance[]; relations: OntologyRelation[]; classNameById: Map<string, string> },
+  ctx: {
+    registeredInstances: OntologyInstance[]
+    relations: OntologyRelation[]
+    classNameById: Map<string, string>
+    classSynonymsById?: Map<string, string[]>
+  },
 ): Promise<{ triplets: ExtractedTriplet[]; dropped: number }> {
-  const { registeredInstances, relations, classNameById } = ctx
+  const { registeredInstances, relations, classNameById, classSynonymsById } = ctx
   if (registeredInstances.length === 0 || relations.length === 0) return { triplets: [], dropped: 0 }
 
   const instById = new Map(registeredInstances.map((i) => [i.id, i]))
   const relById = new Map(relations.map((r) => [r.id, r]))
 
+  // クラス名には同義語を、インスタンスには名寄せで統合した別名を添える（文書中の別の呼び方を読み替えるため）
   const instText = registeredInstances
-    .map((i) => `- id=${i.id} 名前=${i.name} クラス=${i.classId ? (classNameById.get(i.classId) ?? "不明") : "未分類"}`)
+    .map((i) => {
+      const cls = i.classId ? (classNameById.get(i.classId) ?? "不明") : "未分類"
+      const syn = i.classId ? (classSynonymsById?.get(i.classId) ?? []) : []
+      const aliases = i.aliases ?? []
+      return `- id=${i.id} 名前=${i.name}${aliases.length ? ` 別名=${aliases.join("/")}` : ""} クラス=${cls}${syn.length ? `（同義語: ${syn.join("/")}）` : ""}`
+    })
     .join("\n")
   const relText = relations
     .map((r) => {

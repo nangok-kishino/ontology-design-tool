@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { getContainer } from "@/lib/cosmos"
 import { getPrincipalName } from "@/lib/auth"
 import { checkProjectAccess } from "@/lib/project-access"
+import { cleanSynonyms, findSynonymConflict } from "@/lib/class-synonyms"
 import type { OntologyClass } from "@/lib/types"
 
 const CONTAINER = "classes"
@@ -39,6 +40,17 @@ export async function POST(request: NextRequest) {
       const access = await checkProjectAccess(request, body.projectId)
       if ("error" in access) return access.error
     }
+    const container = await getContainer(CONTAINER)
+    // 同じ語が2つのクラスを指さないよう、同義語・クラス名をプロジェクト内の他クラスと照合する
+    const synonyms = cleanSynonyms(body.synonyms, body.name ?? "")
+    const { resources: siblings } = await container.items
+      .query<OntologyClass>({
+        query: "SELECT * FROM c WHERE c.projectId = @projectId",
+        parameters: [{ name: "@projectId", value: body.projectId }],
+      })
+      .fetchAll()
+    const conflict = findSynonymConflict(siblings, null, body.name ?? "", synonyms)
+    if (conflict) return NextResponse.json({ error: conflict }, { status: 409 })
     const now = new Date().toISOString()
     const actor = getPrincipalName(request)
     const item: OntologyClass = {
@@ -46,6 +58,7 @@ export async function POST(request: NextRequest) {
       projectId: body.projectId,
       name: body.name,
       nameEn: body.nameEn ?? "",
+      synonyms,
       description: body.description ?? "",
       parentId: body.parentId ?? null,
       createdBy: actor,
@@ -53,7 +66,6 @@ export async function POST(request: NextRequest) {
       createdAt: now,
       updatedAt: now,
     }
-    const container = await getContainer(CONTAINER)
     const { resource } = await container.items.create(item)
     return NextResponse.json(resource, { status: 201 })
   } catch (error) {

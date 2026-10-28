@@ -40,6 +40,9 @@ export type OntologyClass = {
   projectId: string
   name: string
   nameEn?: string
+  // 同義語：文書中でこのクラスを指す別の呼び方（例：商品クラスの「製品」）。
+  // オントロジー抽出・トリプレット抽出で LLM に渡し、読み替えに使う。
+  synonyms?: string[]
   description: string
   parentId: string | null
   createdBy?: string
