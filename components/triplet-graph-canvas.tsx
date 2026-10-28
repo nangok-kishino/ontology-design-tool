@@ -10,6 +10,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import ForceGraph2D from "react-force-graph-2d"
 import type { Triplet, OntologyInstance, RelationCondition } from "@/lib/types"
 import { formatRelationCondition } from "@/lib/relation-conditions"
+import { hueForClass, NO_CLASS_HUE, neon, esc } from "@/lib/graph-colors"
 
 type GraphNode = {
   id: string
@@ -35,38 +36,15 @@ type GraphLink = {
   attributes: Record<string, string>
 }
 
-// classId 文字列から決定的に色相(hue)を作る。暗背景で映えるネオン色に使う。
-function hueForClass(key: string): number {
-  let h = 0
-  for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) >>> 0
-  return h % 360
-}
-const NO_CLASS_HUE = 190 // 未分類はシアン寄り
 const MAX_ZOOM = 2.4 // 初期フィットの拡大率上限（少数ノードで拡大しすぎるのを防ぐ）
 const MIN_ZOOM = 0.05 // 初期フィットの縮小率下限
 const LINK_CURVATURE = 0.18 // エッジの湾曲（ラベル配置もこの値に合わせる）
-
-// HSL(彩度85%/明度63%固定) → "rgba(r,g,b,a)"。canvas でのエッジ/粒の色に使う
-// （hsla の slash 記法は canvas 実装差があるため rgb に変換して確実に描画する）。
-function hslToRgb(h: number, s: number, l: number): [number, number, number] {
-  const k = (n: number) => (n + h / 30) % 12
-  const a = s * Math.min(l, 1 - l)
-  const f = (n: number) => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)))
-  return [Math.round(255 * f(0)), Math.round(255 * f(8)), Math.round(255 * f(4))]
-}
-function neon(hue: number, alpha: number): string {
-  const [r, g, b] = hslToRgb(hue, 0.85, 0.63)
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`
-}
 
 function linkEndNode(end: string | GraphNode): GraphNode | null {
   return typeof end === "object" ? end : null
 }
 function linkEndId(end: string | GraphNode): string {
   return typeof end === "object" ? end.id : end
-}
-function esc(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
 }
 
 export default function TripletGraphCanvas({
