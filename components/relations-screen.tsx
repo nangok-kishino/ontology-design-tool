@@ -994,7 +994,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                               </SelectTrigger>
                               <SelectContent className="max-h-72">
                                 {classes.map((c) => (
-                                  <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                                  <SelectItem key={c.id} value={c.id}>{c.name}{c.nameEn && <span className="ml-1.5 text-xs text-muted-foreground">{c.nameEn}</span>}</SelectItem>
                                 ))}
                               </SelectContent>
                             </Select>
@@ -1006,7 +1006,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                               </SelectTrigger>
                               <SelectContent className="max-h-72">
                                 {classes.map((c) => (
-                                  <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                                  <SelectItem key={c.id} value={c.id}>{c.name}{c.nameEn && <span className="ml-1.5 text-xs text-muted-foreground">{c.nameEn}</span>}</SelectItem>
                                 ))}
                               </SelectContent>
                             </Select>
@@ -1112,7 +1112,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                       </SelectTrigger>
                       <SelectContent>
                         {classes.map((c) => (
-                          <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                          <SelectItem key={c.id} value={c.id}>{c.name}{c.nameEn && <span className="ml-1.5 text-xs text-muted-foreground">{c.nameEn}</span>}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
@@ -1124,7 +1124,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                       </SelectTrigger>
                       <SelectContent>
                         {classes.map((c) => (
-                          <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                          <SelectItem key={c.id} value={c.id}>{c.name}{c.nameEn && <span className="ml-1.5 text-xs text-muted-foreground">{c.nameEn}</span>}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
