@@ -4,7 +4,7 @@
 // ドラッグで1件動かしたときは前後の中間値を計算し、動いた1件だけを書き込む。
 // 全件に 0,1,2… を振り直す方式だと1回のドラッグで件数分の更新が走るため採らない。
 
-import type { OntologyGroup, OrganizableFields } from "./types"
+import type { GroupTarget, OntologyGroup, OrganizableFields, Project } from "./types"
 
 export const ORDER_STEP = 1000
 
@@ -26,6 +26,13 @@ export function compareByOrder(a: Sortable, b: Sortable): number {
 
 export function sortByOrder<T extends Sortable>(items: T[]): T[] {
   return [...items].sort(compareByOrder)
+}
+
+// プロジェクトが持つ、対象別のグループ一覧。
+// 旧 groups（クラス・リレーション共用だった頃の一覧）はリレーション用として引き継ぐ。
+export function groupsOf(project: Project, target: GroupTarget): OntologyGroup[] {
+  if (target === "relation") return project.relationGroups ?? project.groups ?? []
+  return project.classGroups ?? []
 }
 
 // グループ自身の並び順

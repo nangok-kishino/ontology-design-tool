@@ -31,7 +31,7 @@ export type ConfirmationEvent = {
 //   （Neo4j出力はインスタンスとトリプレットのみを対象とするため、クラス／リレーションに
 //    このフィールドを持たせても構造上エクスポートには現れない。lib/graph-export.ts 参照）
 //   クラスの継承（parentId）とは独立した軸であることに注意。継承は意味、グループは整理。
-//   クラスとリレーションで同じグループ一覧を共用する（例：「受注まわり」に両方が入る）。
+//   クラス用とリレーション用で一覧を完全に分ける。名前が同じでも別のグループとして扱う。
 //   定義は Project ドキュメントに埋め込む。プロジェクトはアクセス確認で必ず読むため、
 //   画面表示時の問い合わせを増やさずに済む。
 // ─────────────────────────────────────────────
@@ -43,13 +43,20 @@ export type OntologyGroup = {
   order: number
 }
 
+// グループ一覧の対象。クラス用とリレーション用は互いに独立している。
+export type GroupTarget = "class" | "relation"
+
 export type Project = {
   id: string
   name: string
   description: string
   // 閲覧可能ドメイン一覧（空/未設定＝ドメイン制限なしのパブリックプロジェクト）
   allowedDomains?: string[]
-  // 整理用グループの定義一覧（クラス／リレーション共用）
+  // 整理用グループの定義一覧。クラス用とリレーション用は別物として持つ。
+  classGroups?: OntologyGroup[]
+  relationGroups?: OntologyGroup[]
+  // 旧フィールド（クラス・リレーション共用だった頃の一覧）。
+  // 読み取り時はリレーション用として引き継ぎ、保存時に relationGroups へ移して取り除く。
   groups?: OntologyGroup[]
   createdBy?: string
   createdAt: string

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getContainer } from "@/lib/cosmos"
 import { checkProjectAccess } from "@/lib/project-access"
+import { groupsOf } from "@/lib/organize"
 import type { OntologyClass, OntologyRelation } from "@/lib/types"
 
 // クラス／リレーションの「整理」更新（所属グループ・並び順）を受ける共通ハンドラ。
@@ -39,7 +40,10 @@ export function createReorderHandler(containerId: "classes" | "relations", label
 
       const access = await checkProjectAccess(request, projectId)
       if ("error" in access) return access.error
-      const knownGroups = new Set((access.project.groups ?? []).map((g) => g.id))
+      // クラス用とリレーション用のグループは別物なので、対応する一覧だけで照合する
+      const knownGroups = new Set(
+        groupsOf(access.project, containerId === "classes" ? "class" : "relation").map((g) => g.id),
+      )
 
       const container = await getContainer(containerId)
       const results = await Promise.all(

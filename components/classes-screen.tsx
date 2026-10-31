@@ -158,7 +158,7 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
 
   // 整理用グループ。ツリー表示（継承の親子）とグループ表示（整理の束ね）を切り替える。
   //   継承は意味、グループは整理の都合なので、同じリストで混ぜずに表示を分ける。
-  const { groups, setGroups, refresh: refreshGroups } = useGroups(currentProject?.id)
+  const { groups, setGroups, refresh: refreshGroups } = useGroups(currentProject?.id, "class")
   const [viewMode, setViewMode] = useState<BoardViewMode>("list")
   const [showGroupManager, setShowGroupManager] = useState(false)
   const [movingGroup, setMovingGroup] = useState(false)
@@ -1522,6 +1522,7 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
           open={showGroupManager}
           onOpenChange={setShowGroupManager}
           projectId={currentProject.id}
+          target="class"
           groups={groups}
           onSaved={(saved) => {
             setGroups(saved)

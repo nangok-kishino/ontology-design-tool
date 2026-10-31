@@ -1,8 +1,8 @@
 "use client"
 
 // 整理用グループの取得・管理。クラス管理／リレーション管理の双方から使う。
-//   グループはオントロジーの意味ではなく「人が把握するための束ね」なので、
-//   クラスとリレーションで同じ一覧を共用する（例：「受注まわり」に両方が入る）。
+//   クラス用とリレーション用の一覧は完全に別で、名前が同じでも別のグループになる。
+//   どちらを扱うかは target で指定する。
 
 import { useCallback, useEffect, useState } from "react"
 import { ArrowDown, ArrowUp, Loader2, Plus, Trash2 } from "lucide-react"
@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/dialog"
 import { cn } from "@/lib/utils"
 import { sortGroups } from "@/lib/organize"
-import type { OntologyGroup } from "@/lib/types"
+import type { GroupTarget, OntologyGroup } from "@/lib/types"
 
 // 見分けやすさ優先の控えめな色。未選択（色なし）も選べる。
 export const GROUP_COLORS = [
@@ -31,7 +31,7 @@ export const GROUP_COLORS = [
   "#14b8a6", // teal
 ] as const
 
-export function useGroups(projectId: string | undefined) {
+export function useGroups(projectId: string | undefined, target: GroupTarget) {
   const [groups, setGroups] = useState<OntologyGroup[]>([])
   const [loading, setLoading] = useState(false)
 
@@ -42,7 +42,7 @@ export function useGroups(projectId: string | undefined) {
     }
     setLoading(true)
     try {
-      const res = await fetch(`/api/groups?projectId=${projectId}`)
+      const res = await fetch(`/api/groups?projectId=${projectId}&target=${target}`)
       if (!res.ok) return
       const data = await res.json()
       setGroups(Array.isArray(data) ? data : [])
@@ -51,11 +51,11 @@ export function useGroups(projectId: string | undefined) {
     } finally {
       setLoading(false)
     }
-  }, [projectId])
+  }, [projectId, target])
 
   useEffect(() => {
     setGroups([])
-  }, [projectId])
+  }, [projectId, target])
 
   return { groups, setGroups, loading, refresh }
 }
@@ -65,12 +65,14 @@ export function GroupManagerDialog({
   open,
   onOpenChange,
   projectId,
+  target,
   groups,
   onSaved,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   projectId: string
+  target: GroupTarget
   groups: OntologyGroup[]
   onSaved: (groups: OntologyGroup[]) => void
 }) {
@@ -123,7 +125,7 @@ export function GroupManagerDialog({
       const res = await fetch("/api/groups", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId, groups: payload }),
+        body: JSON.stringify({ projectId, target, groups: payload }),
       })
       if (!res.ok) {
         const err = await res.json().catch(() => ({}))
@@ -140,11 +142,14 @@ export function GroupManagerDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
-        <DialogHeader><DialogTitle>グループの管理</DialogTitle></DialogHeader>
+        <DialogHeader>
+          <DialogTitle>{target === "class" ? "クラス" : "リレーション"}のグループを管理</DialogTitle>
+        </DialogHeader>
         <div className="space-y-3 py-2">
           <p className="text-xs text-muted-foreground">
-            クラスとリレーションを束ねて見るための整理用の区分です。オントロジーの意味には影響せず、
-            Neo4jへのエクスポートにも含まれません。
+            {target === "class" ? "クラス" : "リレーション"}を束ねて見るための整理用の区分です。
+            オントロジーの意味には影響せず、Neo4jへのエクスポートにも含まれません。
+            {target === "class" ? "リレーション" : "クラス"}のグループとは別に管理します。
           </p>
 
           <div className="max-h-72 space-y-2 overflow-y-auto pr-1">

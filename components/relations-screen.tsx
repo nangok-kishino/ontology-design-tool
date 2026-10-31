@@ -168,7 +168,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
 
   // 確認機構
   // 整理用グループ（クラス管理と同じ一覧を共用する）
-  const { groups, setGroups, refresh: refreshGroups } = useGroups(currentProject?.id)
+  const { groups, setGroups, refresh: refreshGroups } = useGroups(currentProject?.id, "relation")
   const [viewMode, setViewMode] = useState<BoardViewMode>("list")
   const [showGroupManager, setShowGroupManager] = useState(false)
   const [movingGroup, setMovingGroup] = useState(false)
@@ -1498,6 +1498,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
           open={showGroupManager}
           onOpenChange={setShowGroupManager}
           projectId={currentProject.id}
+          target="relation"
           groups={groups}
           onSaved={(saved) => {
             setGroups(saved)
