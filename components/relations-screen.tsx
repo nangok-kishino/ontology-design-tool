@@ -37,7 +37,6 @@ import { GroupBoard, ViewToggle, type BoardViewMode, type ReorderUpdate } from "
 import { DragRow, DropRow, ListDndContext } from "@/components/list-dnd"
 import { cn } from "@/lib/utils"
 import { UNGROUPED, placeAt, reorderUpdates, sortByOrder, sortGroups } from "@/lib/organize"
-import { buildClassTree, flattenClassTree, sortClassTree } from "@/lib/class-tree"
 import type { OntologyRelation, OntologyClass, OntologyAttribute, OntologyGroup, AttributeRequired, ClassPair, RelationCondition, RelationConditionOperator } from "@/lib/types"
 import {
   buildRelationsYaml,
@@ -648,18 +647,20 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
   // 始点・終点には親クラスだけを指定する。子クラスは親の宣言を自動的に継承するので、
   // 子クラス分のペアは保存しない（lib/relation-inherit.ts）。かつて展開して保存した
   // ペアは、サーバが返す時点で親のペアに畳まれている。
-  // 選択肢は親の下に子が並ぶ順（深さ付き）で出し、どれが親クラスかを見て選べるようにする。
-  const classOptions = useMemo(() => flattenClassTree(sortClassTree(buildClassTree(classes))), [classes])
-  const renderClassOptions = () =>
-    classOptions.map(({ node, depth }) => (
-      <SelectItem key={node.id} value={node.id}>
-        <span style={{ paddingLeft: depth * 12 }}>
-          {depth > 0 && <span className="mr-1 text-muted-foreground">└</span>}
-          {node.name}
-          {node.nameEn && <span className="ml-1.5 text-xs text-muted-foreground">{node.nameEn}</span>}
-        </span>
+  // そのため選択肢には子クラスを出さない（親を持たないクラスだけ）。
+  // 既に子クラスを指しているペアだけは、表示が空にならないようその値も混ぜる。
+  const parentClassOptions = useMemo(() => sortByOrder(classes.filter((c) => !c.parentId)), [classes])
+  const renderClassOptions = (currentId?: string) => {
+    const options = [...parentClassOptions]
+    const current = currentId ? classes.find((c) => c.id === currentId) : undefined
+    if (current && current.parentId) options.unshift(current)
+    return options.map((c) => (
+      <SelectItem key={c.id} value={c.id}>
+        {c.name}
+        {c.nameEn && <span className="ml-1.5 text-xs text-muted-foreground">{c.nameEn}</span>}
       </SelectItem>
     ))
+  }
   // classPairs のいずれかの端点が不明なら、定義が不完全なリレーション
   const relationIncomplete = (r: OntologyRelation) =>
     (r.classPairs ?? []).length === 0 ||
@@ -1177,7 +1178,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                                 <SelectValue>{pair.sourceClassId ? className(pair.sourceClassId) : "始点(A)クラス"}</SelectValue>
                               </SelectTrigger>
                               <SelectContent className="max-h-72">
-                                {renderClassOptions()}
+                                {renderClassOptions(pair.sourceClassId)}
                               </SelectContent>
                             </Select>
                             <ArrowRight className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
@@ -1187,7 +1188,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                                 <SelectValue>{pair.targetClassId ? className(pair.targetClassId) : "終点(B)クラス"}</SelectValue>
                               </SelectTrigger>
                               <SelectContent className="max-h-72">
-                                {renderClassOptions()}
+                                {renderClassOptions(pair.targetClassId)}
                               </SelectContent>
                             </Select>
                             {editPairs.length > 1 && (
@@ -1203,7 +1204,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                         <Plus className="h-3.5 w-3.5" />ペアを追加
                       </Button>
                       <p className="mt-1 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-                        子クラスは<strong className="font-medium text-foreground">親クラスのリレーションを自動的に継承</strong>します。ここには親クラスだけを指定してください。
+                        子クラスは<strong className="font-medium text-foreground">親クラスのリレーションを自動的に継承</strong>します。そのため、ここには親クラスだけが並びます。
                       </p>
                     </div>
                     <div className="space-y-1.5">
@@ -1299,7 +1300,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                         <SelectValue>{pair.sourceClassId ? className(pair.sourceClassId) : "始点(A)クラス"}</SelectValue>
                       </SelectTrigger>
                       <SelectContent>
-                        {renderClassOptions()}
+                        {renderClassOptions(pair.sourceClassId)}
                       </SelectContent>
                     </Select>
                     <ArrowRight className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
@@ -1309,7 +1310,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                         <SelectValue>{pair.targetClassId ? className(pair.targetClassId) : "終点(B)クラス"}</SelectValue>
                       </SelectTrigger>
                       <SelectContent>
-                        {renderClassOptions()}
+                        {renderClassOptions(pair.targetClassId)}
                       </SelectContent>
                     </Select>
                     {newPairs.length > 1 && (
@@ -1327,7 +1328,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                 ペアを追加
               </Button>
               <p className="mt-1 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-                子クラスは<strong className="font-medium text-foreground">親クラスのリレーションを自動的に継承</strong>します。ここには親クラスだけを指定してください。
+                子クラスは<strong className="font-medium text-foreground">親クラスのリレーションを自動的に継承</strong>します。そのため、ここには親クラスだけが並びます。
               </p>
             </div>
             <div className="space-y-2">

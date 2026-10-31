@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useRef, useEffect, useCallback } from "react"
+import { useState, useRef, useEffect, useCallback, useMemo } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -147,6 +147,9 @@ export function ReviewScreen({ active, ingestVersion, onIngested }: { active?: b
   // 候補の重複判定でクラスの親子関係を見る（子クラスは親の宣言を継承する）
   const classesRef = useRef<OntologyClass[]>([])
   useEffect(() => { classesRef.current = classes }, [classes])
+  // リレーション候補の始点・終点に選べるのは親クラスだけ。
+  // 子クラスは親の宣言を継承するので、子クラスで宣言し直す必要がない。
+  const parentClasses = useMemo(() => classes.filter((c) => !c.parentId), [classes])
 
   // 既存クラス・リレーションを取得する（解析結果は消さない）。
   // 画面はマウント維持されるため、クラス管理等でクラスを追加した後に
@@ -982,7 +985,7 @@ export function ReviewScreen({ active, ingestVersion, onIngested }: { active?: b
                                         </SelectTrigger>
                                         <SelectContent className="max-h-72">
                                           <SelectItem value="__none__">選択</SelectItem>
-                                          {classes.map((cls) => <SelectItem key={cls.id} value={cls.id}>{cls.name}</SelectItem>)}
+                                          {parentClasses.map((cls) => <SelectItem key={cls.id} value={cls.id}>{cls.name}</SelectItem>)}
                                         </SelectContent>
                                       </Select>
                                     </TableCell>
@@ -1002,7 +1005,7 @@ export function ReviewScreen({ active, ingestVersion, onIngested }: { active?: b
                                         </SelectTrigger>
                                         <SelectContent className="max-h-72">
                                           <SelectItem value="__none__">選択</SelectItem>
-                                          {classes.map((cls) => <SelectItem key={cls.id} value={cls.id}>{cls.name}</SelectItem>)}
+                                          {parentClasses.map((cls) => <SelectItem key={cls.id} value={cls.id}>{cls.name}</SelectItem>)}
                                         </SelectContent>
                                       </Select>
                                     </TableCell>
