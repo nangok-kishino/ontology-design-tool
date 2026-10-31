@@ -163,6 +163,12 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
   const [showGroupManager, setShowGroupManager] = useState(false)
   const [movingGroup, setMovingGroup] = useState(false)
 
+  // ボード表示へ切り替えた時点で選択を外す。整理中は基本情報ペインを出さず全幅で扱う。
+  const changeViewMode = (mode: BoardViewMode) => {
+    setViewMode(mode)
+    if (mode === "board") setSelectedId(null)
+  }
+
   // 確認機構
   const [filterState, setFilterState] = useState<"all" | ConfirmationState>("all")
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
@@ -850,7 +856,7 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
           <div className="flex items-center justify-between gap-3 px-6 py-3">
             <div className="flex min-w-0 items-center gap-3">
               <h2 className="shrink-0 text-base font-semibold text-foreground">クラス一覧</h2>
-              <ViewToggle value={viewMode} onChange={setViewMode} />
+              <ViewToggle value={viewMode} onChange={changeViewMode} />
               <button
                 type="button"
                 className="shrink-0 text-xs text-muted-foreground underline-offset-2 hover:underline disabled:opacity-50"
