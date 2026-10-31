@@ -38,7 +38,7 @@ import { DragRow, DropRow, ListDndContext } from "@/components/list-dnd"
 import { cn } from "@/lib/utils"
 import { nextOrder, placeAt, reorderUpdates, rootOf, sortByOrder } from "@/lib/organize"
 import { classSections, type ClassTreeNode } from "@/lib/class-tree"
-import type { OntologyClass, OntologyAttribute, OntologyGroup, OntologyRelation, AttributeRequired } from "@/lib/types"
+import type { OntologyClass, OntologyAttribute, OntologyGroup, OntologyRelation, AttributeRequired, ClassTriplet } from "@/lib/types"
 import {
   buildClassesYaml,
   downloadYaml,
@@ -116,6 +116,8 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
 
   // リレーション
   const [relations, setRelations] = useState<OntologyRelation[]>([])
+  // 主語がクラスのトリプレット。作る・消すはトリプレット管理なので、ここでは見るだけ。
+  const [classTriplets, setClassTriplets] = useState<ClassTriplet[]>([])
 
   // 属性 (3種)
   const [projectAttrs, setProjectAttrs] = useState<OntologyAttribute[]>([])
@@ -176,12 +178,14 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
     if (!currentProject) return
     setLoading(true)
     try {
-      const [classData, relData] = await Promise.all([
+      const [classData, relData, classTripletData] = await Promise.all([
         fetch(`/api/classes?projectId=${currentProject.id}`).then((r) => r.json()),
         fetch(`/api/relations?projectId=${currentProject.id}`).then((r) => r.json()),
+        fetch(`/api/class-triplets?projectId=${currentProject.id}`).then((r) => r.json()),
       ])
       setClasses(classData)
       setRelations(Array.isArray(relData) ? relData : [])
+      setClassTriplets(Array.isArray(classTripletData) ? classTripletData : [])
     } finally {
       setLoading(false)
     }
@@ -193,6 +197,7 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
     if (projectLoading) return
     setSelectedId(null)
     setClasses([])
+    setClassTriplets([])
     setRelations([])
     setLoading(!!currentProject)
   }, [currentProject?.id, projectLoading])
@@ -846,6 +851,30 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
     }
   }
 
+  // クラストリプレット：このクラスに直接付いたものと、親クラスから継承したもの。
+  // 参照先が消えたものは出さない（「不明」を残さない）。
+  type ClassTripletRow = { triplet: ClassTriplet; inheritedFrom: OntologyClass | null }
+  const classTripletRows: ClassTripletRow[] = []
+  if (selected) {
+    const alive = (ct: ClassTriplet) =>
+      !!relations.find((r) => r.id === ct.predicateRelationId) &&
+      (ct.objectKind === "class" ? classes.some((c) => c.id === ct.objectId) : true)
+    for (const ct of classTriplets) {
+      if (ct.subjectClassId === selected.id && alive(ct)) classTripletRows.push({ triplet: ct, inheritedFrom: null })
+    }
+    let ancestorId = selected.parentId
+    const seen = new Set<string>([selected.id])
+    while (ancestorId && !seen.has(ancestorId)) {
+      seen.add(ancestorId)
+      const ancestor = classes.find((c) => c.id === ancestorId)
+      if (!ancestor) break
+      for (const ct of classTriplets) {
+        if (ct.subjectClassId === ancestor.id && alive(ct)) classTripletRows.push({ triplet: ct, inheritedFrom: ancestor })
+      }
+      ancestorId = ancestor.parentId
+    }
+  }
+
   const getClassName = (id: string) => classes.find((c) => c.id === id)?.name ?? "不明"
 
   // 変更があるか（保存ボタンの活性判定）
@@ -1393,6 +1422,59 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
                     {directRelations.length === 0 && inheritedRelations.length === 0 && (
                       <p className="text-center text-sm text-muted-foreground py-4">関連するリレーションはありません</p>
                     )}
+
+                    {/* クラストリプレット（主語がこのクラス）。見るだけ：作る・消すはトリプレット管理。 */}
+                    <div className="space-y-2">
+                      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">クラストリプレット</p>
+                      <p className="text-xs text-muted-foreground">
+                        このクラスのインスタンスすべてに当てはまるトリプレットです。作成・削除はトリプレット管理で行います。
+                      </p>
+                      <div className="rounded-lg border border-border">
+                        <Table className="table-fixed">
+                          <TableHeader>
+                            <TableRow className="bg-muted/50 hover:bg-muted/50">
+                              <TableHead className="w-[32%] font-semibold text-foreground">述語</TableHead>
+                              <TableHead className="w-[40%] font-semibold text-foreground">目的語</TableHead>
+                              <TableHead className="w-[28%] font-semibold text-foreground">継承元</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {classTripletRows.length > 0 ? (
+                              classTripletRows.map((row) => (
+                                <TableRow key={`${row.triplet.id}-${row.inheritedFrom?.id ?? "self"}`}>
+                                  <TableCell className="font-medium text-foreground">
+                                    <span title={row.triplet.predicateName} className="block truncate">
+                                      {relations.find((r) => r.id === row.triplet.predicateRelationId)?.name ?? row.triplet.predicateName}
+                                    </span>
+                                  </TableCell>
+                                  <TableCell>
+                                    <span className="block truncate" title={row.triplet.objectName}>
+                                      {row.triplet.objectKind === "class"
+                                        ? getClassName(row.triplet.objectId)
+                                        : row.triplet.objectName}
+                                      <span className="ml-1.5 text-xs text-muted-foreground">
+                                        {row.triplet.objectKind === "class" ? "（クラス）" : "（インスタンス）"}
+                                      </span>
+                                    </span>
+                                  </TableCell>
+                                  <TableCell>
+                                    <span className="block truncate text-sm text-muted-foreground">
+                                      {row.inheritedFrom ? row.inheritedFrom.name : "—"}
+                                    </span>
+                                  </TableCell>
+                                </TableRow>
+                              ))
+                            ) : (
+                              <TableRow>
+                                <TableCell colSpan={3} className="text-center text-muted-foreground">
+                                  このクラスに付いているクラストリプレットはありません
+                                </TableCell>
+                              </TableRow>
+                            )}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    </div>
                   </div>
                 </section>
               </div>

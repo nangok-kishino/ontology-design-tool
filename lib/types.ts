@@ -251,6 +251,32 @@ export type TripletCandidate = {
 }
 
 // 承認済み（本登録）トリプレット。一覧・エクスポートの対象。
+// クラスのトリプレット：主語がインスタンスではなくクラスのもの。
+// 「支柱は規格Aに基づく」のように、そのクラスのインスタンスすべてに当てはまる言明で、
+// 文書から拾った事実ではなく設計で決めたこと。インスタンスのトリプレットとは
+// 別のコンテナに保存し、一覧でも分けて扱う。子クラスは親の宣言を継承する。
+//   目的語がインスタンス : 特定の1つを指す（OWL の owl:hasValue に当たる）
+//                          例）支柱 ─[規格に基づく]→ 規格A
+//   目的語がクラス       : 相手の種類だけを決める（OWL の owl:allValuesFrom に当たる）
+//                          例）支柱 ─[規格に基づく]→ 規格
+export type ClassTriplet = {
+  id: string
+  projectId: string
+  subjectClassId: string
+  predicateRelationId: string
+  objectKind: "class" | "instance"
+  objectId: string
+  // 一覧をそのまま出せるよう、作成時点の名前も持つ（インスタンスのトリプレットと同じ）
+  subjectName: string
+  predicateName: string
+  objectName: string
+  createdBy?: string
+  updatedBy?: string
+  createdAt: string
+  updatedAt: string
+  confirmations?: ConfirmationEvent[]
+}
+
 export type Triplet = {
   id: string
   projectId: string

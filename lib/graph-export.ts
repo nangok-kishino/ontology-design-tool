@@ -6,7 +6,7 @@
 // ノードには、そのインスタンスの属性値（attributes）と登録者/日時も出力する。
 // エッジには、出典・根拠文・承認者/日時を出力する（トレーサビリティ）。
 
-import type { Triplet, OntologyInstance } from "./types"
+import type { Triplet, ClassTriplet, OntologyInstance } from "./types"
 
 function escLabel(s: string): string {
   return "`" + s.replace(/`/g, "``") + "`"
@@ -19,6 +19,7 @@ export function buildCypher(
   triplets: Triplet[],
   classNameById: Map<string, string>,
   instById?: Map<string, OntologyInstance>,
+  classTriplets?: ClassTriplet[],
 ): string {
   // ノードをインスタンスid単位で一意化（スナップショットをフォールバックにしつつ、
   // 実体があれば最新のインスタンスから名前・クラス・属性を採る）
@@ -78,5 +79,42 @@ export function buildCypher(
         (rsets.length ? ` SET ${rsets.join(", ")}` : "") + ";",
     )
   }
+  // クラストリプレット（主語がクラス）。クラスもノードとして出し、そこから辺を張る。
+  // インスタンス側には展開しない（「このクラスのものはすべて…」はクラスのノードを辿れば分かる）。
+  const classRows = classTriplets ?? []
+  if (classRows.length > 0) {
+    const classNodes = new Map<string, string>()
+    for (const ct of classRows) {
+      classNodes.set(ct.subjectClassId, classNameById.get(ct.subjectClassId) ?? ct.subjectName)
+      if (ct.objectKind === "class") {
+        classNodes.set(ct.objectId, classNameById.get(ct.objectId) ?? ct.objectName)
+      }
+    }
+    lines.push("")
+    lines.push("// ノード（クラス）: クラストリプレットで使われるクラス。")
+    for (const [id, name] of classNodes) {
+      lines.push(`MERGE (c:Class {id: ${escStr(id)}}) SET c.name = ${escStr(name)}, c:${escLabel(name)};`)
+    }
+    lines.push("")
+    lines.push("// クラストリプレット: 主語はクラス。そのクラスのインスタンスすべてに当てはまる。")
+    for (const ct of classRows) {
+      if (ct.objectKind === "instance") {
+        const inst = instById?.get(ct.objectId)
+        const name = inst?.name ?? ct.objectName
+        const cls = inst?.classId ? classNameById.get(inst.classId) : undefined
+        const sets = [`o.name = ${escStr(name)}`]
+        if (inst?.classId) sets.push(`o.classId = ${escStr(inst.classId)}`)
+        if (cls) {
+          sets.push(`o.className = ${escStr(cls)}`)
+          sets.push(`o:${escLabel(cls)}`)
+        }
+        lines.push(`MERGE (o:Instance {id: ${escStr(ct.objectId)}}) SET ${sets.join(", ")};`)
+      }
+      const objLabel = ct.objectKind === "class" ? "Class" : "Instance"
+      lines.push(`MATCH (s:Class {id: ${escStr(ct.subjectClassId)}}), (o:${objLabel} {id: ${escStr(ct.objectId)}})`)
+      lines.push(`MERGE (s)-[r:${escLabel(ct.predicateName)} {id: ${escStr(ct.id)}}]->(o) SET r.scope = "class";`)
+    }
+  }
+
   return lines.join("\n")
 }
