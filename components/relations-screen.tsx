@@ -46,7 +46,7 @@ import {
   executeRelationsImport,
   type RelationExportItem,
 } from "@/lib/import-export"
-import { ArrowRight, Plus, Pencil, Trash2, Loader2, X, AlertTriangle, Info, Download, Upload, FileText, Tags, CheckCircle2, Filter } from "lucide-react"
+import { ArrowRight, Plus, Pencil, Trash2, Loader2, X, AlertTriangle, Info, Download, Upload, FileText, Tags, CheckCircle2, Filter, ChevronDown, ChevronRight } from "lucide-react"
 import { useProject } from "@/app/project-context"
 import { deriveConfirmationStatus, type ConfirmationState } from "@/lib/confirmation"
 import { hasConditions } from "@/lib/relation-conditions"
@@ -461,8 +461,18 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
   // 並べ替えは全件表示のときだけ。絞り込み中は隠れた行と入れ替わって挙動が読めなくなる。
   const canReorder = filterState === "all"
 
+  // グループの開閉。閉じたグループの中身は行を出さない（件数は変えない）。
+  const [collapsedGroupKeys, setCollapsedGroupKeys] = useState<Set<string>>(new Set())
+  const toggleGroupKey = (key: string) =>
+    setCollapsedGroupKeys((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+
   type ListRow =
-    | { kind: "group"; key: string; group: OntologyGroup | null; count: number }
+    | { kind: "group"; key: string; groupKey: string; group: OntologyGroup | null; count: number }
     | { kind: "relation"; key: string; rel: OntologyRelation }
 
   // グループごとに仕分けして並べる。グループが未作成のうちは見出しを出さない。
@@ -485,17 +495,21 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
     sections.push({ group: null, items: sortByOrder(buckets.get(UNGROUPED) ?? []) })
     return sections.flatMap((section) => {
       if (!section.group && section.items.length === 0) return []
+      const groupKey = section.group?.id ?? "ungrouped"
       return [
         {
           kind: "group" as const,
-          key: `${GROUP_ROW_PREFIX}${section.group?.id ?? "ungrouped"}`,
+          key: `${GROUP_ROW_PREFIX}${groupKey}`,
+          groupKey,
           group: section.group,
           count: section.items.length,
         },
-        ...section.items.map((rel) => ({ kind: "relation" as const, key: rel.id, rel })),
+        ...(collapsedGroupKeys.has(groupKey)
+          ? []
+          : section.items.map((rel) => ({ kind: "relation" as const, key: rel.id, rel }))),
       ]
     })
-  }, [displayedRelations, groups])
+  }, [displayedRelations, groups, collapsedGroupKeys])
 
   // ボード上のドラッグ結果を保存する。groupId と order だけを動かす。
   const applyReorder = async (updates: ReorderUpdate[]): Promise<boolean> => {
@@ -1051,14 +1065,22 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                         return (
                           <DropRow key={row.key} id={row.key} enabled={canReorder} className="bg-muted/40 hover:bg-muted/40">
                             <TableCell colSpan={6} className="py-1.5">
-                              <span className="flex items-center gap-2 text-xs font-semibold text-foreground">
+                              <button
+                                type="button"
+                                aria-label={`${row.group?.name ?? "未分類"}を${collapsedGroupKeys.has(row.groupKey) ? "開く" : "閉じる"}`}
+                                onClick={() => toggleGroupKey(row.groupKey)}
+                                className="flex items-center gap-2 text-xs font-semibold text-foreground"
+                              >
+                                {collapsedGroupKeys.has(row.groupKey)
+                                  ? <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+                                  : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />}
                                 <span
                                   className="h-2.5 w-2.5 rounded-full border border-border"
                                   style={row.group?.color ? { backgroundColor: row.group.color } : undefined}
                                 />
                                 {row.group?.name ?? "未分類"}
                                 <span className="font-normal text-muted-foreground">{row.count}件</span>
-                              </span>
+                              </button>
                             </TableCell>
                           </DropRow>
                         )

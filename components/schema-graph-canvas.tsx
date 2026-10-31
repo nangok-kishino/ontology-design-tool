@@ -15,7 +15,7 @@ import ForceGraph2D from "react-force-graph-2d"
 import type { OntologyClass, OntologyRelation } from "@/lib/types"
 import { formatRelationCondition } from "@/lib/relation-conditions"
 import { hueForClass, neon, esc } from "@/lib/graph-colors"
-import { radialTreeLayout } from "@/lib/radial-layout"
+import { mindMapLayout } from "@/lib/mindmap-layout"
 
 type SchemaNode = {
   id: string
@@ -501,16 +501,14 @@ export default function SchemaGraphCanvas({
     if (!userMovedRef.current) fitToView(500)
   }, [data, layoutKey, fitToView])
 
-  // 放射状ツリー（マインドマップ）に並べ直して固定する。
+  // マインドマップ（中心から左右へ伸びる横のツリー）に並べ直して固定する。
   // 1つのクラスに子や関連が何十個もぶら下がると力学では団子になるため、
-  // 階層を見つけて外周へ逃がす。並べた結果はそのまま配置として保存する。
-  const arrangeRadial = useCallback(() => {
-    const placement = radialTreeLayout(
-      data.nodes.map((n) => n.id),
+  // 階層を見つけて縦に積む。並べた結果はそのまま配置として保存する。
+  const arrangeMindMap = useCallback(() => {
+    const placement = mindMapLayout(
+      data.nodes.map((n) => { const r = radiusOfRef.current(n); return { id: n.id, w: r * 2, h: r * 2 } }),
       data.links.map((l) => ({ source: endId(l.source), target: endId(l.target) })),
-      // クラス名は円の中に実寸で描くので、広げすぎると全体を収めたときに字が潰れる。
-      // 円が重ならない範囲で詰める。
-      { ringGap: 210, nodeSpacing: 130, componentGap: 300 },
+      { hGap: 150, vGap: 26, componentGap: 90 },
     )
     const layout: SavedLayout = {}
     for (const n of data.nodes) {
@@ -923,10 +921,10 @@ export default function SchemaGraphCanvas({
         ))}
         <button
           type="button"
-          onClick={arrangeRadial}
+          onClick={arrangeMindMap}
           className="rounded-md border border-sky-200/20 bg-[#0a1a2f]/80 px-2.5 py-1 text-xs text-sky-50 backdrop-blur-sm transition-colors hover:bg-sky-900/60"
         >
-          放射状に並べる
+          マインドマップに並べる
         </button>
         <button
           type="button"

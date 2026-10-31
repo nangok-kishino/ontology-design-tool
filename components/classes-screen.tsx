@@ -52,7 +52,7 @@ import { ConfirmationBadge } from "@/components/confirmation-badge"
 import { ConfirmDialog } from "@/components/confirm-dialog"
 import { ConfirmationSummary } from "@/components/confirmation-summary"
 import { SynonymInput } from "@/components/synonym-input"
-import { Plus, Pencil, Trash2, Loader2, AlertTriangle, Info, Download, Upload, FileText, Tags, Link2, CheckCircle2, X } from "lucide-react"
+import { Plus, Pencil, Trash2, Loader2, AlertTriangle, Info, Download, Upload, FileText, Tags, Link2, CheckCircle2, X, ChevronDown, ChevronRight } from "lucide-react"
 import { useProject } from "@/app/project-context"
 
 type TreeNode = ClassTreeNode
@@ -528,6 +528,19 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
     }
   }
 
+  // 一覧の開閉。閉じたクラスの配下と、閉じたグループの中身は行を出さない。
+  // （件数の表示は閉じても変えない。閉じたせいで減ったように見えると紛らわしい）
+  const [collapsedClassIds, setCollapsedClassIds] = useState<Set<string>>(new Set())
+  const [collapsedGroupKeys, setCollapsedGroupKeys] = useState<Set<string>>(new Set())
+  const toggleIn = (set: Set<string>, key: string) => {
+    const next = new Set(set)
+    if (next.has(key)) next.delete(key)
+    else next.add(key)
+    return next
+  }
+  const countNodes = (nodes: TreeNode[]): number =>
+    nodes.reduce((sum, n) => sum + 1 + countNodes(n.children), 0)
+
   // グループ分けとツリー組みは lib/class-tree.ts に任せる（インスタンス管理の
   // クラス一覧と同じ並びにするため）。ここでは確認フィルタと行の平坦化だけ行う。
   const groupSections = useMemo(() => {
@@ -545,18 +558,19 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
       const walk = (nodes: TreeNode[], depth: number) => {
         for (const n of nodes) {
           rows.push({ node: n, depth })
-          if (n.children.length) walk(n.children, depth + 1)
+          if (n.children.length && !collapsedClassIds.has(n.id)) walk(n.children, depth + 1)
         }
       }
       walk(trees, 0)
-      return { group, trees, rows }
+      return { group, trees, rows, total: countNodes(trees) }
     })
-  }, [classes, groups, filterState])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [classes, groups, filterState, collapsedClassIds])
 
   const flatClasses = useMemo(() => groupSections.flatMap((s) => s.rows), [groupSections])
 
   type ListRow =
-    | { kind: "group"; key: string; group: OntologyGroup | null; count: number }
+    | { kind: "group"; key: string; groupKey: string; group: OntologyGroup | null; count: number }
     | ({ kind: "class"; key: string } & ClassRow)
 
   // グループが未作成のうちは見出しを出さない（従来のツリー一覧と同じ見た目になる）
@@ -565,14 +579,19 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
       ? flatClasses.map((row) => ({ kind: "class" as const, key: row.node.id, ...row }))
       : groupSections.flatMap((section) => {
           if (!section.group && section.rows.length === 0) return []
+          const groupKey = section.group?.id ?? "ungrouped"
+          const collapsed = collapsedGroupKeys.has(groupKey)
           return [
             {
               kind: "group" as const,
-              key: `${GROUP_ROW_PREFIX}${section.group?.id ?? "ungrouped"}`,
+              key: `${GROUP_ROW_PREFIX}${groupKey}`,
+              groupKey,
               group: section.group,
-              count: section.rows.length,
+              count: section.total,
             },
-            ...section.rows.map((row) => ({ kind: "class" as const, key: row.node.id, ...row })),
+            ...(collapsed
+              ? []
+              : section.rows.map((row) => ({ kind: "class" as const, key: row.node.id, ...row }))),
           ]
         })
 
@@ -1084,14 +1103,22 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
                         return (
                           <DropRow key={row.key} id={row.key} enabled={canReorder} className="bg-muted/40 hover:bg-muted/40">
                             <TableCell colSpan={4} className="py-1.5">
-                              <span className="flex items-center gap-2 text-xs font-semibold text-foreground">
+                              <button
+                                type="button"
+                                aria-label={`${row.group?.name ?? "未分類"}を${collapsedGroupKeys.has(row.groupKey) ? "開く" : "閉じる"}`}
+                                onClick={() => setCollapsedGroupKeys((prev) => toggleIn(prev, row.groupKey))}
+                                className="flex items-center gap-2 text-xs font-semibold text-foreground"
+                              >
+                                {collapsedGroupKeys.has(row.groupKey)
+                                  ? <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+                                  : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />}
                                 <span
                                   className="h-2.5 w-2.5 rounded-full border border-border"
                                   style={row.group?.color ? { backgroundColor: row.group.color } : undefined}
                                 />
                                 {row.group?.name ?? "未分類"}
                                 <span className="font-normal text-muted-foreground">{row.count}件</span>
-                              </span>
+                              </button>
                             </TableCell>
                           </DropRow>
                         )
@@ -1126,8 +1153,29 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
                           <TableCell className="font-medium text-foreground">
                             <span className="flex items-start" style={{ paddingLeft: depth * 16 }}>
                               {depth > 0 && <span className="mr-1 text-muted-foreground/70">└</span>}
+                              {node.children.length > 0 ? (
+                                <button
+                                  type="button"
+                                  aria-label={`${node.name}のサブクラスを${collapsedClassIds.has(node.id) ? "開く" : "閉じる"}`}
+                                  onClick={(e) => { e.stopPropagation(); setCollapsedClassIds((prev) => toggleIn(prev, node.id)) }}
+                                  className="mr-1 mt-0.5 shrink-0 rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                                >
+                                  {collapsedClassIds.has(node.id)
+                                    ? <ChevronRight className="h-3.5 w-3.5" />
+                                    : <ChevronDown className="h-3.5 w-3.5" />}
+                                </button>
+                              ) : (
+                                <span className="mr-1 w-3.5 shrink-0" />
+                              )}
                               <span className="flex flex-col">
-                                <span>{node.name}</span>
+                                <span>
+                                  {node.name}
+                                  {collapsedClassIds.has(node.id) && node.children.length > 0 && (
+                                    <span className="ml-1.5 text-xs font-normal text-muted-foreground">
+                                      サブクラス{countNodes(node.children)}件
+                                    </span>
+                                  )}
+                                </span>
                                 {node.nameEn && <span className="text-xs font-normal text-muted-foreground">{node.nameEn}</span>}
                               </span>
                             </span>
