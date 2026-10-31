@@ -65,8 +65,25 @@ const EMPTY_DRAFT: Draft = { subjectInstanceId: "", predicateRelationId: "", obj
 // 追加ダイアログの下書き。リレーションは親クラスで定義し、インスタンスは子クラスに
 // ぶら下がるので、同じ述語・同じ相手のトリプレットが件数分必要になることが多い。
 // そのため主語・目的語は複数選べるようにして、組み合わせをまとめて登録する。
-type BulkDraft = { predicateRelationId: string; subjectInstanceIds: string[]; objectInstanceIds: string[] }
-const EMPTY_BULK: BulkDraft = { predicateRelationId: "", subjectInstanceIds: [], objectInstanceIds: [] }
+// 追加ダイアログの下書き。主語・目的語それぞれクラスかインスタンスかを選べるので、
+// 4通り（インスタンス→インスタンス／クラス→インスタンス／クラス→クラス／
+// インスタンス→クラス）をこの1つのダイアログで作れる。
+// どちらも複数選べて、組み合わせをまとめて登録する。
+type EndKind = "class" | "instance"
+type AddDraft = {
+  predicateRelationId: string
+  subjectKind: EndKind
+  subjectIds: string[]
+  objectKind: EndKind
+  objectIds: string[]
+}
+const EMPTY_ADD: AddDraft = {
+  predicateRelationId: "",
+  subjectKind: "instance",
+  subjectIds: [],
+  objectKind: "instance",
+  objectIds: [],
+}
 
 export function TripletsScreen({ active }: { active?: boolean }) {
   const { currentProject, loading: projectLoading } = useProject()
@@ -77,12 +94,6 @@ export function TripletsScreen({ active }: { active?: boolean }) {
   // クラストリプレット（主語がクラス）。インスタンスのトリプレットとは別に持つ。
   const [classTriplets, setClassTriplets] = useState<ClassTriplet[]>([])
   const [classSectionOpen, setClassSectionOpen] = useState(true)
-  const [showAddClass, setShowAddClass] = useState(false)
-  const [classDraft, setClassDraft] = useState<{ subjectClassId: string; predicateRelationId: string; objectKind: "class" | "instance"; objectId: string }>(
-    { subjectClassId: "", predicateRelationId: "", objectKind: "class", objectId: "" },
-  )
-  const [addingClass, setAddingClass] = useState(false)
-  const [addClassError, setAddClassError] = useState<string | null>(null)
   const [deletingClassTripletId, setDeletingClassTripletId] = useState<string | null>(null)
   const [confirmClassTripletId, setConfirmClassTripletId] = useState<string | null>(null)
   const [confirmingClassTriplet, setConfirmingClassTriplet] = useState(false)
@@ -91,7 +102,7 @@ export function TripletsScreen({ active }: { active?: boolean }) {
 
   // 追加ダイアログ
   const [showAdd, setShowAdd] = useState(false)
-  const [addDraft, setAddDraft] = useState<BulkDraft>(EMPTY_BULK)
+  const [addDraft, setAddDraft] = useState<AddDraft>(EMPTY_ADD)
   const [adding, setAdding] = useState(false)
   const [addError, setAddError] = useState<string | null>(null)
 
@@ -275,9 +286,14 @@ export function TripletsScreen({ active }: { active?: boolean }) {
   // 不整合ならエラーを返す（前設計の整合表示は廃止）。
   const isComplete = (d: Draft) => !!(d.subjectInstanceId && d.predicateRelationId && d.objectInstanceId)
 
-  const noPrereq = registeredInstances.length < 2 || relations.length === 0
+  // クラスを端に使えるので、インスタンスが2件なくても作れる
+  const noPrereq = relations.length === 0 || classes.length === 0
 
-  const openAdd = () => { setAddDraft(EMPTY_BULK); setAddAttrValues({}); setAddError(null); setShowAdd(true) }
+  const openAdd = () => { setAddDraft(EMPTY_ADD); setAddAttrValues({}); setAddError(null); setShowAdd(true) }
+
+  // 端（クラス or インスタンス）を型として見るときのクラスid
+  const classIdOfEnd = (kind: EndKind, id: string) => (kind === "class" ? id : instById.get(id)?.classId ?? null)
+  const bothInstance = addDraft.subjectKind === "instance" && addDraft.objectKind === "instance"
 
   const tripletKeyOf = (s: string, p: string, o: string) => `${s}|${p}|${o}`
   const existingTripletKeys = useMemo(
@@ -285,23 +301,29 @@ export function TripletsScreen({ active }: { active?: boolean }) {
     [triplets],
   )
   // 主語×目的語の総当たり。自分自身への関係と、既に登録済みの組み合わせは省く。
+  const classTripletKeys = useMemo(
+    () => new Set(classTriplets.map((c) => tripletKeyOf(c.subjectId, c.predicateRelationId, c.objectId))),
+    [classTriplets],
+  )
+  // 主語×目的語の総当たり。同じものどうしと、既に登録済みの組み合わせは省く。
   const addCombos = useMemo(() => {
-    const { predicateRelationId: rel, subjectInstanceIds, objectInstanceIds } = addDraft
-    if (!rel) return [] as { subjectInstanceId: string; objectInstanceId: string }[]
-    const out: { subjectInstanceId: string; objectInstanceId: string }[] = []
-    for (const subjectInstanceId of subjectInstanceIds)
-      for (const objectInstanceId of objectInstanceIds) {
-        if (subjectInstanceId === objectInstanceId) continue
-        if (existingTripletKeys.has(tripletKeyOf(subjectInstanceId, rel, objectInstanceId))) continue
-        out.push({ subjectInstanceId, objectInstanceId })
+    const { predicateRelationId: rel, subjectKind, subjectIds, objectKind, objectIds } = addDraft
+    if (!rel) return [] as { subjectId: string; objectId: string }[]
+    const known = subjectKind === "instance" && objectKind === "instance" ? existingTripletKeys : classTripletKeys
+    const out: { subjectId: string; objectId: string }[] = []
+    for (const subjectId of subjectIds)
+      for (const objectId of objectIds) {
+        if (subjectKind === objectKind && subjectId === objectId) continue
+        if (known.has(tripletKeyOf(subjectId, rel, objectId))) continue
+        out.push({ subjectId, objectId })
       }
     return out
-  }, [addDraft, existingTripletKeys])
+  }, [addDraft, existingTripletKeys, classTripletKeys])
   // 総当たりのうち、既に登録済みで省いた件数（登録済みであることを伝えるため）
   const addSkipped = useMemo(() => {
-    const { subjectInstanceIds, objectInstanceIds } = addDraft
-    const all = subjectInstanceIds.length * objectInstanceIds.length
-    const selfPairs = subjectInstanceIds.filter((id) => objectInstanceIds.includes(id)).length
+    const { subjectKind, subjectIds, objectKind, objectIds } = addDraft
+    const all = subjectIds.length * objectIds.length
+    const selfPairs = subjectKind === objectKind ? subjectIds.filter((id) => objectIds.includes(id)).length : 0
     return all - selfPairs - addCombos.length
   }, [addDraft, addCombos])
 
@@ -321,24 +343,39 @@ export function TripletsScreen({ active }: { active?: boolean }) {
   }
 
   // 選んだ組み合わせをまとめて登録する。属性は全件に同じ値を入れる。
-  // 組み合わせ同士は互いに干渉しないので数本ずつ並行に流す。
+  // 主語も目的語もインスタンスならインスタンストリプレット、
+  // どちらかがクラスならクラスを含むトリプレットとして保存する。
   const handleAdd = async () => {
     if (!currentProject || addCombos.length === 0) return
     setAdding(true); setAddError(null)
-    const attributes = collectAttrValues(addDraft.predicateRelationId, addAttrValues)
+    const { predicateRelationId, subjectKind, objectKind } = addDraft
+    const toInstances = subjectKind === "instance" && objectKind === "instance"
+    const attributes = collectAttrValues(predicateRelationId, addAttrValues)
     let created = 0
     const errors: string[] = []
     const jobs = addCombos.map((combo) => async () => {
       try {
-        const res = await fetch("/api/triplets", {
+        const res = await fetch(toInstances ? "/api/triplets" : "/api/class-triplets", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            projectId: currentProject.id,
-            predicateRelationId: addDraft.predicateRelationId,
-            ...combo,
-            attributes,
-          }),
+          body: JSON.stringify(
+            toInstances
+              ? {
+                  projectId: currentProject.id,
+                  subjectInstanceId: combo.subjectId,
+                  predicateRelationId,
+                  objectInstanceId: combo.objectId,
+                  attributes,
+                }
+              : {
+                  projectId: currentProject.id,
+                  subjectKind,
+                  subjectId: combo.subjectId,
+                  predicateRelationId,
+                  objectKind,
+                  objectId: combo.objectId,
+                },
+          ),
         })
         if (res.ok) created++
         else errors.push((await res.json().catch(() => ({}))).error ?? "登録に失敗しました")
@@ -473,8 +510,31 @@ export function TripletsScreen({ active }: { active?: boolean }) {
 
   // クラスごとに束ねた候補リスト。クラスの行を押せばその配下のインスタンスを
   // まとめて選べる（「このクラスをこのリレーションに当てる」という選び方になる）。
-  const renderInstancePicker = (
-    candidates: OntologyInstance[],
+  // クラス／インスタンスの切り替え
+  const renderKindToggle = (value: EndKind, onChange: (kind: EndKind) => void) => (
+    <div className="flex gap-1">
+      {([
+        { key: "instance" as const, label: "インスタンス" },
+        { key: "class" as const, label: "クラス" },
+      ]).map((opt) => (
+        <button key={opt.key} type="button" onClick={() => onChange(opt.key)}
+          className={cn(
+            "rounded-full border px-2 py-0.5 text-xs transition-colors",
+            value === opt.key
+              ? "border-indigo-400 bg-indigo-100 text-indigo-800 dark:border-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-200"
+              : "border-border text-muted-foreground hover:bg-muted",
+          )}>
+          {opt.label}
+        </button>
+      ))}
+    </div>
+  )
+
+  // 候補リスト。インスタンスはクラスごとに束ね、クラスはそのまま並べる。
+  // 束ねた見出しを押せば配下をまとめて選べる。
+  type PickItem = { id: string; name: string; group: string }
+  const renderPicker = (
+    candidates: PickItem[],
     selectedIds: string[],
     onChange: (ids: string[]) => void,
     emptyText: string,
@@ -502,21 +562,23 @@ export function TripletsScreen({ active }: { active?: boolean }) {
           <span className="text-xs text-muted-foreground">{selectedIds.length} / {candidates.length} 件</span>
         </div>
         <div className="max-h-44 overflow-y-auto p-1">
-          {groupBy(candidates, (i) => i.classId ?? "").map((group) => {
-            const classId = group[0].classId ?? ""
+          {groupBy(candidates, (i) => i.group).map((group) => {
+            const label = group[0].group
             const ids = group.map((i) => i.id)
             const all = ids.every((id) => selected.has(id))
             return (
-              <div key={classId || "__none__"} className="mb-1 last:mb-0">
-                <label className="flex cursor-pointer items-center gap-1.5 rounded px-1.5 py-1 text-xs font-medium text-foreground hover:bg-muted">
-                  <input type="checkbox" className="h-3.5 w-3.5 accent-indigo-600" checked={all}
-                    ref={(el) => { if (el) el.indeterminate = !all && ids.some((id) => selected.has(id)) }}
-                    onChange={(e) => toggle(ids, e.target.checked)} />
-                  〈{classId ? (classNameById.get(classId) ?? "不明") : "未分類"}〉
-                  <span className="font-normal text-muted-foreground">{group.length}件</span>
-                </label>
+              <div key={label || "__none__"} className="mb-1 last:mb-0">
+                {label && (
+                  <label className="flex cursor-pointer items-center gap-1.5 rounded px-1.5 py-1 text-xs font-medium text-foreground hover:bg-muted">
+                    <input type="checkbox" className="h-3.5 w-3.5 accent-indigo-600" checked={all}
+                      ref={(el) => { if (el) el.indeterminate = !all && ids.some((id) => selected.has(id)) }}
+                      onChange={(e) => toggle(ids, e.target.checked)} />
+                    〈{label}〉
+                    <span className="font-normal text-muted-foreground">{group.length}件</span>
+                  </label>
+                )}
                 {group.map((i) => (
-                  <label key={i.id} className="flex cursor-pointer items-center gap-1.5 rounded py-0.5 pl-6 pr-1.5 text-sm hover:bg-muted">
+                  <label key={i.id} className={cn("flex cursor-pointer items-center gap-1.5 rounded py-0.5 pr-1.5 text-sm hover:bg-muted", label ? "pl-6" : "pl-1.5")}>
                     <input type="checkbox" className="h-3.5 w-3.5 accent-indigo-600" checked={selected.has(i.id)}
                       onChange={(e) => toggle([i.id], e.target.checked)} />
                     {i.name}
@@ -530,58 +592,59 @@ export function TripletsScreen({ active }: { active?: boolean }) {
     )
   }
 
-  // --- クラストリプレット（主語がクラス） ---
-  // 述語は、その主語クラスを始点に取れるリレーションだけ。目的語は、そのリレーションが
-  // 許す終点クラスとその子クラス（インスタンスなら、そのクラスに属するもの）。
-  const relationsForClass = (classId: string) => {
-    if (!classId) return []
-    return relations.filter((r) =>
-      (r.classPairs ?? []).some((p) => isSelfOrDescendant(classId, p.sourceClassId, classByIdForPairs)),
-    )
-  }
-  const targetClassIdsFor = (classId: string, relId: string) => {
+  // --- 追加ダイアログの候補 ---
+  // 述語を先に選ぶ。主語・目的語はそのリレーションに適合するものだけに絞られるので、
+  // クラス単位でまとめて選んで一度に登録できる。
+  const endItems = (kind: EndKind, list: (OntologyClass | OntologyInstance)[]): PickItem[] =>
+    kind === "class"
+      ? (list as OntologyClass[]).map((c) => ({ id: c.id, name: c.name, group: "" }))
+      : (list as OntologyInstance[]).map((i) => ({
+          id: i.id,
+          name: i.name,
+          group: i.classId ? classNameById.get(i.classId) ?? "不明" : "未分類",
+        }))
+
+  const subjectCandidates = (relId: string, kind: EndKind): PickItem[] => {
     const rel = relId ? relById.get(relId) : null
-    if (!classId || !rel) return [] as string[]
-    return (rel.classPairs ?? [])
-      .filter((p) => isSelfOrDescendant(classId, p.sourceClassId, classByIdForPairs))
-      .map((p) => p.targetClassId)
-  }
-  const classTargetsFor = (classId: string, relId: string) => {
-    const allowed = targetClassIdsFor(classId, relId)
-    return classes.filter((c) => allowed.some((t) => isSelfOrDescendant(c.id, t, classByIdForPairs)))
-  }
-  const instanceTargetsFor = (classId: string, relId: string) => {
-    const allowed = targetClassIdsFor(classId, relId)
-    return registeredInstances.filter(
-      (i) => i.classId && allowed.some((t) => isSelfOrDescendant(i.classId, t, classByIdForPairs)),
-    )
+    if (!rel) return []
+    const pairs = rel.classPairs ?? []
+    const list =
+      kind === "class"
+        ? classes.filter((c) => pairs.some((p) => isSelfOrDescendant(c.id, p.sourceClassId, classByIdForPairs)))
+        : registeredInstances.filter((i) => pairs.some((p) => isSelfOrDescendant(i.classId, p.sourceClassId, classByIdForPairs)))
+    return endItems(kind, list)
   }
 
-  const openAddClassTriplet = () => {
-    setClassDraft({ subjectClassId: "", predicateRelationId: "", objectKind: "class", objectId: "" })
-    setAddClassError(null)
-    setShowAddClass(true)
-  }
-
-  const handleAddClassTriplet = async () => {
-    if (!currentProject) return
-    const { subjectClassId, predicateRelationId, objectKind, objectId } = classDraft
-    if (!subjectClassId || !predicateRelationId || !objectId) return
-    setAddingClass(true)
-    setAddClassError(null)
-    try {
-      const res = await fetch("/api/class-triplets", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId: currentProject.id, subjectClassId, predicateRelationId, objectKind, objectId }),
-      })
-      const created = await res.json()
-      if (!res.ok) { setAddClassError(created.error ?? "追加に失敗しました"); return }
-      setClassTriplets((prev) => [...prev, created])
-      setShowAddClass(false)
-    } finally {
-      setAddingClass(false)
+  // 選んだ主語すべてに対して終点になれるクラス
+  const allowedTargetClassIds = (relId: string, kind: EndKind, subjectIds: string[]): string[] => {
+    const rel = relId ? relById.get(relId) : null
+    if (!rel) return []
+    const pairs = rel.classPairs ?? []
+    if (subjectIds.length === 0) return pairs.map((p) => p.targetClassId)
+    let acc: string[] | null = null
+    for (const sid of subjectIds) {
+      const cid = classIdOfEnd(kind, sid)
+      const allowed = pairs
+        .filter((p) => isSelfOrDescendant(cid, p.sourceClassId, classByIdForPairs))
+        .map((p) => p.targetClassId)
+      acc = acc === null ? allowed : acc.filter((t) => allowed.includes(t))
     }
+    return acc ?? []
+  }
+
+  const objectCandidates = (
+    relId: string,
+    subjectKind: EndKind,
+    subjectIds: string[],
+    objectKind: EndKind,
+  ): PickItem[] => {
+    const targets = allowedTargetClassIds(relId, subjectKind, subjectIds)
+    if (targets.length === 0) return []
+    const list =
+      objectKind === "class"
+        ? classes.filter((c) => targets.some((t) => isSelfOrDescendant(c.id, t, classByIdForPairs)))
+        : registeredInstances.filter((i) => targets.some((t) => isSelfOrDescendant(i.classId, t, classByIdForPairs)))
+    return endItems(objectKind, list)
   }
 
   const handleDeleteClassTriplet = async (id: string) => {
@@ -611,29 +674,6 @@ export function TripletsScreen({ active }: { active?: boolean }) {
     } finally {
       setConfirmingClassTriplet(false)
     }
-  }
-
-  // --- 一括作成（追加ダイアログ）の候補 ---
-  // 述語を先に選ぶ。主語・目的語はそのリレーションに適合するものだけに絞られるので、
-  // 子クラスのインスタンスが何十件あっても「全て選択」で一度に拾える。
-  const subjectsForRelation = (relId: string) => {
-    const rel = relId ? relById.get(relId) : null
-    if (!rel) return []
-    return registeredInstances.filter((i) =>
-      (rel.classPairs ?? []).some((p) => isSelfOrDescendant(i.classId, p.sourceClassId, classByIdForPairs)),
-    )
-  }
-  // 選んだ主語すべてに対して目的語になれるインスタンス（主語未選択なら終点クラス全体）
-  const objectsForRelation = (relId: string, subjectIds: string[]) => {
-    const rel = relId ? relById.get(relId) : null
-    if (!rel) return []
-    if (subjectIds.length === 0) {
-      return registeredInstances.filter((i) =>
-        (rel.classPairs ?? []).some((p) => isSelfOrDescendant(i.classId, p.targetClassId, classByIdForPairs)),
-      )
-    }
-    const sets = subjectIds.map((id) => new Set(objectsForSubjectRel(id, relId).map((o) => o.id)))
-    return registeredInstances.filter((i) => sets.every((set) => set.has(i.id)))
   }
 
   const TripleSelects = ({ draft, onChange }: { draft: Draft; onChange: (d: Draft) => void }) => {
@@ -709,15 +749,9 @@ export function TripletsScreen({ active }: { active?: boolean }) {
         <div className="flex flex-1 flex-col overflow-hidden border-r border-border">
           <div className="flex items-center justify-between px-6 py-3">
             <h2 className="text-base font-semibold text-foreground">トリプレット管理</h2>
-            <div className="flex gap-1.5">
-              <Button size="sm" variant="outline" className="h-8 gap-1.5 bg-transparent" onClick={openAddClassTriplet}
-                disabled={!currentProject || classes.length === 0 || relations.length === 0}>
-                <Plus className="h-3.5 w-3.5" />クラストリプレットを作る
-              </Button>
-              <Button size="sm" variant="outline" className="h-8 gap-1.5 bg-transparent" onClick={openAdd} disabled={!currentProject}>
-                <Plus className="h-3.5 w-3.5" />インスタンストリプレットを作る
-              </Button>
-            </div>
+            <Button size="sm" variant="outline" className="h-8 gap-1.5 bg-transparent" onClick={openAdd} disabled={!currentProject}>
+              <Plus className="h-3.5 w-3.5" />トリプレットを追加
+            </Button>
           </div>
           <div className="flex items-center gap-2 px-6 pb-3 text-xs">
             <span className="text-muted-foreground">表示フィルター：</span>
@@ -768,13 +802,14 @@ export function TripletsScreen({ active }: { active?: boolean }) {
                   className="flex w-full items-center gap-2 px-3 py-2 text-left"
                 >
                   {classSectionOpen ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />}
-                  <span className="text-sm font-semibold text-foreground">クラストリプレット</span>
+                  <span className="text-sm font-semibold text-foreground">クラスを含むトリプレット</span>
                   <span className="text-xs text-muted-foreground">{classTriplets.length}件</span>
                 </button>
                 {classSectionOpen && (
                   <div className="border-t border-border">
                     <p className="px-3 py-2 text-xs text-muted-foreground">
-                      主語がクラスのトリプレットです。そのクラスのインスタンスすべてに当てはまり、子クラスにも継承されます。
+                      どちらかの端がクラスのトリプレットです。主語がクラスのものは、そのクラスの
+                      インスタンスすべてに当てはまり、子クラスにも継承されます。
                     </p>
                     {classTriplets.length === 0 ? (
                       <p className="px-3 pb-3 text-sm text-muted-foreground">まだありません。</p>
@@ -794,9 +829,14 @@ export function TripletsScreen({ active }: { active?: boolean }) {
                               <TableRow key={ct.id}>
                                 <TableCell>
                                   <div className="flex flex-wrap items-center gap-1.5">
-                                    <Badge variant="secondary" title="クラス" className="h-auto px-2 py-0.5 text-xs font-normal">
-                                      {classNameById.get(ct.subjectClassId) ?? ct.subjectName}
+                                    <Badge variant="secondary" title={ct.subjectKind === "class" ? "クラス" : "インスタンス"} className="h-auto px-2 py-0.5 text-xs font-normal">
+                                      {ct.subjectKind === "class"
+                                        ? classNameById.get(ct.subjectId) ?? ct.subjectName
+                                        : instById.get(ct.subjectId)?.name ?? ct.subjectName}
                                     </Badge>
+                                    <span className="text-[10px] text-muted-foreground">
+                                      {ct.subjectKind === "class" ? "（クラス）" : "（インスタンス）"}
+                                    </span>
                                     <ArrowRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                                     <Badge variant="secondary" title="リレーション" className="h-auto px-2 py-0.5 text-xs font-normal">
                                       {relById.get(ct.predicateRelationId)?.name ?? ct.predicateName}
@@ -824,7 +864,7 @@ export function TripletsScreen({ active }: { active?: boolean }) {
                                 <TableCell>
                                   <Button size="icon" variant="ghost"
                                     className="h-7 w-7 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                                    aria-label={`${ct.subjectName}のクラストリプレットを削除`}
+                                    aria-label={`${ct.subjectName}のトリプレットを削除`}
                                     disabled={deletingClassTripletId === ct.id}
                                     onClick={() => handleDeleteClassTriplet(ct.id)}>
                                     {deletingClassTripletId === ct.id
@@ -991,11 +1031,13 @@ export function TripletsScreen({ active }: { active?: boolean }) {
           ) : (
             <div className="min-w-0 space-y-4 py-2">
               {/* 述語を先に選ぶ。主語・目的語はそれに適合するものだけが並ぶので、
-                  クラス単位でまとめて選んで一度に登録できる。 */}
+                  クラス単位でまとめて選んで一度に登録できる。
+                  主語・目的語それぞれクラスかインスタンスかを選べるので、4通りを
+                  このダイアログで作れる。 */}
               <div className="space-y-1.5">
                 <Label className="text-sm font-medium">エッジ（述語） <span className="text-destructive">*</span></Label>
                 <Select value={addDraft.predicateRelationId || "__none__"}
-                  onValueChange={(v) => setAddDraft({ predicateRelationId: v && v !== "__none__" ? v : "", subjectInstanceIds: [], objectInstanceIds: [] })}>
+                  onValueChange={(v) => setAddDraft((d) => ({ ...d, predicateRelationId: v && v !== "__none__" ? v : "", subjectIds: [], objectIds: [] }))}>
                   <SelectTrigger className="h-8 w-full min-w-0">
                     <SelectValue>{addDraft.predicateRelationId ? (relById.get(addDraft.predicateRelationId)?.name ?? "選択") : "選択"}</SelectValue>
                   </SelectTrigger>
@@ -1007,30 +1049,53 @@ export function TripletsScreen({ active }: { active?: boolean }) {
               {addDraft.predicateRelationId && (
                 <>
                   <div className="space-y-1.5">
-                    <Label className="text-sm font-medium">ノード（主語） <span className="text-destructive">*</span></Label>
-                    {renderInstancePicker(
-                      subjectsForRelation(addDraft.predicateRelationId),
-                      addDraft.subjectInstanceIds,
+                    <div className="flex items-center gap-2">
+                      <Label className="text-sm font-medium">主語 <span className="text-destructive">*</span></Label>
+                      {renderKindToggle(addDraft.subjectKind, (kind) =>
+                        setAddDraft((d) => ({ ...d, subjectKind: kind, subjectIds: [], objectIds: [] })),
+                      )}
+                    </div>
+                    {renderPicker(
+                      subjectCandidates(addDraft.predicateRelationId, addDraft.subjectKind),
+                      addDraft.subjectIds,
                       (ids) => setAddDraft((d) => {
-                        const stillValid = new Set(objectsForRelation(d.predicateRelationId, ids).map((i) => i.id))
-                        return { ...d, subjectInstanceIds: ids, objectInstanceIds: d.objectInstanceIds.filter((id) => stillValid.has(id)) }
+                        const ok = new Set(objectCandidates(d.predicateRelationId, d.subjectKind, ids, d.objectKind).map((i) => i.id))
+                        return { ...d, subjectIds: ids, objectIds: d.objectIds.filter((id) => ok.has(id)) }
                       }),
-                      "この述語の始点になれる本登録済みインスタンスがありません。",
+                      addDraft.subjectKind === "class"
+                        ? "この述語の始点になれるクラスがありません。"
+                        : "この述語の始点になれる本登録済みインスタンスがありません。",
                     )}
                   </div>
                   <div className="space-y-1.5">
-                    <Label className="text-sm font-medium">ノード（目的語） <span className="text-destructive">*</span></Label>
-                    {renderInstancePicker(
-                      objectsForRelation(addDraft.predicateRelationId, addDraft.subjectInstanceIds),
-                      addDraft.objectInstanceIds,
-                      (ids) => setAddDraft((d) => ({ ...d, objectInstanceIds: ids })),
-                      "この述語の終点になれる本登録済みインスタンスがありません。",
+                    <div className="flex items-center gap-2">
+                      <Label className="text-sm font-medium">目的語 <span className="text-destructive">*</span></Label>
+                      {renderKindToggle(addDraft.objectKind, (kind) =>
+                        setAddDraft((d) => ({ ...d, objectKind: kind, objectIds: [] })),
+                      )}
+                    </div>
+                    {renderPicker(
+                      objectCandidates(addDraft.predicateRelationId, addDraft.subjectKind, addDraft.subjectIds, addDraft.objectKind),
+                      addDraft.objectIds,
+                      (ids) => setAddDraft((d) => ({ ...d, objectIds: ids })),
+                      addDraft.objectKind === "class"
+                        ? "この述語の終点になれるクラスがありません。"
+                        : "この述語の終点になれる本登録済みインスタンスがありません。",
                     )}
                   </div>
+                  <p className="rounded-md border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                    {addDraft.subjectKind === "instance" && addDraft.objectKind === "instance"
+                      ? "個別の事実として登録します。"
+                      : addDraft.subjectKind === "class" && addDraft.objectKind === "instance"
+                        ? "そのクラスのインスタンスすべてが、選んだ相手と関係する、という意味になります。子クラスにも継承されます。"
+                        : addDraft.subjectKind === "class"
+                          ? "そのクラスのインスタンスは、相手クラスのいずれかと関係する、という意味になります。子クラスにも継承されます。"
+                          : "その個別のものが、相手クラスのいずれかと関係する（相手は特定できていない）、という意味になります。"}
+                  </p>
                 </>
               )}
-              {/* 属性（述語リレーションに定義された属性の値） */}
-              {addDraft.predicateRelationId && (
+              {/* 属性（述語リレーションに定義された属性の値）。クラスを含む方は属性を持たない。 */}
+              {addDraft.predicateRelationId && bothInstance && (
                 loadingAttrs && !attrsByRelation[addDraft.predicateRelationId] ? (
                   <div className="flex items-center gap-2 text-sm text-muted-foreground">
                     <Loader2 className="h-4 w-4 animate-spin" />属性を読み込み中…
@@ -1049,7 +1114,7 @@ export function TripletsScreen({ active }: { active?: boolean }) {
               {addCombos.length > 0 && (
                 <p className="text-xs text-muted-foreground">
                   {addCombos.length}件のトリプレットを作成します{addSkipped > 0 ? `（登録済みの${addSkipped}件は除きます）` : ""}。
-                  {(attrsByRelation[addDraft.predicateRelationId] ?? []).length > 0 && "属性の値は全件に同じものが入ります。"}
+                  {bothInstance && (attrsByRelation[addDraft.predicateRelationId] ?? []).length > 0 && "属性の値は全件に同じものが入ります。"}
                 </p>
               )}
               {addCombos.length === 0 && addSkipped > 0 && (
@@ -1060,101 +1125,8 @@ export function TripletsScreen({ active }: { active?: boolean }) {
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowAdd(false)}>キャンセル</Button>
-            <Button onClick={handleAdd} disabled={noPrereq || addCombos.length === 0 || adding || hasMissingRequired(attrsByRelation[addDraft.predicateRelationId] ?? [], addAttrValues)}>
+            <Button onClick={handleAdd} disabled={noPrereq || addCombos.length === 0 || adding || (bothInstance && hasMissingRequired(attrsByRelation[addDraft.predicateRelationId] ?? [], addAttrValues))}>
               {adding ? "登録中..." : addCombos.length > 0 ? `${addCombos.length}件を登録` : "登録"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* クラストリプレットの追加 */}
-      <Dialog open={showAddClass} onOpenChange={setShowAddClass}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>クラストリプレットを作る</DialogTitle></DialogHeader>
-          <div className="min-w-0 space-y-4 py-2">
-            <p className="text-xs text-muted-foreground">
-              主語がクラスのトリプレットです。「支柱は規格Aに基づく」のように、そのクラスのインスタンス
-              すべてに当てはまることを書きます。子クラスにも継承されます。
-            </p>
-            <div className="space-y-1.5">
-              <Label className="text-sm font-medium">主語（クラス） <span className="text-destructive">*</span></Label>
-              <Select value={classDraft.subjectClassId || "__none__"}
-                onValueChange={(v) => setClassDraft({ subjectClassId: v && v !== "__none__" ? v : "", predicateRelationId: "", objectKind: "class", objectId: "" })}>
-                <SelectTrigger className="h-8 w-full min-w-0">
-                  <SelectValue>{classDraft.subjectClassId ? (classNameById.get(classDraft.subjectClassId) ?? "選択") : "選択"}</SelectValue>
-                </SelectTrigger>
-                <SelectContent className="max-h-72">
-                  {classes.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            {classDraft.subjectClassId && (
-              <div className="space-y-1.5">
-                <Label className="text-sm font-medium">述語（リレーション） <span className="text-destructive">*</span></Label>
-                <Select value={classDraft.predicateRelationId || "__none__"}
-                  onValueChange={(v) => setClassDraft((d) => ({ ...d, predicateRelationId: v && v !== "__none__" ? v : "", objectId: "" }))}>
-                  <SelectTrigger className="h-8 w-full min-w-0">
-                    <SelectValue>{classDraft.predicateRelationId ? (relById.get(classDraft.predicateRelationId)?.name ?? "選択") : "選択"}</SelectValue>
-                  </SelectTrigger>
-                  <SelectContent className="max-h-72">
-                    {relationsForClass(classDraft.subjectClassId).map((r) => <SelectItem key={r.id} value={r.id}>{r.name}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-                {relationsForClass(classDraft.subjectClassId).length === 0 && (
-                  <p className="text-xs text-muted-foreground">このクラスを始点に持つリレーションが定義されていません。</p>
-                )}
-              </div>
-            )}
-            {classDraft.subjectClassId && classDraft.predicateRelationId && (
-              <div className="space-y-1.5">
-                <Label className="text-sm font-medium">目的語 <span className="text-destructive">*</span></Label>
-                <div className="flex gap-1.5">
-                  {([
-                    { key: "class" as const, label: "クラス", note: "相手の種類だけを決める" },
-                    { key: "instance" as const, label: "インスタンス", note: "特定の1つを指す" },
-                  ]).map((opt) => (
-                    <button key={opt.key} type="button" title={opt.note}
-                      onClick={() => setClassDraft((d) => ({ ...d, objectKind: opt.key, objectId: "" }))}
-                      className={cn(
-                        "rounded-full border px-2.5 py-0.5 text-xs transition-colors",
-                        classDraft.objectKind === opt.key
-                          ? "border-indigo-400 bg-indigo-100 text-indigo-800 dark:border-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-200"
-                          : "border-border text-muted-foreground hover:bg-muted",
-                      )}>
-                      {opt.label}
-                    </button>
-                  ))}
-                </div>
-                <Select value={classDraft.objectId || "__none__"}
-                  onValueChange={(v) => setClassDraft((d) => ({ ...d, objectId: v && v !== "__none__" ? v : "" }))}>
-                  <SelectTrigger className="h-8 w-full min-w-0">
-                    <SelectValue>
-                      {classDraft.objectId
-                        ? (classDraft.objectKind === "class"
-                            ? (classNameById.get(classDraft.objectId) ?? "選択")
-                            : (instById.get(classDraft.objectId)?.name ?? "選択"))
-                        : "選択"}
-                    </SelectValue>
-                  </SelectTrigger>
-                  <SelectContent className="max-h-72">
-                    {classDraft.objectKind === "class"
-                      ? classTargetsFor(classDraft.subjectClassId, classDraft.predicateRelationId).map((c) => (
-                          <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
-                        ))
-                      : instanceTargetsFor(classDraft.subjectClassId, classDraft.predicateRelationId).map((i) => (
-                          <SelectItem key={i.id} value={i.id}>{instLabel(i.id)}</SelectItem>
-                        ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
-            {addClassError && <p className="text-sm text-destructive">{addClassError}</p>}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowAddClass(false)}>キャンセル</Button>
-            <Button onClick={handleAddClassTriplet}
-              disabled={addingClass || !classDraft.subjectClassId || !classDraft.predicateRelationId || !classDraft.objectId}>
-              {addingClass ? "登録中..." : "登録"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1163,8 +1135,8 @@ export function TripletsScreen({ active }: { active?: boolean }) {
       <ConfirmDialog
         open={!!confirmClassTripletId}
         onOpenChange={(open) => { if (!open) setConfirmClassTripletId(null) }}
-        title="クラストリプレットを確認する"
-        description="このクラストリプレットに確認レコードが追加されます。"
+        title="トリプレットを確認する"
+        description="このトリプレットに確認レコードが追加されます。"
         submitting={confirmingClassTriplet}
         onSubmit={handleConfirmClassTriplet}
       />

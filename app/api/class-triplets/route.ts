@@ -5,9 +5,15 @@ import { checkProjectAccess } from "@/lib/project-access"
 import { relationAllowsPair } from "@/lib/triplet-resolve"
 import type { ClassTriplet, OntologyClass, OntologyInstance, OntologyRelation } from "@/lib/types"
 
-// クラスのトリプレット（主語がクラス）。インスタンスのトリプレットとは別物なので
-// コンテナも分けてある。既存の /api/triplets には一切影響しない。
+// どちらかの端がクラスであるトリプレット。インスタンス同士（/api/triplets）とは
+// 別のコンテナで扱う。
 const CONTAINER = "classTriplets"
+
+// 主語がクラス固定だった頃のデータを今の形に読み替える
+function normalize(raw: any): ClassTriplet {
+  if (raw?.subjectKind) return raw as ClassTriplet
+  return { ...raw, subjectKind: "class", subjectId: raw.subjectClassId }
+}
 
 export async function GET(request: NextRequest) {
   try {
@@ -19,30 +25,40 @@ export async function GET(request: NextRequest) {
 
     const container = await getContainer(CONTAINER)
     const { resources } = await container.items
-      .query<ClassTriplet>({
+      .query<any>({
         query: "SELECT * FROM c WHERE c.projectId = @projectId",
         parameters: [{ name: "@projectId", value: projectId }],
       })
       .fetchAll()
-    return NextResponse.json(resources)
+    return NextResponse.json(resources.map(normalize))
   } catch (error) {
     console.error("GET /api/class-triplets:", error)
     return NextResponse.json({ error: "クラストリプレット一覧の取得に失敗しました" }, { status: 500 })
   }
 }
 
-// 主語クラス・述語リレーション・目的語（クラスまたはインスタンス）から1件作る。
-// 目的語がインスタンスのときは、そのインスタンスのクラスで型を照合する。
+// 主語・目的語それぞれクラスかインスタンスを指定して1件作る。
+// インスタンスを指定したときは、そのインスタンスのクラスで型を照合する。
 // 子クラスは親クラスの宣言を継承するので、照合は継承込みで見る。
+// 主語も目的語もインスタンスの組み合わせは、こちらでは受け付けない（/api/triplets の担当）。
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { projectId, subjectClassId, predicateRelationId, objectKind, objectId } = body
-    if (!projectId || !subjectClassId || !predicateRelationId || !objectId) {
-      return NextResponse.json({ error: "projectId・主語クラス・述語・目的語は必須です" }, { status: 400 })
+    const { projectId, predicateRelationId, objectKind, objectId } = body
+    const subjectKind = body.subjectKind ?? "class"
+    const subjectId = body.subjectId ?? body.subjectClassId
+    if (!projectId || !subjectId || !predicateRelationId || !objectId) {
+      return NextResponse.json({ error: "projectId・主語・述語・目的語は必須です" }, { status: 400 })
     }
-    if (objectKind !== "class" && objectKind !== "instance") {
-      return NextResponse.json({ error: "目的語の種類が不正です" }, { status: 400 })
+    const kinds = [subjectKind, objectKind]
+    if (kinds.some((k) => k !== "class" && k !== "instance")) {
+      return NextResponse.json({ error: "主語・目的語の種類が不正です" }, { status: 400 })
+    }
+    if (subjectKind === "instance" && objectKind === "instance") {
+      return NextResponse.json(
+        { error: "主語・目的語がどちらもインスタンスの場合は、インスタンストリプレットとして登録してください" },
+        { status: 400 },
+      )
     }
     const access = await checkProjectAccess(request, projectId)
     if ("error" in access) return access.error
@@ -60,8 +76,24 @@ export async function POST(request: NextRequest) {
         parameters: [{ name: "@p", value: projectId }],
       })
       .fetchAll()
-    const subject = classes.find((c) => c.id === subjectClassId)
-    if (!subject) return NextResponse.json({ error: "主語クラスが見つかりません" }, { status: 400 })
+
+    // クラス／インスタンスどちらの端でも、名前と「型として見るクラス」を取り出す
+    const resolveEnd = async (kind: "class" | "instance", id: string, label: string) => {
+      if (kind === "class") {
+        const target = classes.find((c) => c.id === id)
+        if (!target) return { error: `${label}クラスが見つかりません` }
+        return { name: target.name, classId: target.id }
+      }
+      const { resource: inst } = await instContainer.item(id, id).read<OntologyInstance>()
+      if (!inst || inst.projectId !== projectId) return { error: `${label}インスタンスが見つかりません` }
+      if (!inst.classId) return { error: `${label}インスタンスにクラスが設定されていません` }
+      return { name: inst.name, classId: inst.classId }
+    }
+
+    const subject = await resolveEnd(subjectKind, subjectId, "主語")
+    if ("error" in subject) return NextResponse.json({ error: subject.error }, { status: 400 })
+    const object = await resolveEnd(objectKind, objectId, "目的語")
+    if ("error" in object) return NextResponse.json({ error: object.error }, { status: 400 })
 
     const { resource: relRaw } = await relContainer.item(predicateRelationId, predicateRelationId).read<any>()
     if (!relRaw || relRaw.projectId !== projectId) {
@@ -71,41 +103,22 @@ export async function POST(request: NextRequest) {
       ? relRaw
       : { ...relRaw, classPairs: [{ sourceClassId: relRaw.sourceClassId, targetClassId: relRaw.targetClassId }] }
 
-    let objectName: string
-    let objectClassId: string
-    if (objectKind === "class") {
-      const target = classes.find((c) => c.id === objectId)
-      if (!target) return NextResponse.json({ error: "目的語クラスが見つかりません" }, { status: 400 })
-      objectName = target.name
-      objectClassId = target.id
-    } else {
-      const { resource: inst } = await instContainer.item(objectId, objectId).read<OntologyInstance>()
-      if (!inst || inst.projectId !== projectId) {
-        return NextResponse.json({ error: "目的語インスタンスが見つかりません" }, { status: 400 })
-      }
-      if (!inst.classId) {
-        return NextResponse.json({ error: "目的語インスタンスにクラスが設定されていません" }, { status: 400 })
-      }
-      objectName = inst.name
-      objectClassId = inst.classId
-    }
-
-    if (!relationAllowsPair(relation, subjectClassId, objectClassId, classes)) {
+    if (!relationAllowsPair(relation, subject.classId, object.classId, classes)) {
       return NextResponse.json(
         {
-          error: `型矛盾：〈${subject.name}〉→〈${objectName}〉の組み合わせは、リレーション「${relation.name}」の許可クラスペアに含まれていません。`,
+          error: `型矛盾：〈${subject.name}〉→〈${object.name}〉の組み合わせは、リレーション「${relation.name}」の許可クラスペアに含まれていません。`,
         },
         { status: 400 },
       )
     }
 
     const { resources: dups } = await container.items
-      .query<ClassTriplet>({
+      .query<{ id: string }>({
         query:
-          "SELECT c.id FROM c WHERE c.projectId = @p AND c.subjectClassId = @s AND c.predicateRelationId = @r AND c.objectId = @o",
+          "SELECT c.id FROM c WHERE c.projectId = @p AND (c.subjectId = @s OR c.subjectClassId = @s) AND c.predicateRelationId = @r AND c.objectId = @o",
         parameters: [
           { name: "@p", value: projectId },
-          { name: "@s", value: subjectClassId },
+          { name: "@s", value: subjectId },
           { name: "@r", value: predicateRelationId },
           { name: "@o", value: objectId },
         ],
@@ -113,7 +126,7 @@ export async function POST(request: NextRequest) {
       .fetchAll()
     if (dups.length > 0) {
       return NextResponse.json(
-        { error: `同一のクラストリプレット（〈${subject.name}〉→「${relation.name}」→〈${objectName}〉）が既に登録されています。` },
+        { error: `同一のトリプレット（〈${subject.name}〉→「${relation.name}」→〈${object.name}〉）が既に登録されています。` },
         { status: 409 },
       )
     }
@@ -123,13 +136,14 @@ export async function POST(request: NextRequest) {
     const item: ClassTriplet = {
       id: crypto.randomUUID(),
       projectId,
-      subjectClassId,
+      subjectKind,
+      subjectId,
       predicateRelationId,
       objectKind,
       objectId,
       subjectName: subject.name,
       predicateName: relation.name,
-      objectName,
+      objectName: object.name,
       createdBy: actor,
       updatedBy: actor,
       createdAt: now,
@@ -139,6 +153,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(resource, { status: 201 })
   } catch (error) {
     console.error("POST /api/class-triplets:", error)
-    return NextResponse.json({ error: "クラストリプレットの作成に失敗しました" }, { status: 500 })
+    return NextResponse.json({ error: "トリプレットの作成に失敗しました" }, { status: 500 })
   }
 }

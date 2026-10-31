@@ -859,8 +859,11 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
     const alive = (ct: ClassTriplet) =>
       !!relations.find((r) => r.id === ct.predicateRelationId) &&
       (ct.objectKind === "class" ? classes.some((c) => c.id === ct.objectId) : true)
+    // 主語がクラスのものだけ（主語がインスタンスのものはそのクラスの言明ではない）
     for (const ct of classTriplets) {
-      if (ct.subjectClassId === selected.id && alive(ct)) classTripletRows.push({ triplet: ct, inheritedFrom: null })
+      if (ct.subjectKind === "class" && ct.subjectId === selected.id && alive(ct)) {
+        classTripletRows.push({ triplet: ct, inheritedFrom: null })
+      }
     }
     let ancestorId = selected.parentId
     const seen = new Set<string>([selected.id])
@@ -869,7 +872,9 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
       const ancestor = classes.find((c) => c.id === ancestorId)
       if (!ancestor) break
       for (const ct of classTriplets) {
-        if (ct.subjectClassId === ancestor.id && alive(ct)) classTripletRows.push({ triplet: ct, inheritedFrom: ancestor })
+        if (ct.subjectKind === "class" && ct.subjectId === ancestor.id && alive(ct)) {
+          classTripletRows.push({ triplet: ct, inheritedFrom: ancestor })
+        }
       }
       ancestorId = ancestor.parentId
     }

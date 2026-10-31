@@ -79,13 +79,15 @@ export function buildCypher(
         (rsets.length ? ` SET ${rsets.join(", ")}` : "") + ";",
     )
   }
-  // クラストリプレット（主語がクラス）。クラスもノードとして出し、そこから辺を張る。
+  // どちらかの端がクラスのトリプレット。クラスもノードとして出して辺を張る。
   // インスタンス側には展開しない（「このクラスのものはすべて…」はクラスのノードを辿れば分かる）。
   const classRows = classTriplets ?? []
   if (classRows.length > 0) {
     const classNodes = new Map<string, string>()
     for (const ct of classRows) {
-      classNodes.set(ct.subjectClassId, classNameById.get(ct.subjectClassId) ?? ct.subjectName)
+      if (ct.subjectKind === "class") {
+        classNodes.set(ct.subjectId, classNameById.get(ct.subjectId) ?? ct.subjectName)
+      }
       if (ct.objectKind === "class") {
         classNodes.set(ct.objectId, classNameById.get(ct.objectId) ?? ct.objectName)
       }
@@ -96,22 +98,28 @@ export function buildCypher(
       lines.push(`MERGE (c:Class {id: ${escStr(id)}}) SET c.name = ${escStr(name)}, c:${escLabel(name)};`)
     }
     lines.push("")
-    lines.push("// クラストリプレット: 主語はクラス。そのクラスのインスタンスすべてに当てはまる。")
-    for (const ct of classRows) {
-      if (ct.objectKind === "instance") {
-        const inst = instById?.get(ct.objectId)
-        const name = inst?.name ?? ct.objectName
-        const cls = inst?.classId ? classNameById.get(inst.classId) : undefined
-        const sets = [`o.name = ${escStr(name)}`]
-        if (inst?.classId) sets.push(`o.classId = ${escStr(inst.classId)}`)
-        if (cls) {
-          sets.push(`o.className = ${escStr(cls)}`)
-          sets.push(`o:${escLabel(cls)}`)
-        }
-        lines.push(`MERGE (o:Instance {id: ${escStr(ct.objectId)}}) SET ${sets.join(", ")};`)
+    lines.push("// クラスを含むトリプレット: 主語がクラスなら、そのクラスのものすべてに当てはまる。")
+    // 端がインスタンスなら、そのノードも作っておく（トリプレットに出てこない個体もあるため）
+    const mergeInstance = (alias: string, id: string, snapName: string) => {
+      const inst = instById?.get(id)
+      const name = inst?.name ?? snapName
+      const cls = inst?.classId ? classNameById.get(inst.classId) : undefined
+      const sets = [`${alias}.name = ${escStr(name)}`]
+      if (inst?.classId) sets.push(`${alias}.classId = ${escStr(inst.classId)}`)
+      if (cls) {
+        sets.push(`${alias}.className = ${escStr(cls)}`)
+        sets.push(`${alias}:${escLabel(cls)}`)
       }
+      lines.push(`MERGE (${alias}:Instance {id: ${escStr(id)}}) SET ${sets.join(", ")};`)
+    }
+    for (const ct of classRows) {
+      if (ct.subjectKind === "instance") mergeInstance("s", ct.subjectId, ct.subjectName)
+      if (ct.objectKind === "instance") mergeInstance("o", ct.objectId, ct.objectName)
+      const subLabel = ct.subjectKind === "class" ? "Class" : "Instance"
       const objLabel = ct.objectKind === "class" ? "Class" : "Instance"
-      lines.push(`MATCH (s:Class {id: ${escStr(ct.subjectClassId)}}), (o:${objLabel} {id: ${escStr(ct.objectId)}})`)
+      lines.push(
+        `MATCH (s:${subLabel} {id: ${escStr(ct.subjectId)}}), (o:${objLabel} {id: ${escStr(ct.objectId)}})`,
+      )
       lines.push(`MERGE (s)-[r:${escLabel(ct.predicateName)} {id: ${escStr(ct.id)}}]->(o) SET r.scope = "class";`)
     }
   }
