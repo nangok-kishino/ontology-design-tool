@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useCallback, useRef } from "react"
+import { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import { createPortal } from "react-dom"
 import {
   Dialog,
@@ -32,6 +32,8 @@ import { ImportDialog } from "@/components/import-dialog"
 import { NameCheckDialog } from "@/components/name-check-dialog"
 import { cn } from "@/lib/utils"
 import { instanceStatus } from "@/lib/instance-status"
+import { orderedClassRoots, type ClassTreeNode } from "@/lib/class-tree"
+import { useGroups } from "@/components/group-manager"
 import type { OntologyClass, OntologyInstance, OntologyAttribute } from "@/lib/types"
 import {
   buildInstancesYaml,
@@ -117,20 +119,7 @@ type InstanceCountSummary = {
 
 // ---------- ツリー ----------
 
-type TreeNode = OntologyClass & { children: TreeNode[] }
-
-function buildTree(items: OntologyClass[]): TreeNode[] {
-  const map = new Map(items.map((c) => [c.id, { ...c, children: [] as TreeNode[] }]))
-  const roots: TreeNode[] = []
-  for (const node of map.values()) {
-    if (node.parentId && map.has(node.parentId)) {
-      map.get(node.parentId)!.children.push(node)
-    } else {
-      roots.push(node)
-    }
-  }
-  return roots
-}
+type TreeNode = ClassTreeNode
 
 function ClassTreeItem({
   node,
@@ -213,6 +202,13 @@ const DATA_TYPE_LABELS: Record<string, string> = {
 
 function dataTypeLabel(dataType: string): string {
   return DATA_TYPE_LABELS[dataType] ?? `${dataType}型`
+}
+
+// 一覧の列に出すときの表示。値は AttrInput が書いた生の文字列。
+function formatAttrValue(attr: OntologyAttribute, value: string | undefined): string {
+  if (!value) return "—"
+  if (attr.dataType === "真偽値") return value === "true" ? "はい" : value === "false" ? "いいえ" : value
+  return value
 }
 
 const inputCls =
@@ -302,12 +298,15 @@ function AttrSection({
 
 function SortableInstRow({
   inst,
+  attrs,
   isSelected,
   onClick,
   isChecked,
   onToggleCheck,
 }: {
   inst: OntologyInstance
+  // 選択中クラスに適用される属性。一覧の列として値を出す
+  attrs: OntologyAttribute[]
   isSelected: boolean
   onClick: () => void
   isChecked: boolean
@@ -358,6 +357,14 @@ function SortableInstRow({
       <TableCell className="font-medium text-foreground">
         {inst.name}
       </TableCell>
+      {attrs.map((attr) => {
+        const text = formatAttrValue(attr, inst.attributes?.[attr.id])
+        return (
+          <TableCell key={attr.id} className="max-w-48 text-sm text-muted-foreground">
+            <span className="block truncate" title={text}>{text}</span>
+          </TableCell>
+        )
+      })}
       <TableCell className="w-32">
         <ConfirmationBadge state={confirmState} latestConfirm={confirmStatus.latestConfirm} />
       </TableCell>
@@ -436,6 +443,8 @@ export function InstancesScreen({ initialSelectedClassId, active }: { initialSel
 
   // クラス（または未分類）ごとに最後に選択したインスタンスIDを記憶する
   const lastInstanceByClassRef = useRef<Record<string, string>>({})
+  // 一度でも件数を数えたか（2回目以降はスピナーを出さない）
+  const countedOnceRef = useRef(false)
 
   // インポート/エクスポート
   const [showImport, setShowImport] = useState(false)
@@ -444,6 +453,9 @@ export function InstancesScreen({ initialSelectedClassId, active }: { initialSel
   // 名寄せチェック
   const [showNameCheck, setShowNameCheck] = useState(false)
   const [provisionalCount, setProvisionalCount] = useState(0)
+
+  // クラスの整理用グループ。左ペインの並びをクラス管理の一覧と揃えるために読む。
+  const { groups: classGroups, refresh: refreshClassGroups } = useGroups(currentProject?.id, "class")
 
   // DnD sensors（8px 動かないと drag 開始しない → 行クリックと競合しない）
   const sensors = useSensors(
@@ -538,7 +550,9 @@ export function InstancesScreen({ initialSelectedClassId, active }: { initialSel
   // 件数は /api/instances/counts にまとめて問い合わせる（クラス1件ごとに
   // 全インスタンスを取得していた分をサーバ側の集計1回に置き換えている）
   const fetchAllCounts = useCallback(async (classList: OntologyClass[], projectId: string) => {
-    setLoadingCounts(true)
+    // 画面に戻るたびに数え直すが、そのつど全バッジをスピナーに戻すと
+    // 毎回読み込み直しているように見える。2回目以降は前の件数を出したまま差し替える。
+    if (!countedOnceRef.current) setLoadingCounts(true)
     try {
       const res = await fetch(`/api/instances/counts?projectId=${projectId}`)
       if (!res.ok) return
@@ -552,6 +566,7 @@ export function InstancesScreen({ initialSelectedClassId, active }: { initialSel
         .reduce((sum, [, n]) => sum + n, 0)
       counts[UNCLASSIFIED] = nullClass + orphaned
       setInstanceCounts(counts)
+      countedOnceRef.current = true
       // 仮登録件数（プロジェクト全体、統合済みは集計に含まれない）
       setProvisionalCount(provisional)
     } catch (err) {
@@ -636,6 +651,7 @@ export function InstancesScreen({ initialSelectedClassId, active }: { initialSel
     setClasses([])
     setInstances([])
     setInstanceCounts({})
+    countedOnceRef.current = false
     setLoadingClasses(!!currentProject)
   }, [currentProject?.id])
 
@@ -644,8 +660,11 @@ export function InstancesScreen({ initialSelectedClassId, active }: { initialSel
   // fetchClasses が classes を更新することで、件数・一覧の再取得へ連鎖する。
   // 取得中も既存の一覧は表示したままにする（描画条件を参照）ので、画面切替でちらつかない。
   useEffect(() => {
-    if (active && currentProject) fetchClasses()
-  }, [active, currentProject?.id, fetchClasses])
+    if (active && currentProject) {
+      fetchClasses()
+      refreshClassGroups()
+    }
+  }, [active, currentProject?.id, fetchClasses, refreshClassGroups])
   useEffect(() => {
     if (classes.length > 0 && currentProject) fetchAllCounts(classes, currentProject.id)
   }, [classes, currentProject?.id])
@@ -663,9 +682,9 @@ export function InstancesScreen({ initialSelectedClassId, active }: { initialSel
   useEffect(() => {
     if (initialSelectedClassId) return
     if (selectedClass || isUnclassifiedSelected) return
-    const first = buildTree(classes)[0]
+    const first = orderedClassRoots(classes, classGroups)[0]
     if (first) handleSelectClass(first)
-  }, [classes, initialSelectedClassId, selectedClass, isUnclassifiedSelected])
+  }, [classes, classGroups, initialSelectedClassId, selectedClass, isUnclassifiedSelected])
   useEffect(() => {
     if (isUnclassifiedSelected && currentProject) {
       fetchUnclassifiedInstances(classes, currentProject.id, true)
@@ -983,6 +1002,9 @@ export function InstancesScreen({ initialSelectedClassId, active }: { initialSel
   const currentProvisionalCount = instances.filter((i) => instanceStatus(i) === "provisional").length
 
   // 詳細パネルに変更があるか（保存ボタンの活性判定）
+  // クラス管理の一覧と同じ並び（グループ順 → 根クラスの order 順 → サブクラスの order 順）
+  const tree = useMemo(() => orderedClassRoots(classes, classGroups), [classes, classGroups])
+
   const detailDirty = !!selectedInst && (
     detailName !== selectedInst.name ||
     (detailClassId ?? null) !== (selectedInst.classId ?? null) ||
@@ -995,7 +1017,6 @@ export function InstancesScreen({ initialSelectedClassId, active }: { initialSel
       return false
     })()
   )
-  const tree = buildTree(classes)
   const unclassifiedCount = instanceCounts[UNCLASSIFIED] ?? 0
 
   return (
@@ -1012,13 +1033,16 @@ export function InstancesScreen({ initialSelectedClassId, active }: { initialSel
         </Button>
       </TopBar>
 
-      <div className="grid flex-1 overflow-hidden" style={{ gridTemplateColumns: "260px 1fr" }}>
+      <div
+        className="grid flex-1 grid-rows-[minmax(0,1fr)] overflow-hidden"
+        style={{ gridTemplateColumns: "260px 1fr" }}
+      >
         {/* 左ペイン：クラス選択 */}
-        <div className="flex flex-col border-r border-border bg-card">
-          <div className="px-4 py-3">
+        <div className="flex min-h-0 flex-col border-r border-border bg-card">
+          <div className="shrink-0 px-4 py-3">
             <h2 className="text-sm font-semibold text-foreground">クラス</h2>
           </div>
-          <div className="flex-1 overflow-auto p-2">
+          <div className="min-h-0 flex-1 overflow-y-auto p-2">
             {loadingClasses && classes.length === 0 ? (
               <div className="flex h-32 items-center justify-center text-muted-foreground">
                 <Loader2 className="h-5 w-5 animate-spin" />
@@ -1063,9 +1087,9 @@ export function InstancesScreen({ initialSelectedClassId, active }: { initialSel
 
         {/* インスタンス一覧＋詳細パネルエリア */}
         {(selectedClass || isUnclassifiedSelected) ? (
-          <div className="flex overflow-hidden">
+          <div className="flex min-h-0 overflow-hidden">
             {/* インスタンス一覧 */}
-            <div className="flex flex-1 flex-col overflow-hidden border-r border-border">
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden border-r border-border">
               <div className="flex items-center justify-between px-6 py-3">
                 <div className="flex items-center gap-3">
                   <h2 className="text-base font-semibold text-foreground">{currentLabel}のインスタンス一覧</h2>
@@ -1132,7 +1156,7 @@ export function InstancesScreen({ initialSelectedClassId, active }: { initialSel
                 </div>
               )}
 
-              <div className="flex-1 overflow-auto px-6 pb-6">
+              <div className="min-h-0 flex-1 overflow-auto px-6 pb-6">
                 {loadingInstances && instances.length === 0 ? (
                   <div className="flex h-32 items-center justify-center text-muted-foreground">
                     <Loader2 className="h-5 w-5 animate-spin" />
@@ -1163,6 +1187,14 @@ export function InstancesScreen({ initialSelectedClassId, active }: { initialSel
                                 />
                               </TableHead>
                               <TableHead className="font-semibold text-foreground">インスタンス名</TableHead>
+                              {/* 選択中クラスに適用される属性を列として出す */}
+                              {allAttrs.map((attr) => (
+                                <TableHead key={attr.id} className="max-w-48 font-semibold text-foreground">
+                                  <span className="block truncate" title={`${attr.name}（${dataTypeLabel(attr.dataType)}）`}>
+                                    {attr.name}
+                                  </span>
+                                </TableHead>
+                              ))}
                               <TableHead className="w-32 font-semibold text-foreground">確認</TableHead>
                               <TableHead className="w-24 pr-4 text-right font-semibold text-foreground">名寄せ</TableHead>
                             </TableRow>
@@ -1172,6 +1204,7 @@ export function InstancesScreen({ initialSelectedClassId, active }: { initialSel
                               <SortableInstRow
                                 key={inst.id}
                                 inst={inst}
+                                attrs={allAttrs}
                                 isSelected={selectedInst?.id === inst.id}
                                 onClick={() => handleSelectInst(inst)}
                                 isChecked={selectedIds.has(inst.id)}
@@ -1188,11 +1221,11 @@ export function InstancesScreen({ initialSelectedClassId, active }: { initialSel
             </div>
 
             {/* 詳細パネル（固定） */}
-            <div className="flex w-[30rem] shrink-0 flex-col overflow-hidden bg-card">
+            <div className="flex min-h-0 w-[30rem] shrink-0 flex-col overflow-hidden bg-card">
               {selectedInst ? (
                 <>
                   {/* 本体（スクロール可） */}
-                  <div className="flex-1 space-y-6 overflow-y-auto px-4 py-4">
+                  <div className="min-h-0 flex-1 space-y-6 overflow-y-auto px-4 py-4">
                     {/* 基本情報 */}
                     <section className="space-y-3">
                       <SectionHeader icon={FileText} title="基本情報" />
@@ -1313,8 +1346,8 @@ export function InstancesScreen({ initialSelectedClassId, active }: { initialSel
                     )}
                   </div>
 
-                  {/* フッター：削除・保存 */}
-                  <div className="flex items-center justify-between border-t border-border px-4 py-3">
+                  {/* フッター：削除・保存。スクロールしても必ず見える位置に残す */}
+                  <div className="flex shrink-0 items-center justify-between border-t border-border px-4 py-3">
                     <Button
                       variant="ghost"
                       size="sm"

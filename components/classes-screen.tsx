@@ -36,7 +36,8 @@ import { GroupManagerDialog, useGroups } from "@/components/group-manager"
 import { GroupBoard, ViewToggle, type BoardItem, type BoardViewMode, type ReorderUpdate } from "@/components/group-board"
 import { DragRow, DropRow, ListDndContext } from "@/components/list-dnd"
 import { cn } from "@/lib/utils"
-import { UNGROUPED, nextOrder, placeAt, reorderUpdates, rootOf, sortByOrder, sortGroups } from "@/lib/organize"
+import { nextOrder, placeAt, reorderUpdates, rootOf, sortByOrder } from "@/lib/organize"
+import { classSections, type ClassTreeNode } from "@/lib/class-tree"
 import type { OntologyClass, OntologyAttribute, OntologyGroup, OntologyRelation, AttributeRequired } from "@/lib/types"
 import {
   buildClassesYaml,
@@ -54,7 +55,7 @@ import { SynonymInput } from "@/components/synonym-input"
 import { Plus, Pencil, Trash2, Loader2, AlertTriangle, Info, Download, Upload, FileText, Tags, Link2, CheckCircle2, X } from "lucide-react"
 import { useProject } from "@/app/project-context"
 
-type TreeNode = OntologyClass & { children: TreeNode[] }
+type TreeNode = ClassTreeNode
 type ClassRow = { node: TreeNode; depth: number }
 
 // グループ見出し行の id。落とし先としてクラスの id と区別するために前置きする。
@@ -75,24 +76,6 @@ function formatDateTime(iso: string | undefined): string {
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return "—"
   return d.toLocaleString("ja-JP", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })
-}
-
-function buildTree(items: OntologyClass[]): TreeNode[] {
-  const map = new Map(items.map((c) => [c.id, { ...c, children: [] as TreeNode[] }]))
-  const roots: TreeNode[] = []
-  for (const node of map.values()) {
-    if (node.parentId && map.has(node.parentId)) {
-      map.get(node.parentId)!.children.push(node)
-    } else {
-      roots.push(node)
-    }
-  }
-  return roots
-}
-
-// きょうだい同士を order で並べたツリー（深さを問わず同じ規則で並べる）
-function sortTree(nodes: TreeNode[]): TreeNode[] {
-  return sortByOrder(nodes).map((n) => ({ ...n, children: sortTree(n.children) }))
 }
 
 export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId?: string; active?: boolean }) {
@@ -545,19 +528,9 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
     }
   }
 
-  // グループごとにツリーを組む。サブクラスのグループは親（根）に従うので、
-  // ひとつの木がグループをまたいで分断されることはない。
+  // グループ分けとツリー組みは lib/class-tree.ts に任せる（インスタンス管理の
+  // クラス一覧と同じ並びにするため）。ここでは確認フィルタと行の平坦化だけ行う。
   const groupSections = useMemo(() => {
-    const known = new Set(groups.map((g) => g.id))
-    const byId = new Map(classes.map((c) => [c.id, c]))
-    const buckets = new Map<string, OntologyClass[]>()
-    for (const c of classes) {
-      const gid = rootOf(c, byId).groupId ?? null
-      const key = gid && known.has(gid) ? gid : UNGROUPED
-      const list = buckets.get(key)
-      if (list) list.push(c)
-      else buckets.set(key, [c])
-    }
     const matches = (c: OntologyClass) =>
       filterState === "all" || deriveConfirmationStatus(c.confirmations).state === filterState
     // 子が条件に合うときは親も残す。親を落とすと子の居場所（階層）が分からなくなるため。
@@ -566,8 +539,8 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
         const children = prune(n.children)
         return matches(n) || children.length > 0 ? [{ ...n, children }] : []
       })
-    const build = (group: OntologyGroup | null, list: OntologyClass[]) => {
-      const trees = prune(sortTree(buildTree(list)))
+    return classSections(classes, groups).map(({ group, trees: all }) => {
+      const trees = prune(all)
       const rows: ClassRow[] = []
       const walk = (nodes: TreeNode[], depth: number) => {
         for (const n of nodes) {
@@ -577,10 +550,7 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
       }
       walk(trees, 0)
       return { group, trees, rows }
-    }
-    const sections = sortGroups(groups).map((g) => build(g, buckets.get(g.id) ?? []))
-    sections.push(build(null, buckets.get(UNGROUPED) ?? []))
-    return sections
+    })
   }, [classes, groups, filterState])
 
   const flatClasses = useMemo(() => groupSections.flatMap((s) => s.rows), [groupSections])
