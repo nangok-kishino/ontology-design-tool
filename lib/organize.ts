@@ -58,6 +58,40 @@ export function orderBetween(prev?: { order?: number }, next?: { order?: number 
   return Math.floor((before + after) / 2)
 }
 
+// 一覧で「この行に落とした」を並びに反映する。
+//   list    : 移動先の現在の並び（別のグループから来たときは moved を含まない）
+//   overId  : 落とした先の行。省くと末尾へ。
+// 同じ並びの中で下へ動かしたときはその行の後ろ、上へ動かしたときはその行の前に入る
+//（常に手前へ入れる方式だと、すぐ下の行へ落としても位置が変わらない）。
+export function placeAt<T extends { id: string }>(
+  list: T[],
+  moved: T,
+  overId?: string,
+): { ordered: T[]; index: number } {
+  const base = list.some((i) => i.id === moved.id) ? [...list] : [...list, moved]
+  const from = base.findIndex((i) => i.id === moved.id)
+  const at = overId ? base.findIndex((i) => i.id === overId) : base.length - 1
+  const ordered = [...base]
+  const [item] = ordered.splice(from, 1)
+  const index = at < 0 ? ordered.length : at
+  ordered.splice(index, 0, item)
+  return { ordered, index }
+}
+
+// 移動後の並び（ordered）と、その中での移動した要素の位置（index）から、書き込む更新を求める。
+// 前後に隙間があればその1件だけ、隙間が尽きている／未採番が混じっているときだけ並び全体を振り直す。
+export function reorderUpdates<T extends Sortable>(
+  ordered: T[],
+  index: number,
+  groupId: string | null,
+): { id: string; order: number; groupId: string | null }[] {
+  const unnumbered = ordered.some((i) => i.order === undefined)
+  const between = unnumbered ? null : orderBetween(ordered[index - 1], ordered[index + 1])
+  return between === null
+    ? ordered.map((item, i) => ({ id: item.id, order: (i + 1) * ORDER_STEP, groupId }))
+    : [{ id: ordered[index].id, order: between, groupId }]
+}
+
 // 隙間が尽きたグループを ORDER_STEP 刻みで振り直す（この並びのまま採番する）
 export function renumber<T extends Sortable>(ordered: T[]): { id: string; order: number }[] {
   return ordered.map((item, index) => ({ id: item.id, order: (index + 1) * ORDER_STEP }))

@@ -34,8 +34,9 @@ import { ImportDialog } from "@/components/import-dialog"
 import { SectionHeader } from "@/components/section-header"
 import { GroupManagerDialog, useGroups } from "@/components/group-manager"
 import { GroupBoard, ViewToggle, type BoardViewMode, type ReorderUpdate } from "@/components/group-board"
+import { DragRow, DropRow, ListDndContext } from "@/components/list-dnd"
 import { cn } from "@/lib/utils"
-import { ORDER_STEP, UNGROUPED, renumber, sortByOrder, sortGroups } from "@/lib/organize"
+import { UNGROUPED, placeAt, reorderUpdates, sortByOrder, sortGroups } from "@/lib/organize"
 import type { OntologyRelation, OntologyClass, OntologyAttribute, OntologyGroup, AttributeRequired, ClassPair, RelationCondition, RelationConditionOperator } from "@/lib/types"
 import {
   buildRelationsYaml,
@@ -45,7 +46,7 @@ import {
   executeRelationsImport,
   type RelationExportItem,
 } from "@/lib/import-export"
-import { ArrowDown, ArrowRight, ArrowUp, Plus, Pencil, Trash2, Loader2, X, AlertTriangle, Info, Download, Upload, FileText, Tags, CheckCircle2, Filter } from "lucide-react"
+import { ArrowRight, Plus, Pencil, Trash2, Loader2, X, AlertTriangle, Info, Download, Upload, FileText, Tags, CheckCircle2, Filter } from "lucide-react"
 import { useProject } from "@/app/project-context"
 import { deriveConfirmationStatus, type ConfirmationState } from "@/lib/confirmation"
 import { hasConditions } from "@/lib/relation-conditions"
@@ -101,6 +102,9 @@ function formatDateTime(iso: string | undefined): string {
   if (Number.isNaN(d.getTime())) return "—"
   return d.toLocaleString("ja-JP", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })
 }
+
+// グループ見出し行の id。落とし先としてリレーションの id と区別するために前置きする。
+const GROUP_ROW_PREFIX = "group:"
 
 export function RelationsScreen({ initialSelectedId, active }: { initialSelectedId?: string; active?: boolean }) {
   const { currentProject, loading: projectLoading } = useProject()
@@ -462,15 +466,12 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
 
   type ListRow =
     | { kind: "group"; key: string; group: OntologyGroup | null; count: number }
-    // siblingIds / index は↑↓での入れ替えに使う（同じグループの並びの中だけで動かす）
-    | { kind: "relation"; key: string; rel: OntologyRelation; siblingIds: string[]; index: number }
+    | { kind: "relation"; key: string; rel: OntologyRelation }
 
   // グループごとに仕分けして並べる。グループが未作成のうちは見出しを出さない。
   const listRows: ListRow[] = useMemo(() => {
     if (groups.length === 0) {
-      const ordered = sortByOrder(displayedRelations)
-      const siblingIds = ordered.map((r) => r.id)
-      return ordered.map((rel, index) => ({ kind: "relation" as const, key: rel.id, rel, siblingIds, index }))
+      return sortByOrder(displayedRelations).map((rel) => ({ kind: "relation" as const, key: rel.id, rel }))
     }
     const known = new Set(groups.map((g) => g.id))
     const buckets = new Map<string, OntologyRelation[]>()
@@ -487,15 +488,14 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
     sections.push({ group: null, items: sortByOrder(buckets.get(UNGROUPED) ?? []) })
     return sections.flatMap((section) => {
       if (!section.group && section.items.length === 0) return []
-      const siblingIds = section.items.map((r) => r.id)
       return [
         {
           kind: "group" as const,
-          key: `group:${section.group?.id ?? "ungrouped"}`,
+          key: `${GROUP_ROW_PREFIX}${section.group?.id ?? "ungrouped"}`,
           group: section.group,
           count: section.items.length,
         },
-        ...section.items.map((rel, index) => ({ kind: "relation" as const, key: rel.id, rel, siblingIds, index })),
+        ...section.items.map((rel) => ({ kind: "relation" as const, key: rel.id, rel })),
       ]
     })
   }, [displayedRelations, groups])
@@ -525,16 +525,17 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
     }
   }
 
-  // 並び順だけの更新（groupId は送らず、サーバ側で現状のまま据え置く）
-  const applyOrderOnly = async (updates: { id: string; order: number }[]) => {
+  // 整理（グループ・並び順）の書き込み。
+  // 確認履歴にも更新日時にも手を付けない（サーバ側も同じ方針）。
+  const applyMoves = async (updates: { id: string; order: number; groupId: string | null }[]) => {
     if (!currentProject || updates.length === 0) return
-    const orderById = new Map(updates.map((u) => [u.id, u.order]))
+    const byId = new Map(updates.map((u) => [u.id, u]))
     const before = relations
     setMovingGroup(true)
     setRelations((prev) =>
       prev.map((r) => {
-        const order = orderById.get(r.id)
-        return order === undefined ? r : { ...r, order }
+        const u = byId.get(r.id)
+        return u ? { ...r, order: u.order, groupId: u.groupId } : r
       }),
     )
     try {
@@ -551,49 +552,34 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
     }
   }
 
-  // 一覧での順序変更。同じグループの並びの中だけで入れ替える。
-  const moveRelation = (siblingIds: string[], index: number, delta: number) => {
-    const to = index + delta
-    if (to < 0 || to >= siblingIds.length) return
-    const ids = [...siblingIds]
-    const [moved] = ids.splice(index, 1)
-    ids.splice(to, 0, moved)
-    applyOrderOnly(ids.map((id, i) => ({ id, order: (i + 1) * ORDER_STEP })))
+  // 既に無いグループを指している分は「未分類」とみなす
+  const normalizeGroup = (groupId?: string | null) =>
+    groupId && groups.some((g) => g.id === groupId) ? groupId : null
+
+  // あるグループの中の指定位置へ置く（overId を省くと末尾）
+  const moveTo = (moved: OntologyRelation, groupId: string | null, overId?: string) => {
+    const list = sortByOrder(relations.filter((r) => normalizeGroup(r.groupId) === groupId))
+    const { ordered, index } = placeAt(list, moved, overId)
+    applyMoves(reorderUpdates(ordered, index, groupId))
   }
 
-  // 所属グループの変更。移動先グループの末尾に置く。
-  // 既存データは order 未設定（＝末尾）なので、この機会に移動先だけ 1000 刻みで振り直す。
-  // 整理の都合なので確認履歴にも更新日時にも手を付けない（サーバ側も同じ方針）。
-  const handleChangeGroup = async (relationId: string, groupId: string | null) => {
+  // 詳細ペインからの所属グループ変更。移動先グループの末尾に置く。
+  const handleChangeGroup = (relationId: string, groupId: string | null) => {
     const moved = relations.find((r) => r.id === relationId)
-    if (!currentProject || !moved) return
-    const ordered = [
-      ...sortByOrder(relations.filter((r) => r.id !== relationId && (r.groupId ?? null) === groupId)),
-      moved,
-    ]
-    const updates = renumber(ordered).map((u) => (u.id === relationId ? { ...u, groupId } : u))
-    const orderById = new Map(updates.map((u) => [u.id, u.order]))
-    const before = relations
-    setMovingGroup(true)
-    setRelations((prev) =>
-      prev.map((r) => {
-        const order = orderById.get(r.id)
-        if (order === undefined) return r
-        return r.id === relationId ? { ...r, groupId, order } : { ...r, order }
-      }),
-    )
-    try {
-      const res = await fetch("/api/relations/reorder", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId: currentProject.id, updates }),
-      })
-      if (!res.ok) setRelations(before)
-    } catch {
-      setRelations(before)
-    } finally {
-      setMovingGroup(false)
+    if (moved) moveTo(moved, groupId)
+  }
+
+  // 一覧表で行を落としたとき。グループ見出しならその末尾、行ならその位置へ入れる。
+  const handleRowDrop = (activeId: string, overId: string) => {
+    const moved = relations.find((r) => r.id === activeId)
+    if (!moved) return
+    if (overId.startsWith(GROUP_ROW_PREFIX)) {
+      const key = overId.slice(GROUP_ROW_PREFIX.length)
+      moveTo(moved, key === "ungrouped" ? null : key)
+      return
     }
+    const target = relations.find((r) => r.id === overId)
+    if (target) moveTo(moved, normalizeGroup(target.groupId), target.id)
   }
 
   const selectedStates = Array.from(selectedIds).map((id) => {
@@ -1006,6 +992,9 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                 {opt.label}
               </button>
             ))}
+            {!canReorder && (
+              <span className="text-muted-foreground">（絞り込み中は並べ替えできません）</span>
+            )}
           </div>
           {selectedIds.size > 0 && (canBulkConfirm || canBulkUnconfirm) && (
             <div className="flex items-center gap-2 px-6 pb-3 text-xs">
@@ -1041,10 +1030,19 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                 onReorder={applyReorder}
               />
             ) : (
+              <ListDndContext
+                onDrop={handleRowDrop}
+                labelOf={(id) => (
+                  <span className="font-medium text-foreground">
+                    {relations.find((r) => r.id === id)?.name ?? id}
+                  </span>
+                )}
+              >
               <div className="overflow-x-auto rounded-lg border border-border">
                 <Table className="table-fixed">
                   <TableHeader>
                     <TableRow className="bg-muted/50 hover:bg-muted/50">
+                      <TableHead className="w-8" />
                       <TableHead className="w-10">
                         <input
                           type="checkbox"
@@ -1062,15 +1060,14 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                       <TableHead className="w-44 pr-4 font-semibold text-foreground">確認</TableHead>
                       <TableHead className="w-20 font-semibold text-foreground">条件</TableHead>
                       <TableHead className="font-semibold text-foreground">始点(A) → 終点(B)クラス</TableHead>
-                      {canReorder && <TableHead className="w-20 font-semibold text-foreground">並び</TableHead>}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {listRows.map((row) => {
                       if (row.kind === "group") {
                         return (
-                          <TableRow key={row.key} className="bg-muted/40 hover:bg-muted/40">
-                            <TableCell colSpan={canReorder ? 6 : 5} className="py-1.5">
+                          <DropRow key={row.key} id={row.key} enabled={canReorder} className="bg-muted/40 hover:bg-muted/40">
+                            <TableCell colSpan={6} className="py-1.5">
                               <span className="flex items-center gap-2 text-xs font-semibold text-foreground">
                                 <span
                                   className="h-2.5 w-2.5 rounded-full border border-border"
@@ -1080,7 +1077,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                                 <span className="font-normal text-muted-foreground">{row.count}件</span>
                               </span>
                             </TableCell>
-                          </TableRow>
+                          </DropRow>
                         )
                       }
                       const r = row.rel
@@ -1090,8 +1087,11 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                       const state = confirmStatus.state
                       const isChecked = selectedIds.has(r.id)
                       return (
-                        <TableRow
+                        <DragRow
                           key={row.key}
+                          id={r.id}
+                          label={r.name}
+                          enabled={canReorder}
                           className={cn(
                             "cursor-pointer transition-colors",
                             isSel
@@ -1143,38 +1143,13 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                               </div>
                             ) : "—"}
                           </TableCell>
-                          {canReorder && (
-                            <TableCell className="align-top" onClick={(e) => e.stopPropagation()}>
-                              <div className="flex items-center gap-0.5">
-                                <Button
-                                  size="icon"
-                                  variant="ghost"
-                                  className="h-6 w-6"
-                                  aria-label={`${r.name}を上へ`}
-                                  disabled={row.index === 0 || movingGroup}
-                                  onClick={() => moveRelation(row.siblingIds, row.index, -1)}
-                                >
-                                  <ArrowUp className="h-3.5 w-3.5" />
-                                </Button>
-                                <Button
-                                  size="icon"
-                                  variant="ghost"
-                                  className="h-6 w-6"
-                                  aria-label={`${r.name}を下へ`}
-                                  disabled={row.index === row.siblingIds.length - 1 || movingGroup}
-                                  onClick={() => moveRelation(row.siblingIds, row.index, 1)}
-                                >
-                                  <ArrowDown className="h-3.5 w-3.5" />
-                                </Button>
-                              </div>
-                            </TableCell>
-                          )}
-                        </TableRow>
+                        </DragRow>
                       )
                     })}
                   </TableBody>
                 </Table>
               </div>
+              </ListDndContext>
             )}
           </div>
         </div>

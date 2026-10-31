@@ -36,7 +36,7 @@ import {
 import { CSS } from "@dnd-kit/utilities"
 import { GripVertical } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { ORDER_STEP, UNGROUPED, orderBetween, sortByOrder, sortGroups } from "@/lib/organize"
+import { UNGROUPED, reorderUpdates, sortByOrder, sortGroups } from "@/lib/organize"
 import type { OntologyGroup } from "@/lib/types"
 
 export type BoardItem = {
@@ -281,12 +281,7 @@ export function GroupBoard({
     const index = lane.findIndex((i) => i.id === movedId)
     if (index < 0) return
 
-    const unnumbered = lane.some((i) => i.order === undefined)
-    const between = unnumbered ? null : orderBetween(lane[index - 1], lane[index + 1])
-    const assigned: ReorderUpdate[] =
-      between === null
-        ? lane.map((item, i) => ({ id: item.id, order: (i + 1) * ORDER_STEP, groupId }))
-        : [{ id: lane[index].id, order: between, groupId }]
+    const assigned: ReorderUpdate[] = reorderUpdates(lane, index, groupId)
 
     // 画面側の order も進めておく（次のドラッグで中間値を計算できるように）
     const orderById = new Map(assigned.map((a) => [a.id, a.order]))

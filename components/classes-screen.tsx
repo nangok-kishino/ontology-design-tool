@@ -34,8 +34,9 @@ import { ImportDialog } from "@/components/import-dialog"
 import { SectionHeader } from "@/components/section-header"
 import { GroupManagerDialog, useGroups } from "@/components/group-manager"
 import { GroupBoard, ViewToggle, type BoardItem, type BoardViewMode, type ReorderUpdate } from "@/components/group-board"
+import { DragRow, DropRow, ListDndContext } from "@/components/list-dnd"
 import { cn } from "@/lib/utils"
-import { ORDER_STEP, UNGROUPED, nextOrder, renumber, rootOf, sortByOrder, sortGroups } from "@/lib/organize"
+import { UNGROUPED, nextOrder, placeAt, reorderUpdates, rootOf, sortByOrder, sortGroups } from "@/lib/organize"
 import type { OntologyClass, OntologyAttribute, OntologyGroup, OntologyRelation, AttributeRequired } from "@/lib/types"
 import {
   buildClassesYaml,
@@ -50,12 +51,14 @@ import { ConfirmationBadge } from "@/components/confirmation-badge"
 import { ConfirmDialog } from "@/components/confirm-dialog"
 import { ConfirmationSummary } from "@/components/confirmation-summary"
 import { SynonymInput } from "@/components/synonym-input"
-import { Plus, Pencil, Trash2, Loader2, AlertTriangle, ArrowDown, ArrowUp, Info, Download, Upload, FileText, Tags, Link2, CheckCircle2, X } from "lucide-react"
+import { Plus, Pencil, Trash2, Loader2, AlertTriangle, Info, Download, Upload, FileText, Tags, Link2, CheckCircle2, X } from "lucide-react"
 import { useProject } from "@/app/project-context"
 
 type TreeNode = OntologyClass & { children: TreeNode[] }
-// 一覧の1行。siblingIds / index は↑↓での入れ替えに使う（同じ親を持つ並びの中だけで動かす）
-type ClassRow = { node: TreeNode; depth: number; siblingIds: string[]; index: number }
+type ClassRow = { node: TreeNode; depth: number }
+
+// グループ見出し行の id。落とし先としてクラスの id と区別するために前置きする。
+const GROUP_ROW_PREFIX = "group:"
 type AttrSectionKey = "project" | "parent" | "own"
 
 const CLASS_FIELD_LABEL: Record<string, string> = {
@@ -566,13 +569,11 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
     const build = (group: OntologyGroup | null, list: OntologyClass[]) => {
       const trees = prune(sortTree(buildTree(list)))
       const rows: ClassRow[] = []
-      // きょうだい（同じ親を持つ並び）を行に持たせておき、一覧の↑↓で入れ替えられるようにする
       const walk = (nodes: TreeNode[], depth: number) => {
-        const siblingIds = nodes.map((n) => n.id)
-        nodes.forEach((n, index) => {
-          rows.push({ node: n, depth, siblingIds, index })
+        for (const n of nodes) {
+          rows.push({ node: n, depth })
           if (n.children.length) walk(n.children, depth + 1)
-        })
+        }
       }
       walk(trees, 0)
       return { group, trees, rows }
@@ -597,7 +598,7 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
           return [
             {
               kind: "group" as const,
-              key: `group:${section.group?.id ?? "ungrouped"}`,
+              key: `${GROUP_ROW_PREFIX}${section.group?.id ?? "ungrouped"}`,
               group: section.group,
               count: section.rows.length,
             },
@@ -645,16 +646,18 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
     }
   }
 
-  // 並び順だけの更新（groupId は送らず、サーバ側で現状のまま据え置く）
-  const applyOrderOnly = async (updates: { id: string; order: number }[]) => {
+  // 整理（グループ・並び順）の書き込み。groupId を省いた分はサーバ側で現状のまま据え置く。
+  // 確認履歴にも更新日時にも手を付けない（サーバ側も同じ方針）。
+  const applyMoves = async (updates: { id: string; order: number; groupId?: string | null }[]) => {
     if (!currentProject || updates.length === 0) return
-    const orderById = new Map(updates.map((u) => [u.id, u.order]))
+    const byId = new Map(updates.map((u) => [u.id, u]))
     const before = classes
     setMovingGroup(true)
     setClasses((prev) =>
       prev.map((c) => {
-        const order = orderById.get(c.id)
-        return order === undefined ? c : { ...c, order }
+        const u = byId.get(c.id)
+        if (!u) return c
+        return u.groupId === undefined ? { ...c, order: u.order } : { ...c, order: u.order, groupId: u.groupId }
       }),
     )
     try {
@@ -671,53 +674,73 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
     }
   }
 
-  // 一覧での順序変更。同じ親を持つきょうだいの中だけで入れ替える。
-  // 親を動かせば配下のサブクラスは木ごと一緒に動く（行は木の順に並べているため）。
-  const moveClass = (row: ClassRow, delta: number) => {
-    const to = row.index + delta
-    if (to < 0 || to >= row.siblingIds.length) return
-    const ids = [...row.siblingIds]
-    const [moved] = ids.splice(row.index, 1)
-    ids.splice(to, 0, moved)
-    applyOrderOnly(ids.map((id, i) => ({ id, order: (i + 1) * ORDER_STEP })))
+  // 既に無いグループを指している分は「未分類」とみなす
+  const normalizeGroup = (groupId?: string | null) =>
+    groupId && groups.some((g) => g.id === groupId) ? groupId : null
+
+  // 根クラスを、あるグループの中の指定位置へ置く（overId を省くと末尾）。
+  // 並び順を持つのは根クラスだけ（サブクラスは親に従うので数に入れない）。
+  const moveRootTo = (moved: OntologyClass, groupId: string | null, overId?: string) => {
+    const roots = sortByOrder(
+      classes.filter((c) => c.parentId === null && normalizeGroup(c.groupId) === groupId),
+    )
+    const { ordered, index } = placeAt(roots, moved, overId)
+    applyMoves(reorderUpdates(ordered, index, groupId))
   }
 
-  // 所属グループの変更。移動先グループの末尾に置く。
-  // 既存データは order 未設定（＝末尾）なので、この機会に移動先だけ 1000 刻みで振り直す。
-  // 整理の都合なので確認履歴にも更新日時にも手を付けない（サーバ側も同じ方針）。
-  const handleChangeGroup = async (classId: string, groupId: string | null) => {
+  // 詳細ペインからの所属グループ変更。移動先グループの末尾に置く。
+  const handleChangeGroup = (classId: string, groupId: string | null) => {
     const moved = classes.find((c) => c.id === classId)
-    if (!currentProject || !moved) return
-    // 並び順を持つのは根クラスだけ（サブクラスは親に従うので数に入れない）
-    const ordered = [
-      ...sortByOrder(
-        classes.filter((c) => c.id !== classId && c.parentId === null && (c.groupId ?? null) === groupId),
-      ),
-      moved,
-    ]
-    const updates = renumber(ordered).map((u) => (u.id === classId ? { ...u, groupId } : u))
-    const orderById = new Map(updates.map((u) => [u.id, u.order]))
-    const before = classes
-    setMovingGroup(true)
-    setClasses((prev) =>
-      prev.map((c) => {
-        const order = orderById.get(c.id)
-        if (order === undefined) return c
-        return c.id === classId ? { ...c, groupId, order } : { ...c, order }
-      }),
-    )
-    try {
-      const res = await fetch("/api/classes/reorder", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId: currentProject.id, updates }),
-      })
-      if (!res.ok) setClasses(before)
-    } catch {
-      setClasses(before)
-    } finally {
-      setMovingGroup(false)
+    if (moved) moveRootTo(moved, groupId)
+  }
+
+  // 一覧表で、その行に落とせるか。
+  //   継承（親子関係）は意味そのものなので、ドラッグでは変えない。
+  //   よってサブクラスはきょうだいの間でしか動かせない。
+  const canDropOn = (activeId: string, overId: string) => {
+    const moved = classes.find((c) => c.id === activeId)
+    if (!moved) return false
+    // グループ見出し（＝そのグループの末尾へ）は根クラスだけ
+    if (overId.startsWith(GROUP_ROW_PREFIX)) return moved.parentId === null
+    const target = classes.find((c) => c.id === overId)
+    if (!target) return false
+    if (moved.parentId !== null) return moved.parentId === target.parentId
+    // 自分の配下に落とすのは意味がない
+    return rootOf(target, classById).id !== moved.id
+  }
+
+  // 一覧表で行を落としたとき。落とし先の行が「どの並びのどこか」を決める。
+  const handleRowDrop = (activeId: string, overId: string) => {
+    const moved = classes.find((c) => c.id === activeId)
+    if (!moved) return
+
+    // グループ見出しに落とした → そのグループの末尾へ
+    if (overId.startsWith(GROUP_ROW_PREFIX)) {
+      if (moved.parentId !== null) return
+      const key = overId.slice(GROUP_ROW_PREFIX.length)
+      moveRootTo(moved, key === "ungrouped" ? null : key)
+      return
     }
+
+    const target = classes.find((c) => c.id === overId)
+    if (!target) return
+
+    // サブクラス同士（同じ親）→ そのきょうだいの並びの中で入れ替える
+    if (moved.parentId !== null && moved.parentId === target.parentId) {
+      const siblings = sortByOrder(classes.filter((c) => c.parentId === moved.parentId))
+      const { ordered, index } = placeAt(siblings, moved, overId)
+      // グループは親に従うので送らない
+      applyMoves(reorderUpdates(ordered, index, null).map(({ id, order }) => ({ id, order })))
+      return
+    }
+
+    // 根クラス → 落とした行が属する木の根を目印に、その位置へ入れる（グループもそこに合わせる）
+    if (moved.parentId === null) {
+      const targetRoot = rootOf(target, classById)
+      if (targetRoot.id === moved.id) return
+      moveRootTo(moved, normalizeGroup(targetRoot.groupId), targetRoot.id)
+    }
+    // サブクラスを別の親の下へ落とすのは継承の変更なので、ここでは何もしない
   }
 
   // 選択中クラスの状態集計（ボタン表示制御用）
@@ -796,6 +819,9 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
 
   // 並べ替えは全件表示のときだけ。絞り込み中は隠れた行と入れ替わって挙動が読めなくなる。
   const canReorder = filterState === "all"
+  // サブクラスも一緒に動くことがドラッグ中に分かるように、件数を添える
+  const descendantCount = (id: string): number =>
+    classes.filter((c) => c.parentId === id).reduce((n, c) => n + 1 + descendantCount(c.id), 0)
   const classById = useMemo(() => new Map(classes.map((c) => [c.id, c])), [classes])
   const selected = classes.find((c) => c.id === selectedId)
   // サブクラスのグループは親（根）に従う。表示も変更先もその根を見る。
@@ -996,6 +1022,9 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
                 {opt.label}
               </button>
             ))}
+            {!canReorder && (
+              <span className="text-muted-foreground">（絞り込み中は並べ替えできません）</span>
+            )}
           </div>
           {selectedIds.size > 0 && (canBulkConfirm || canBulkUnconfirm) && (
             <div className="flex items-center gap-2 px-6 pb-3 text-xs">
@@ -1043,10 +1072,25 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
                 onReorder={applyReorder}
               />
             ) : (
+              <ListDndContext
+                canDrop={canDropOn}
+                onDrop={handleRowDrop}
+                labelOf={(id) => {
+                  const cls = classes.find((c) => c.id === id)
+                  const n = descendantCount(id)
+                  return (
+                    <>
+                      <span className="font-medium text-foreground">{cls?.name ?? id}</span>
+                      {n > 0 && <span className="text-xs text-muted-foreground">＋サブクラス{n}件</span>}
+                    </>
+                  )
+                }}
+              >
               <div className="overflow-x-auto rounded-lg border border-border">
                 <Table>
                   <TableHeader>
                     <TableRow className="bg-muted/50 hover:bg-muted/50">
+                      <TableHead className="w-8" />
                       <TableHead className="w-10">
                         <input
                           type="checkbox"
@@ -1062,15 +1106,14 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
                       </TableHead>
                       <TableHead className="font-semibold text-foreground">クラス名</TableHead>
                       <TableHead className="w-32 font-semibold text-foreground">確認</TableHead>
-                      {canReorder && <TableHead className="w-20 font-semibold text-foreground">並び</TableHead>}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {listRows.map((row) => {
                       if (row.kind === "group") {
                         return (
-                          <TableRow key={row.key} className="bg-muted/40 hover:bg-muted/40">
-                            <TableCell colSpan={canReorder ? 4 : 3} className="py-1.5">
+                          <DropRow key={row.key} id={row.key} enabled={canReorder} className="bg-muted/40 hover:bg-muted/40">
+                            <TableCell colSpan={4} className="py-1.5">
                               <span className="flex items-center gap-2 text-xs font-semibold text-foreground">
                                 <span
                                   className="h-2.5 w-2.5 rounded-full border border-border"
@@ -1080,7 +1123,7 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
                                 <span className="font-normal text-muted-foreground">{row.count}件</span>
                               </span>
                             </TableCell>
-                          </TableRow>
+                          </DropRow>
                         )
                       }
                       const { node, depth } = row
@@ -1089,8 +1132,11 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
                       const state = confirmStatus.state
                       const isChecked = selectedIds.has(node.id)
                       return (
-                        <TableRow
+                        <DragRow
                           key={row.key}
+                          id={node.id}
+                          label={node.name}
+                          enabled={canReorder}
                           className={cn(
                             "cursor-pointer transition-colors",
                             isSel
@@ -1119,38 +1165,13 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
                           <TableCell>
                             <ConfirmationBadge state={state} latestConfirm={confirmStatus.latestConfirm} />
                           </TableCell>
-                          {canReorder && (
-                            <TableCell onClick={(e) => e.stopPropagation()}>
-                              <div className="flex items-center gap-0.5">
-                                <Button
-                                  size="icon"
-                                  variant="ghost"
-                                  className="h-6 w-6"
-                                  aria-label={`${node.name}を上へ`}
-                                  disabled={row.index === 0 || movingGroup}
-                                  onClick={() => moveClass(row, -1)}
-                                >
-                                  <ArrowUp className="h-3.5 w-3.5" />
-                                </Button>
-                                <Button
-                                  size="icon"
-                                  variant="ghost"
-                                  className="h-6 w-6"
-                                  aria-label={`${node.name}を下へ`}
-                                  disabled={row.index === row.siblingIds.length - 1 || movingGroup}
-                                  onClick={() => moveClass(row, 1)}
-                                >
-                                  <ArrowDown className="h-3.5 w-3.5" />
-                                </Button>
-                              </div>
-                            </TableCell>
-                          )}
-                        </TableRow>
+                        </DragRow>
                       )
                     })}
                   </TableBody>
                 </Table>
               </div>
+              </ListDndContext>
             )}
           </div>
         </div>
