@@ -24,6 +24,8 @@ import { TopBar } from "@/components/top-bar"
 import { useProject } from "@/app/project-context"
 import { cn } from "@/lib/utils"
 import type { OntologyClass, OntologyRelation } from "@/lib/types"
+import { normalizeName } from "@/lib/normalize"
+import { runWithConcurrency, groupBy } from "@/lib/concurrency"
 import { UploadCloud, FileText, Check, Sparkles, Loader2, Pencil, RotateCw, AlertTriangle } from "lucide-react"
 
 type CandidateStatus = "確認中" | "新規追加" | "承認済み" | "却下" | "採用候補" | "本登録済み"
@@ -374,7 +376,9 @@ export function ReviewScreen({ active, ingestVersion, onIngested }: { active?: b
     if (targets.length === 0) return
     setRegisteringClasses(true)
     try {
-      for (const cand of targets) {
+      // ここで作るクラスは同義語を持たないため、互いの同義語チェック結果に影響しない。
+      // （サーバ側が見るのは既存クラスの同義語との衝突だけ）＝そのまま同時実行してよい。
+      const jobs = targets.map((cand) => async () => {
         updateClassCand(cand.id, { saving: true })
         try {
           const classRes = await fetch("/api/classes", {
@@ -386,6 +390,11 @@ export function ReviewScreen({ active, ingestVersion, onIngested }: { active?: b
               description: cand.proposedClassDescription.trim(),
             }),
           })
+          // 失敗レスポンス（同義語衝突の409など）の本文をクラスとして積まない
+          if (!classRes.ok) {
+            updateClassCand(cand.id, { saving: false })
+            return
+          }
           const newClass: OntologyClass = await classRes.json()
           setClasses((p) => [...p, newClass])
           setInstCands((p) =>
@@ -399,7 +408,8 @@ export function ReviewScreen({ active, ingestVersion, onIngested }: { active?: b
         } catch {
           updateClassCand(cand.id, { saving: false })
         }
-      }
+      })
+      await runWithConcurrency(jobs)
     } finally {
       setRegisteringClasses(false)
     }
@@ -415,33 +425,41 @@ export function ReviewScreen({ active, ingestVersion, onIngested }: { active?: b
     )
   }
 
-  // 採用候補となっているインスタンスをまとめて本登録
+  // 採用候補となっているインスタンスをまとめて本登録。
+  // サーバ側の重複チェック（同一クラス×正規化一致）は「先に登録済みのもの」を見て
+  // 弾くため、そのまま並列化すると衝突する候補どうしが互いをすり抜けてしまう。
+  // 先にバッチ内を同じ基準でまとめ、各グループ1件だけ送ることで、残りは互いに
+  // 衝突しなくなる＝判定を緩めずに同時実行できる。
   const registerSelectedInstances = async () => {
     if (!currentProject) return
-    const targets = instCands.filter((c) => c.status === "採用候補")
+    const targets = instCands.filter((c) => c.status === "採用候補" && c.classId)
     if (targets.length === 0) return
     setRegisteringInstances(true)
     try {
-      for (const cand of targets) {
-        if (!cand.classId) continue
-        updateInst(cand.id, { saving: true })
+      const groups = groupBy(targets, (c) => `${c.classId}\u0000${normalizeName(c.name)}`)
+      const jobs = groups.map((group) => async () => {
+        // 2件目以降は直列実行なら 409 が返っていた分。実際に送るのは先頭だけ。
+        const [head, ...duplicates] = group
+        updateInst(head.id, { saving: true })
         try {
           const res = await fetch("/api/instances", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ projectId: currentProject.id, name: cand.name, classId: cand.classId }),
+            body: JSON.stringify({ projectId: currentProject.id, name: head.name, classId: head.classId }),
           })
           // 409（同一クラス×正規化一致の重複）は既に同名インスタンスが存在する＝
           // 登録の目的は達成済みとみなし、本登録済み扱いにする（重複作成はしない）。
           if (res.ok || res.status === 409) {
-            updateInst(cand.id, { status: "本登録済み", saving: false })
+            updateInst(head.id, { status: "本登録済み", saving: false })
+            duplicates.forEach((c) => updateInst(c.id, { status: "本登録済み", saving: false }))
           } else {
-            updateInst(cand.id, { saving: false })
+            updateInst(head.id, { saving: false })
           }
         } catch {
-          updateInst(cand.id, { saving: false })
+          updateInst(head.id, { saving: false })
         }
-      }
+      })
+      await runWithConcurrency(jobs)
     } finally {
       setRegisteringInstances(false)
     }
@@ -466,40 +484,48 @@ export function ReviewScreen({ active, ingestVersion, onIngested }: { active?: b
     if (targets.length === 0) return
     setRegisteringRelations(true)
     try {
-      let relationsSnapshot = existingRelations
-      for (const cand of targets) {
-        updateRel(cand.id, { saving: true })
-        try {
-          const newPair = { sourceClassId: cand.sourceClassId as string, targetClassId: cand.targetClassId as string }
-          const existing = relationsSnapshot.find((r) => r.name === cand.relationName.trim())
-          if (existing) {
-            const pairs = [...(existing.classPairs ?? []), newPair]
-            await fetch(`/api/relations/${existing.id}`, {
-              method: "PUT",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ classPairs: pairs }),
-            })
-            relationsSnapshot = relationsSnapshot.map((r) => (r.id === existing.id ? { ...r, classPairs: pairs } : r))
-          } else {
-            const res = await fetch("/api/relations", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                projectId: currentProject.id,
-                name: cand.relationName.trim(),
-                description: cand.description,
-                classPairs: [newPair],
-              }),
-            })
-            const newRel: OntologyRelation = await res.json()
-            relationsSnapshot = [...relationsSnapshot, newRel]
+      const upsert = (list: OntologyRelation[], rel: OntologyRelation) =>
+        list.some((r) => r.id === rel.id) ? list.map((r) => (r.id === rel.id ? rel : r)) : [...list, rel]
+      // 同名の候補は1つのリレーションへ classPairs を足していくので名前ごとに直列。
+      // 別名どうしは干渉しないので、グループ単位で同時に流す。
+      const groups = groupBy(targets, (c) => c.relationName.trim())
+      const jobs = groups.map((group) => async () => {
+        const name = group[0].relationName.trim()
+        let current = existingRelations.find((r) => r.name === name) ?? null
+        for (const cand of group) {
+          updateRel(cand.id, { saving: true })
+          try {
+            const newPair = { sourceClassId: cand.sourceClassId as string, targetClassId: cand.targetClassId as string }
+            if (current) {
+              const pairs = [...(current.classPairs ?? []), newPair]
+              await fetch(`/api/relations/${current.id}`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ classPairs: pairs }),
+              })
+              current = { ...current, classPairs: pairs }
+            } else {
+              const res = await fetch("/api/relations", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  projectId: currentProject.id,
+                  name,
+                  description: cand.description,
+                  classPairs: [newPair],
+                }),
+              })
+              current = (await res.json()) as OntologyRelation
+            }
+            const saved = current
+            setExistingRelations((prev) => upsert(prev, saved))
+            updateRel(cand.id, { status: "本登録済み", saving: false })
+          } catch {
+            updateRel(cand.id, { saving: false })
           }
-          setExistingRelations(relationsSnapshot)
-          updateRel(cand.id, { status: "本登録済み", saving: false })
-        } catch {
-          updateRel(cand.id, { saving: false })
         }
-      }
+      })
+      await runWithConcurrency(jobs)
     } finally {
       setRegisteringRelations(false)
     }

@@ -104,13 +104,15 @@ export async function POST(request: NextRequest) {
         targetClassId === null
           ? "(IS_NULL(c.classId) OR NOT IS_DEFINED(c.classId))"
           : "c.classId = @classId"
+      // 判定に使う列だけを読む（判定ロジックそのものは変えない。normalizedName が
+      // 未設定の既存データは normalizedNameOf が name から算出するため name も読む）
       const dupQuery: { query: string; parameters: { name: string; value: string }[] } = {
-        query: `SELECT * FROM c WHERE c.projectId = @projectId AND ${classMatch}`,
+        query: `SELECT c.id, c.name, c.normalizedName, c.status FROM c WHERE c.projectId = @projectId AND ${classMatch}`,
         parameters: [{ name: "@projectId", value: body.projectId }],
       }
       if (targetClassId !== null) dupQuery.parameters.push({ name: "@classId", value: targetClassId })
       const { resources: sameClass } = await container.items
-        .query<OntologyInstance>(dupQuery)
+        .query<Pick<OntologyInstance, "id" | "name" | "normalizedName" | "status">>(dupQuery)
         .fetchAll()
       const duplicate = sameClass.some(
         (inst) => !isMerged(inst) && normalizedNameOf(inst) === targetNormalized,

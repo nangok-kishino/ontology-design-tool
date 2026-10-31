@@ -108,6 +108,13 @@ function InfoTooltip({ content }: { content: string }) {
 
 const UNCLASSIFIED = "unclassified" as const
 
+// GET /api/instances/counts のレスポンス
+type InstanceCountSummary = {
+  byClass: Record<string, number>
+  nullClass: number
+  provisional: number
+}
+
 // ---------- ツリー ----------
 
 type TreeNode = OntologyClass & { children: TreeNode[] }
@@ -528,36 +535,27 @@ export function InstancesScreen({ initialSelectedClassId, active }: { initialSel
     }
   }, [applyRememberedSelection])
 
+  // 件数は /api/instances/counts にまとめて問い合わせる（クラス1件ごとに
+  // 全インスタンスを取得していた分をサーバ側の集計1回に置き換えている）
   const fetchAllCounts = useCallback(async (classList: OntologyClass[], projectId: string) => {
     setLoadingCounts(true)
     try {
-      const [classResults, nullData, projectData] = await Promise.all([
-        Promise.all(
-          classList.map(async (cls) => {
-            try {
-              const data: OntologyInstance[] = await fetch(`/api/instances?classId=${cls.id}`).then((r) => r.json())
-              return { id: cls.id, count: data.length }
-            } catch {
-              return { id: cls.id, count: 0 }
-            }
-          }),
-        ),
-        fetch(`/api/instances?classId=${UNCLASSIFIED}`).then((r) => r.json()).catch(() => []),
-        fetch(`/api/instances?projectId=${projectId}`).then((r) => r.json()).catch(() => []),
-      ])
+      const res = await fetch(`/api/instances/counts?projectId=${projectId}`)
+      if (!res.ok) return
+      const { byClass, nullClass, provisional }: InstanceCountSummary = await res.json()
       const counts: Record<string, number> = {}
-      classResults.forEach(({ id, count }) => { counts[id] = count })
-      const nullInstances: OntologyInstance[] = Array.isArray(nullData) ? nullData : []
-      const projectInstances: OntologyInstance[] = Array.isArray(projectData) ? projectData : []
+      classList.forEach((cls) => { counts[cls.id] = byClass[cls.id] ?? 0 })
+      // 既に存在しないクラスを指すインスタンス（孤児）は未分類に合算する
       const knownIds = new Set(classList.map((c) => c.id))
-      const nullIdSet = new Set(nullInstances.map((i) => i.id))
-      const orphaned = projectInstances.filter(
-        (i) => i.classId && !knownIds.has(i.classId) && !nullIdSet.has(i.id),
-      )
-      counts[UNCLASSIFIED] = nullInstances.length + orphaned.length
+      const orphaned = Object.entries(byClass)
+        .filter(([classId]) => !knownIds.has(classId))
+        .reduce((sum, [, n]) => sum + n, 0)
+      counts[UNCLASSIFIED] = nullClass + orphaned
       setInstanceCounts(counts)
-      // 仮登録件数（プロジェクト全体、統合済みは projectData に含まれない）
-      setProvisionalCount(projectInstances.filter((i) => instanceStatus(i) === "provisional").length)
+      // 仮登録件数（プロジェクト全体、統合済みは集計に含まれない）
+      setProvisionalCount(provisional)
+    } catch (err) {
+      console.error(err)
     } finally {
       setLoadingCounts(false)
     }
@@ -755,9 +753,16 @@ export function InstancesScreen({ initialSelectedClassId, active }: { initialSel
         return
       }
       if (!res.ok) throw new Error()
-      await fetchInstances(selectedClass.id)
-      // 追加した新規インスタンスは名寄せ未チェックで着地するため、未チェック件数（名寄せチェックボタンの活性）を更新する
-      await fetchAllCounts(classes, currentProject.id)
+      // 一覧・件数は作成結果から直接更新する（全件の取り直しを待たせない）。
+      // 新規インスタンスは order 未設定なので末尾に並ぶ＝末尾への追加でソート順と一致する。
+      const created: OntologyInstance = await res.json()
+      setInstances((prev) => [...prev, created])
+      setInstanceCounts((prev) => ({
+        ...prev,
+        [selectedClass.id]: (prev[selectedClass.id] ?? 0) + 1,
+      }))
+      // 追加した新規インスタンスは名寄せ未チェックで着地するため、未チェック件数（名寄せチェックボタンの活性）を増やす
+      if (instanceStatus(created) === "provisional") setProvisionalCount((prev) => prev + 1)
       if (keepOpen) {
         // 入力内容をクリアして次のインスタンス生成に備える（日付/日時属性のみ本日日付を初期化）
         const today = new Date().toISOString().split("T")[0]

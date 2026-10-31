@@ -258,8 +258,9 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
         setAddError(err.error ?? "クラスの作成に失敗しました")
         return
       }
+      // 一覧はクラス・リレーションの全件を取り直さず、作成結果を足すだけにする
       const created: OntologyClass = await res.json()
-      await fetchClasses()
+      setClasses((prev) => [...prev, created])
       setSelectedId(created.id)
       setShowAdd(false)
       setNewName(""); setNewNameEn(""); setNewSynonyms([]); setNewDesc(""); setNewParentId(null)

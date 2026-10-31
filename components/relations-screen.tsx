@@ -264,8 +264,10 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
           conditions: normalizeConditions(newConditions),
         }),
       })
+      if (!res.ok) return
+      // 一覧は全件を取り直さず、作成結果を足すだけにする
       const created: OntologyRelation = await res.json()
-      await fetchRelations()
+      setRelations((prev) => [...prev, created])
       setSelectedId(created.id)
       setShowAdd(false)
       setNewName(""); setNewNameEn(""); setNewDesc(""); setNewPairs([{ sourceClassId: "", targetClassId: "" }]); setNewConditions([])

@@ -25,15 +25,19 @@ export function cleanSynonyms(input: unknown, ownName: string): string[] {
 //   - 同義語が、他クラスのクラス名・同義語と一致しないこと
 //   - クラス名が、他クラスの同義語と一致しないこと
 //   （クラス名同士の重複は従来どおりここでは扱わない）
+// 照合に使うのは id・name・synonyms だけなので、呼び出し側は
+// その3列だけを取得したクラスを渡してよい（全列を読む必要はない）。
+export type ClassForSynonymCheck = Pick<OntologyClass, "id" | "name" | "synonyms">
+
 export function findSynonymConflict(
-  classes: OntologyClass[],
+  classes: ClassForSynonymCheck[],
   selfId: string | null,
   name: string,
   synonyms: string[],
 ): string | null {
   const others = classes.filter((c) => c.id !== selfId)
-  const nameOwner = new Map<string, OntologyClass>()
-  const synonymOwner = new Map<string, OntologyClass>()
+  const nameOwner = new Map<string, ClassForSynonymCheck>()
+  const synonymOwner = new Map<string, ClassForSynonymCheck>()
   for (const c of others) {
     nameOwner.set(normalizeName(c.name), c)
     for (const s of c.synonyms ?? []) synonymOwner.set(normalizeName(s), c)

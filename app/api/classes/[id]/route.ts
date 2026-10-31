@@ -3,7 +3,7 @@ import { getContainer } from "@/lib/cosmos"
 import { getPrincipalName } from "@/lib/auth"
 import { checkProjectAccess } from "@/lib/project-access"
 import { appendEditEvent, diffClassFields } from "@/lib/confirmation"
-import { cleanSynonyms, findSynonymConflict } from "@/lib/class-synonyms"
+import { cleanSynonyms, findSynonymConflict, type ClassForSynonymCheck } from "@/lib/class-synonyms"
 import type { OntologyClass } from "@/lib/types"
 
 const CONTAINER = "classes"
@@ -45,9 +45,10 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
     }
     merged.synonyms = cleanSynonyms(body.synonyms !== undefined ? body.synonyms : (existing.synonyms ?? []), merged.name)
     // 同じ語が2つのクラスを指さないよう、同義語・クラス名をプロジェクト内の他クラスと照合する
+    // 照合に使う列だけを読む（全列だと保存のたびにクラス全文を転送することになる）
     const { resources: siblings } = await container.items
-      .query<OntologyClass>({
-        query: "SELECT * FROM c WHERE c.projectId = @projectId",
+      .query<ClassForSynonymCheck>({
+        query: "SELECT c.id, c.name, c.synonyms FROM c WHERE c.projectId = @projectId",
         parameters: [{ name: "@projectId", value: existing.projectId }],
       })
       .fetchAll()
