@@ -433,8 +433,10 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
   // 初回訪問（未選択）時は先頭のリレーションを自動選択する。再訪問時は前回の選択を維持する
   useEffect(() => {
     if (loading || selectedId || relations.length === 0) return
+    // ボード表示は非選択のまま（全幅）で始める
+    if (viewMode === "board") return
     setSelectedId(relations[0].id)
-  }, [loading, selectedId, relations.length])
+  }, [loading, selectedId, relations.length, viewMode])
 
   const selected = relations.find((r) => r.id === selectedId)
 
@@ -982,7 +984,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                 items={displayedRelations}
                 groups={groups}
                 selectedId={selectedId}
-                onSelect={setSelectedId}
+                onSelect={(id) => setSelectedId((prev) => (prev === id ? null : id))}
                 onReorder={applyReorder}
               />
             ) : (
@@ -1097,10 +1099,9 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
           </div>
         </div>
 
-        {/* 詳細（常に編集可・固定パネル） */}
-        <div className="flex w-[30rem] shrink-0 flex-col overflow-hidden bg-card">
-          {selected ? (
-            <>
+        {/* 詳細（常に編集可）。非選択のときは出さず、一覧・ボードを全幅にする */}
+        {selected && (
+          <div className="flex w-[30rem] shrink-0 flex-col overflow-hidden bg-card">
               <div className="flex-1 space-y-6 overflow-y-auto px-4 py-4">
                 {relationIncomplete(selected) && (
                   <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2.5 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
@@ -1242,13 +1243,8 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                   {saving && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}保存
                 </Button>
               </div>
-            </>
-          ) : (
-            <div className="flex flex-1 items-center justify-center px-4 text-center text-sm text-muted-foreground">
-              リレーションを選択してください
-            </div>
-          )}
-        </div>
+          </div>
+        )}
       </div>
 
       {/* リレーション追加ダイアログ */}
