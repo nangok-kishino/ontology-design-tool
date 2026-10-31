@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useMemo } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -33,10 +33,10 @@ import { Tooltip } from "@/components/ui/tooltip"
 import { ImportDialog } from "@/components/import-dialog"
 import { SectionHeader } from "@/components/section-header"
 import { GroupManagerDialog, useGroups } from "@/components/group-manager"
-import { GroupBoard, type ReorderUpdate } from "@/components/group-board"
+import { GroupBoard, ViewToggle, type BoardViewMode, type ReorderUpdate } from "@/components/group-board"
 import { cn } from "@/lib/utils"
-import { renumber, sortByOrder } from "@/lib/organize"
-import type { OntologyRelation, OntologyClass, OntologyAttribute, AttributeRequired, ClassPair, RelationCondition, RelationConditionOperator } from "@/lib/types"
+import { UNGROUPED, renumber, sortByOrder, sortGroups } from "@/lib/organize"
+import type { OntologyRelation, OntologyClass, OntologyAttribute, OntologyGroup, AttributeRequired, ClassPair, RelationCondition, RelationConditionOperator } from "@/lib/types"
 import {
   buildRelationsYaml,
   downloadYaml,
@@ -169,7 +169,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
   // 確認機構
   // 整理用グループ（クラス管理と同じ一覧を共用する）
   const { groups, setGroups, refresh: refreshGroups } = useGroups(currentProject?.id)
-  const [viewMode, setViewMode] = useState<"flat" | "group">("flat")
+  const [viewMode, setViewMode] = useState<BoardViewMode>("list")
   const [showGroupManager, setShowGroupManager] = useState(false)
   const [movingGroup, setMovingGroup] = useState(false)
 
@@ -444,6 +444,42 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
     : relations.filter((r) => deriveConfirmationStatus(r.confirmations).state === filterState)
 
   const selectedGroup = groups.find((g) => g.id === (selected?.groupId ?? "")) ?? null
+
+  type ListRow =
+    | { kind: "group"; key: string; group: OntologyGroup | null; count: number }
+    | { kind: "relation"; key: string; rel: OntologyRelation }
+
+  // グループごとに仕分けして並べる。グループが未作成のうちは見出しを出さない。
+  const listRows: ListRow[] = useMemo(() => {
+    if (groups.length === 0) {
+      return sortByOrder(displayedRelations).map((rel) => ({ kind: "relation" as const, key: rel.id, rel }))
+    }
+    const known = new Set(groups.map((g) => g.id))
+    const buckets = new Map<string, OntologyRelation[]>()
+    for (const r of displayedRelations) {
+      const key = r.groupId && known.has(r.groupId) ? r.groupId : UNGROUPED
+      const list = buckets.get(key)
+      if (list) list.push(r)
+      else buckets.set(key, [r])
+    }
+    const sections: { group: OntologyGroup | null; items: OntologyRelation[] }[] = sortGroups(groups).map((g) => ({
+      group: g,
+      items: sortByOrder(buckets.get(g.id) ?? []),
+    }))
+    sections.push({ group: null, items: sortByOrder(buckets.get(UNGROUPED) ?? []) })
+    return sections.flatMap((section) => {
+      if (!section.group && section.items.length === 0) return []
+      return [
+        {
+          kind: "group" as const,
+          key: `group:${section.group?.id ?? "ungrouped"}`,
+          group: section.group,
+          count: section.items.length,
+        },
+        ...section.items.map((rel) => ({ kind: "relation" as const, key: rel.id, rel })),
+      ]
+    })
+  }, [displayedRelations, groups])
 
   // ボード上のドラッグ結果を保存する。groupId と order だけを動かす。
   const applyReorder = async (updates: ReorderUpdate[]): Promise<boolean> => {
@@ -875,15 +911,26 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
       <div className="flex flex-1 overflow-hidden">
         {/* 一覧（表） */}
         <div className="flex flex-1 flex-col overflow-hidden border-r border-border">
-          <div className="flex items-center justify-between px-6 py-3">
-            <h2 className="text-base font-semibold text-foreground">リレーション一覧</h2>
-            <Button size="sm" variant="outline" className="h-8 gap-1.5 bg-transparent"
+          <div className="flex items-center justify-between gap-3 px-6 py-3">
+            <div className="flex min-w-0 items-center gap-3">
+              <h2 className="shrink-0 text-base font-semibold text-foreground">リレーション一覧</h2>
+              <ViewToggle value={viewMode} onChange={setViewMode} />
+              <button
+                type="button"
+                className="shrink-0 text-xs text-muted-foreground underline-offset-2 hover:underline disabled:opacity-50"
+                onClick={() => setShowGroupManager(true)}
+                disabled={!currentProject}
+              >
+                グループを管理
+              </button>
+            </div>
+            <Button size="sm" variant="outline" className="h-8 shrink-0 gap-1.5 bg-transparent"
               onClick={() => { setNewName(""); setNewNameEn(""); setNewDesc(""); setNewPairs([{ sourceClassId: "", targetClassId: "" }]); setNewIncludeChildren(true); setNewConditions([]); setShowAdd(true) }}>
               <Plus className="h-3.5 w-3.5" />追加
             </Button>
           </div>
           <div className="flex items-center gap-2 px-6 pb-3 text-xs">
-            <span className="text-muted-foreground">表示：</span>
+            <span className="shrink-0 text-muted-foreground">表示フィルター：</span>
             {([
               { key: "all", label: "全て" },
               { key: "confirmed", label: "確認済み" },
@@ -894,7 +941,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                 key={opt.key}
                 type="button"
                 className={cn(
-                  "rounded-full border px-2.5 py-0.5 transition-colors",
+                  "shrink-0 whitespace-nowrap rounded-full border px-2.5 py-0.5 transition-colors",
                   filterState === opt.key
                     ? "border-indigo-400 bg-indigo-100 text-indigo-800 dark:border-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-200"
                     : "border-border text-muted-foreground hover:bg-muted",
@@ -904,38 +951,6 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                 {opt.label}
               </button>
             ))}
-            <span className="ml-3 text-muted-foreground">並び：</span>
-            {([
-              { key: "flat", label: "一覧" },
-              { key: "group", label: "グループ（整理ボード）" },
-            ] as { key: "flat" | "group"; label: string }[]).map((opt) => (
-              <button
-                key={opt.key}
-                type="button"
-                className={cn(
-                  "rounded-full border px-2.5 py-0.5 transition-colors",
-                  viewMode === opt.key
-                    ? "border-indigo-400 bg-indigo-100 text-indigo-800 dark:border-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-200"
-                    : "border-border text-muted-foreground hover:bg-muted",
-                )}
-                onClick={() => setViewMode(opt.key)}
-              >
-                {opt.label}
-              </button>
-            ))}
-            <button
-              type="button"
-              className="text-muted-foreground underline-offset-2 hover:underline disabled:opacity-50"
-              onClick={() => setShowGroupManager(true)}
-              disabled={!currentProject}
-            >
-              グループを管理
-            </button>
-            {viewMode === "group" && (
-              <span className="text-muted-foreground">
-                カードをドラッグしてグループの移動・並び替えができます
-              </span>
-            )}
           </div>
           {selectedIds.size > 0 && (canBulkConfirm || canBulkUnconfirm) && (
             <div className="flex items-center gap-2 px-6 pb-3 text-xs">
@@ -953,7 +968,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
               )}
             </div>
           )}
-          <div className={cn("flex-1 px-6 pb-6", viewMode === "group" ? "min-h-0 overflow-hidden" : "overflow-auto")}>
+          <div className={cn("flex-1 px-6 pb-6", viewMode === "board" ? "min-h-0 overflow-hidden" : "overflow-auto")}>
             {loading && relations.length === 0 ? (
               <div className="flex h-32 items-center justify-center text-muted-foreground">
                 <Loader2 className="h-5 w-5 animate-spin" />
@@ -962,7 +977,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
               <p className="p-4 text-center text-sm text-muted-foreground">
                 {currentProject ? "リレーションが登録されていません" : "プロジェクトを選択してください"}
               </p>
-            ) : viewMode === "group" ? (
+            ) : viewMode === "board" ? (
               <GroupBoard
                 items={displayedRelations}
                 groups={groups}
@@ -995,7 +1010,24 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {displayedRelations.map((r) => {
+                    {listRows.map((row) => {
+                      if (row.kind === "group") {
+                        return (
+                          <TableRow key={row.key} className="bg-muted/40 hover:bg-muted/40">
+                            <TableCell colSpan={5} className="py-1.5">
+                              <span className="flex items-center gap-2 text-xs font-semibold text-foreground">
+                                <span
+                                  className="h-2.5 w-2.5 rounded-full border border-border"
+                                  style={row.group?.color ? { backgroundColor: row.group.color } : undefined}
+                                />
+                                {row.group?.name ?? "未分類"}
+                                <span className="font-normal text-muted-foreground">{row.count}件</span>
+                              </span>
+                            </TableCell>
+                          </TableRow>
+                        )
+                      }
+                      const r = row.rel
                       const isSel = selectedId === r.id
                       const pairs = r.classPairs ?? []
                       const confirmStatus = deriveConfirmationStatus(r.confirmations)
@@ -1003,7 +1035,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                       const isChecked = selectedIds.has(r.id)
                       return (
                         <TableRow
-                          key={r.id}
+                          key={row.key}
                           className={cn(
                             "cursor-pointer transition-colors",
                             isSel

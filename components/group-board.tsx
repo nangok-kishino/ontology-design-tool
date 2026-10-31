@@ -317,3 +317,38 @@ export function GroupBoard({
     </DndContext>
   )
 }
+
+export type BoardViewMode = "list" | "board"
+
+// 一覧表 ⇔ ボードの切替。一覧の見出し横に置く想定の小さなセグメント。
+export function ViewToggle({
+  value,
+  onChange,
+}: {
+  value: BoardViewMode
+  onChange: (value: BoardViewMode) => void
+}) {
+  return (
+    <div className="flex shrink-0 overflow-hidden rounded-md border border-border text-xs">
+      {([
+        { key: "list", label: "一覧表" },
+        { key: "board", label: "ボード" },
+      ] as { key: BoardViewMode; label: string }[]).map((opt, i) => (
+        <button
+          key={opt.key}
+          type="button"
+          className={cn(
+            "whitespace-nowrap px-2.5 py-1 transition-colors",
+            i > 0 && "border-l border-border",
+            value === opt.key
+              ? "bg-indigo-100 font-medium text-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-200"
+              : "text-muted-foreground hover:bg-muted",
+          )}
+          onClick={() => onChange(opt.key)}
+        >
+          {opt.label}
+        </button>
+      ))}
+    </div>
+  )
+}

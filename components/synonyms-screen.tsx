@@ -117,7 +117,7 @@ export function SynonymsScreen({ active }: { active?: boolean }) {
             <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="クラス名・同義語で検索" className="h-8 pl-7" />
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-muted-foreground">表示：</span>
+            <span className="text-muted-foreground">表示フィルター：</span>
             {([
               { key: "all", label: "全て" },
               { key: "with", label: "同義語あり" },

@@ -469,7 +469,7 @@ export function TripletsScreen({ active }: { active?: boolean }) {
             </Button>
           </div>
           <div className="flex items-center gap-2 px-6 pb-3 text-xs">
-            <span className="text-muted-foreground">表示：</span>
+            <span className="text-muted-foreground">表示フィルター：</span>
             {([
               { key: "all", label: "全て" },
               { key: "confirmed", label: "確認済み" },
