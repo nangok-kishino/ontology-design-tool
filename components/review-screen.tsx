@@ -849,14 +849,14 @@ export function ReviewScreen({ active, ingestVersion, onIngested }: { active?: b
                               `（${relCands.filter((c) => c.status === "採用候補").length}件）`}
                           </Button>
                           <p className="text-xs text-muted-foreground">
-                            チェックを付けて採用候補に選び、始点・終点クラスを確定してまとめて本登録できます。鉛筆アイコンで名称・説明を編集できます。
+                            チェックを付けて採用候補に選び、始点(A)・終点(B)クラスを確定してまとめて本登録できます。鉛筆アイコンで名称・説明を編集できます。
                           </p>
                         </div>
                         {relIncompleteSelected.length > 0 && (
                           <div className="mb-3 flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
                             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                             <span>
-                              採用候補のうち {relIncompleteSelected.length} 件は始点・終点クラス（または名称）が未指定のため本登録できません。
+                              採用候補のうち {relIncompleteSelected.length} 件は始点(A)・終点(B)クラス（または名称）が未指定のため本登録できません。
                               <span className="font-medium">黄色の行</span>の未指定項目（黄色で強調されたドロップダウン）を指定してください。
                             </span>
                           </div>
@@ -872,8 +872,8 @@ export function ReviewScreen({ active, ingestVersion, onIngested }: { active?: b
                                 </TableHead>
                                 <TableHead className="w-44 font-semibold text-foreground">提案リレーション名</TableHead>
                                 <TableHead className="font-semibold text-foreground">説明</TableHead>
-                                <TableHead className="w-36 font-semibold text-foreground">始点クラス</TableHead>
-                                <TableHead className="w-36 font-semibold text-foreground">終点クラス</TableHead>
+                                <TableHead className="w-36 font-semibold text-foreground">始点(A)クラス</TableHead>
+                                <TableHead className="w-36 font-semibold text-foreground">終点(B)クラス</TableHead>
                                 <TableHead className="w-24 font-semibold text-foreground">ステータス</TableHead>
                               </TableRow>
                             </TableHeader>

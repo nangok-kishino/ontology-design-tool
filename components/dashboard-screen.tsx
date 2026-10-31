@@ -274,8 +274,8 @@ export function DashboardScreen({ onNavigate, active }: Props) {
                       <TableHeader>
                         <TableRow className="bg-muted/50 hover:bg-muted/50">
                           <TableHead className="w-48 font-semibold text-foreground">リレーション名</TableHead>
-                          <TableHead className="w-40 font-semibold text-foreground">始点クラス</TableHead>
-                          <TableHead className="font-semibold text-foreground">終点クラス</TableHead>
+                          <TableHead className="w-40 font-semibold text-foreground">始点(A)クラス</TableHead>
+                          <TableHead className="font-semibold text-foreground">終点(B)クラス</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>

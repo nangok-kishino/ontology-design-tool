@@ -24,15 +24,46 @@ export type ConfirmationEvent = {
   editedFields?: string[]
 }
 
+// ─────────────────────────────────────────────
+// 整理用グループ
+//   クラス／リレーションを人が把握しやすいように束ねるだけの「整理の都合」。
+//   オントロジーの意味ではないので、Neo4jエクスポートにもLLMプロンプトにも渡さない。
+//   （Neo4j出力はインスタンスとトリプレットのみを対象とするため、クラス／リレーションに
+//    このフィールドを持たせても構造上エクスポートには現れない。lib/graph-export.ts 参照）
+//   クラスの継承（parentId）とは独立した軸であることに注意。継承は意味、グループは整理。
+//   クラスとリレーションで同じグループ一覧を共用する（例：「受注まわり」に両方が入る）。
+//   定義は Project ドキュメントに埋め込む。プロジェクトはアクセス確認で必ず読むため、
+//   画面表示時の問い合わせを増やさずに済む。
+// ─────────────────────────────────────────────
+export type OntologyGroup = {
+  id: string
+  name: string
+  // 一覧・図での色分け用（CSSカラー。未設定＝色なし）
+  color?: string
+  order: number
+}
+
 export type Project = {
   id: string
   name: string
   description: string
   // 閲覧可能ドメイン一覧（空/未設定＝ドメイン制限なしのパブリックプロジェクト）
   allowedDomains?: string[]
+  // 整理用グループの定義一覧（クラス／リレーション共用）
+  groups?: OntologyGroup[]
   createdBy?: string
   createdAt: string
   updatedAt: string
+}
+
+// クラス／リレーションが持つ整理用フィールド。どちらも未設定を許容する。
+//   groupId: 所属グループ。未設定／null＝「未分類」
+//   order  : 同一グループ内の並び順。未設定は末尾（読み取り側で createdAt を副キーに安定ソート）。
+//            値は 1000 刻みで振り、ドラッグ時は前後の中間値を1件だけ書き込む
+//            （全件振り直しを避けるため）。隙間が尽きたときだけ振り直す。
+export type OrganizableFields = {
+  groupId?: string | null
+  order?: number
 }
 
 export type OntologyClass = {
@@ -50,7 +81,7 @@ export type OntologyClass = {
   createdAt: string
   updatedAt: string
   confirmations?: ConfirmationEvent[]
-}
+} & OrganizableFields
 
 export type ClassPair = {
   sourceClassId: string
@@ -106,7 +137,7 @@ export type OntologyRelation = {
   createdAt: string
   updatedAt: string
   confirmations?: ConfirmationEvent[]
-}
+} & OrganizableFields
 
 export type AttributeRequired = "必須" | "任意"
 export type AttributeScope = "共通" | "固有"

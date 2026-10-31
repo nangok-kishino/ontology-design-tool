@@ -32,8 +32,10 @@ import { TopBar } from "@/components/top-bar"
 import { Tooltip } from "@/components/ui/tooltip"
 import { ImportDialog } from "@/components/import-dialog"
 import { SectionHeader } from "@/components/section-header"
+import { GroupManagerDialog, useGroups } from "@/components/group-manager"
 import { cn } from "@/lib/utils"
-import type { OntologyClass, OntologyAttribute, OntologyRelation, AttributeRequired } from "@/lib/types"
+import { groupItems, renumber, sortByOrder } from "@/lib/organize"
+import type { OntologyClass, OntologyAttribute, OntologyGroup, OntologyRelation, AttributeRequired } from "@/lib/types"
 import {
   buildClassesYaml,
   downloadYaml,
@@ -153,6 +155,13 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
   const [scopeAlertIsWarning, setScopeAlertIsWarning] = useState(false)
   const [pendingAction, setPendingAction] = useState<{ fn: () => Promise<void> } | null>(null)
 
+  // 整理用グループ。ツリー表示（継承の親子）とグループ表示（整理の束ね）を切り替える。
+  //   継承は意味、グループは整理の都合なので、同じリストで混ぜずに表示を分ける。
+  const { groups, setGroups, refresh: refreshGroups } = useGroups(currentProject?.id)
+  const [viewMode, setViewMode] = useState<"tree" | "group">("tree")
+  const [showGroupManager, setShowGroupManager] = useState(false)
+  const [movingGroup, setMovingGroup] = useState(false)
+
   // 確認機構
   const [filterState, setFilterState] = useState<"all" | ConfirmationState>("all")
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
@@ -188,8 +197,11 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
   // この画面が表示状態になったら再取得する（マウント維持のため、他画面での変更を反映）。
   // 取得中も既存データは表示したままにする（下の描画条件を参照）ので、切替時にちらつかない。
   useEffect(() => {
-    if (active && currentProject) fetchClasses()
-  }, [active, currentProject?.id, fetchClasses])
+    if (active && currentProject) {
+      fetchClasses()
+      refreshGroups()
+    }
+  }, [active, currentProject?.id, fetchClasses, refreshGroups])
 
   useEffect(() => {
     if (initialSelectedId && classes.length > 0) {
@@ -500,6 +512,64 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
     ? flatClassesAll
     : flatClassesAll.filter(({ node }) => deriveConfirmationStatus(node.confirmations).state === filterState)
 
+  // 一覧に描く行。ツリー表示は継承の親子をインデントで、グループ表示は
+  // グループ見出しを挟んだ平坦な並びで出す（2つの階層を同時には出さない）。
+  type ListRow =
+    | { kind: "group"; key: string; group: OntologyGroup | null; count: number }
+    | { kind: "class"; key: string; node: TreeNode; depth: number }
+
+  const listRows: ListRow[] =
+    viewMode === "tree"
+      ? flatClasses.map(({ node, depth }) => ({ kind: "class" as const, key: node.id, node, depth }))
+      : groupItems(flatClasses.map(({ node }) => node), groups).flatMap((section) => {
+          // 未分類は中身があるときだけ見出しを出す（空のグループは存在を示すため常に出す）
+          if (!section.group && section.items.length === 0) return []
+          return [
+            {
+              kind: "group" as const,
+              key: `group:${section.group?.id ?? "ungrouped"}`,
+              group: section.group,
+              count: section.items.length,
+            },
+            ...section.items.map((node) => ({ kind: "class" as const, key: node.id, node, depth: 0 })),
+          ]
+        })
+
+  // 所属グループの変更。移動先グループの末尾に置く。
+  // 既存データは order 未設定（＝末尾）なので、この機会に移動先だけ 1000 刻みで振り直す。
+  // 整理の都合なので確認履歴にも更新日時にも手を付けない（サーバ側も同じ方針）。
+  const handleChangeGroup = async (classId: string, groupId: string | null) => {
+    const moved = classes.find((c) => c.id === classId)
+    if (!currentProject || !moved) return
+    const ordered = [
+      ...sortByOrder(classes.filter((c) => c.id !== classId && (c.groupId ?? null) === groupId)),
+      moved,
+    ]
+    const updates = renumber(ordered).map((u) => (u.id === classId ? { ...u, groupId } : u))
+    const orderById = new Map(updates.map((u) => [u.id, u.order]))
+    const before = classes
+    setMovingGroup(true)
+    setClasses((prev) =>
+      prev.map((c) => {
+        const order = orderById.get(c.id)
+        if (order === undefined) return c
+        return c.id === classId ? { ...c, groupId, order } : { ...c, order }
+      }),
+    )
+    try {
+      const res = await fetch("/api/classes/reorder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId: currentProject.id, updates }),
+      })
+      if (!res.ok) setClasses(before)
+    } catch {
+      setClasses(before)
+    } finally {
+      setMovingGroup(false)
+    }
+  }
+
   // 選択中クラスの状態集計（ボタン表示制御用）
   const selectedStates = Array.from(selectedIds).map((id) => {
     const cls = classes.find((c) => c.id === id)
@@ -573,6 +643,7 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
   }, [loading, selectedId, tree.length])
 
   const selected = classes.find((c) => c.id === selectedId)
+  const selectedGroup = groups.find((g) => g.id === (selected?.groupId ?? "")) ?? null
   const childClasses = selected ? classes.filter((c) => c.parentId === selected.id) : []
   const hasChildren = childClasses.length > 0
   const parentClass = selected?.parentId ? classes.find((c) => c.id === selected.parentId) : null
@@ -757,6 +828,33 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
                 {opt.label}
               </button>
             ))}
+            <span className="ml-3 text-muted-foreground">並び：</span>
+            {([
+              { key: "tree", label: "ツリー（継承）" },
+              { key: "group", label: "グループ（整理）" },
+            ] as { key: "tree" | "group"; label: string }[]).map((opt) => (
+              <button
+                key={opt.key}
+                type="button"
+                className={cn(
+                  "rounded-full border px-2.5 py-0.5 transition-colors",
+                  viewMode === opt.key
+                    ? "border-indigo-400 bg-indigo-100 text-indigo-800 dark:border-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-200"
+                    : "border-border text-muted-foreground hover:bg-muted",
+                )}
+                onClick={() => setViewMode(opt.key)}
+              >
+                {opt.label}
+              </button>
+            ))}
+            <button
+              type="button"
+              className="text-muted-foreground underline-offset-2 hover:underline disabled:opacity-50"
+              onClick={() => setShowGroupManager(true)}
+              disabled={!currentProject}
+            >
+              グループを管理
+            </button>
           </div>
           {selectedIds.size > 0 && (canBulkConfirm || canBulkUnconfirm) && (
             <div className="flex items-center gap-2 px-6 pb-3 text-xs">
@@ -818,14 +916,31 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {flatClasses.map(({ node, depth }) => {
+                    {listRows.map((row) => {
+                      if (row.kind === "group") {
+                        return (
+                          <TableRow key={row.key} className="bg-muted/40 hover:bg-muted/40">
+                            <TableCell colSpan={3} className="py-1.5">
+                              <span className="flex items-center gap-2 text-xs font-semibold text-foreground">
+                                <span
+                                  className="h-2.5 w-2.5 rounded-full border border-border"
+                                  style={row.group?.color ? { backgroundColor: row.group.color } : undefined}
+                                />
+                                {row.group?.name ?? "未分類"}
+                                <span className="font-normal text-muted-foreground">{row.count}件</span>
+                              </span>
+                            </TableCell>
+                          </TableRow>
+                        )
+                      }
+                      const { node, depth } = row
                       const isSel = selectedId === node.id
                       const confirmStatus = deriveConfirmationStatus(node.confirmations)
                       const state = confirmStatus.state
                       const isChecked = selectedIds.has(node.id)
                       return (
                         <TableRow
-                          key={node.id}
+                          key={row.key}
                           className={cn(
                             "cursor-pointer transition-colors",
                             isSel
@@ -921,6 +1036,26 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
                         </SelectContent>
                       </Select>
                     </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-sm font-medium">グループ</Label>
+                      <Select
+                        value={selectedGroup?.id ?? "__none__"}
+                        onValueChange={(v) => handleChangeGroup(selected.id, v === "__none__" ? null : v)}
+                      >
+                        <SelectTrigger className="h-8" disabled={movingGroup}>
+                          <SelectValue>{selectedGroup?.name ?? "未分類"}</SelectValue>
+                        </SelectTrigger>
+                        <SelectContent className="max-h-72">
+                          <SelectItem value="__none__">未分類</SelectItem>
+                          {groups.map((g) => (
+                            <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-muted-foreground">
+                        一覧を見やすくするための整理用の区分です。オントロジーの意味やエクスポートには影響しません（選ぶと即座に保存されます）。
+                      </p>
+                    </div>
                   </div>
                 </section>
 
@@ -955,9 +1090,9 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
                         <Table className="table-fixed">
                           <TableHeader>
                             <TableRow className="bg-muted/50 hover:bg-muted/50">
-                              <TableHead className="w-[30%] font-semibold text-foreground">始点クラス</TableHead>
+                              <TableHead className="w-[30%] font-semibold text-foreground">始点(A)クラス</TableHead>
                               <TableHead className="w-[40%] font-semibold text-foreground">リレーション名</TableHead>
-                              <TableHead className="w-[30%] font-semibold text-foreground">終点クラス</TableHead>
+                              <TableHead className="w-[30%] font-semibold text-foreground">終点(B)クラス</TableHead>
                             </TableRow>
                           </TableHeader>
                           <TableBody>
@@ -995,9 +1130,9 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
                           <Table className="table-fixed">
                             <TableHeader>
                               <TableRow className="bg-muted/50 hover:bg-muted/50">
-                                <TableHead className="w-[25%] font-semibold text-foreground">始点クラス</TableHead>
+                                <TableHead className="w-[25%] font-semibold text-foreground">始点(A)クラス</TableHead>
                                 <TableHead className="w-[30%] font-semibold text-foreground">リレーション名</TableHead>
-                                <TableHead className="w-[25%] font-semibold text-foreground">終点クラス</TableHead>
+                                <TableHead className="w-[25%] font-semibold text-foreground">終点(B)クラス</TableHead>
                                 <TableHead className="w-[20%] font-semibold text-foreground">継承元クラス</TableHead>
                               </TableRow>
                             </TableHeader>
@@ -1348,6 +1483,20 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
       </Dialog>
 
       {/* クラス定義インポート */}
+      {currentProject && (
+        <GroupManagerDialog
+          open={showGroupManager}
+          onOpenChange={setShowGroupManager}
+          projectId={currentProject.id}
+          groups={groups}
+          onSaved={(saved) => {
+            setGroups(saved)
+            // 削除されたグループを指していたクラスは未分類に戻る（サーバ側で groupId を外す）
+            fetchClasses()
+          }}
+        />
+      )}
+
       <ImportDialog<ClassExportItem>
         open={showImport}
         onOpenChange={setShowImport}

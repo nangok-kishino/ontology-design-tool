@@ -32,8 +32,10 @@ import { TopBar } from "@/components/top-bar"
 import { Tooltip } from "@/components/ui/tooltip"
 import { ImportDialog } from "@/components/import-dialog"
 import { SectionHeader } from "@/components/section-header"
+import { GroupManagerDialog, useGroups } from "@/components/group-manager"
 import { cn } from "@/lib/utils"
-import type { OntologyRelation, OntologyClass, OntologyAttribute, AttributeRequired, ClassPair, RelationCondition, RelationConditionOperator } from "@/lib/types"
+import { groupItems, renumber, sortByOrder } from "@/lib/organize"
+import type { OntologyRelation, OntologyClass, OntologyAttribute, OntologyGroup, AttributeRequired, ClassPair, RelationCondition, RelationConditionOperator } from "@/lib/types"
 import {
   buildRelationsYaml,
   downloadYaml,
@@ -56,7 +58,7 @@ const RELATION_FIELD_LABEL: Record<string, string> = {
   name: "リレーション名",
   nameEn: "英語名",
   description: "説明",
-  classPairs: "始点/終点",
+  classPairs: "始点(A)/終点(B)",
   parentRelationId: "上位リレーション",
   conditions: "成立条件",
   attributes: "属性",
@@ -164,6 +166,12 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
   const [pendingAttrAction, setPendingAttrAction] = useState<{ fn: () => Promise<void> } | null>(null)
 
   // 確認機構
+  // 整理用グループ（クラス管理と同じ一覧を共用する）
+  const { groups, setGroups, refresh: refreshGroups } = useGroups(currentProject?.id)
+  const [viewMode, setViewMode] = useState<"flat" | "group">("flat")
+  const [showGroupManager, setShowGroupManager] = useState(false)
+  const [movingGroup, setMovingGroup] = useState(false)
+
   const [filterState, setFilterState] = useState<"all" | ConfirmationState>("all")
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [showBulkConfirm, setShowBulkConfirm] = useState(false)
@@ -212,8 +220,9 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
     if (active && currentProject) {
       fetchRelations()
       fetchClasses()
+      refreshGroups()
     }
-  }, [active, currentProject?.id, fetchRelations, fetchClasses])
+  }, [active, currentProject?.id, fetchRelations, fetchClasses, refreshGroups])
 
   const fetchAllAttrs = useCallback(async (relationId: string, projectId: string) => {
     setLoadingAttrs(true)
@@ -432,6 +441,65 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
   const displayedRelations = filterState === "all"
     ? relations
     : relations.filter((r) => deriveConfirmationStatus(r.confirmations).state === filterState)
+
+  const selectedGroup = groups.find((g) => g.id === (selected?.groupId ?? "")) ?? null
+
+  // 一覧に描く行。グループ表示のときだけ見出し行を挟む。
+  type ListRow =
+    | { kind: "group"; key: string; group: OntologyGroup | null; count: number }
+    | { kind: "relation"; key: string; rel: OntologyRelation }
+
+  const listRows: ListRow[] =
+    viewMode === "flat"
+      ? displayedRelations.map((rel) => ({ kind: "relation" as const, key: rel.id, rel }))
+      : groupItems(displayedRelations, groups).flatMap((section) => {
+          // 未分類は中身があるときだけ見出しを出す（空のグループは存在を示すため常に出す）
+          if (!section.group && section.items.length === 0) return []
+          return [
+            {
+              kind: "group" as const,
+              key: `group:${section.group?.id ?? "ungrouped"}`,
+              group: section.group,
+              count: section.items.length,
+            },
+            ...section.items.map((rel) => ({ kind: "relation" as const, key: rel.id, rel })),
+          ]
+        })
+
+  // 所属グループの変更。移動先グループの末尾に置く。
+  // 既存データは order 未設定（＝末尾）なので、この機会に移動先だけ 1000 刻みで振り直す。
+  // 整理の都合なので確認履歴にも更新日時にも手を付けない（サーバ側も同じ方針）。
+  const handleChangeGroup = async (relationId: string, groupId: string | null) => {
+    const moved = relations.find((r) => r.id === relationId)
+    if (!currentProject || !moved) return
+    const ordered = [
+      ...sortByOrder(relations.filter((r) => r.id !== relationId && (r.groupId ?? null) === groupId)),
+      moved,
+    ]
+    const updates = renumber(ordered).map((u) => (u.id === relationId ? { ...u, groupId } : u))
+    const orderById = new Map(updates.map((u) => [u.id, u.order]))
+    const before = relations
+    setMovingGroup(true)
+    setRelations((prev) =>
+      prev.map((r) => {
+        const order = orderById.get(r.id)
+        if (order === undefined) return r
+        return r.id === relationId ? { ...r, groupId, order } : { ...r, order }
+      }),
+    )
+    try {
+      const res = await fetch("/api/relations/reorder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId: currentProject.id, updates }),
+      })
+      if (!res.ok) setRelations(before)
+    } catch {
+      setRelations(before)
+    } finally {
+      setMovingGroup(false)
+    }
+  }
 
   const selectedStates = Array.from(selectedIds).map((id) => {
     const r = relations.find((rr) => rr.id === id)
@@ -832,6 +900,33 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                 {opt.label}
               </button>
             ))}
+            <span className="ml-3 text-muted-foreground">並び：</span>
+            {([
+              { key: "flat", label: "一覧" },
+              { key: "group", label: "グループ（整理）" },
+            ] as { key: "flat" | "group"; label: string }[]).map((opt) => (
+              <button
+                key={opt.key}
+                type="button"
+                className={cn(
+                  "rounded-full border px-2.5 py-0.5 transition-colors",
+                  viewMode === opt.key
+                    ? "border-indigo-400 bg-indigo-100 text-indigo-800 dark:border-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-200"
+                    : "border-border text-muted-foreground hover:bg-muted",
+                )}
+                onClick={() => setViewMode(opt.key)}
+              >
+                {opt.label}
+              </button>
+            ))}
+            <button
+              type="button"
+              className="text-muted-foreground underline-offset-2 hover:underline disabled:opacity-50"
+              onClick={() => setShowGroupManager(true)}
+              disabled={!currentProject}
+            >
+              グループを管理
+            </button>
           </div>
           {selectedIds.size > 0 && (canBulkConfirm || canBulkUnconfirm) && (
             <div className="flex items-center gap-2 px-6 pb-3 text-xs">
@@ -879,11 +974,28 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                       <TableHead className="w-[28%] font-semibold text-foreground">リレーション名</TableHead>
                       <TableHead className="w-44 pr-4 font-semibold text-foreground">確認</TableHead>
                       <TableHead className="w-20 font-semibold text-foreground">条件</TableHead>
-                      <TableHead className="font-semibold text-foreground">始点 → 終点クラス</TableHead>
+                      <TableHead className="font-semibold text-foreground">始点(A) → 終点(B)クラス</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {displayedRelations.map((r) => {
+                    {listRows.map((row) => {
+                      if (row.kind === "group") {
+                        return (
+                          <TableRow key={row.key} className="bg-muted/40 hover:bg-muted/40">
+                            <TableCell colSpan={5} className="py-1.5">
+                              <span className="flex items-center gap-2 text-xs font-semibold text-foreground">
+                                <span
+                                  className="h-2.5 w-2.5 rounded-full border border-border"
+                                  style={row.group?.color ? { backgroundColor: row.group.color } : undefined}
+                                />
+                                {row.group?.name ?? "未分類"}
+                                <span className="font-normal text-muted-foreground">{row.count}件</span>
+                              </span>
+                            </TableCell>
+                          </TableRow>
+                        )
+                      }
+                      const r = row.rel
                       const isSel = selectedId === r.id
                       const pairs = r.classPairs ?? []
                       const confirmStatus = deriveConfirmationStatus(r.confirmations)
@@ -891,7 +1003,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                       const isChecked = selectedIds.has(r.id)
                       return (
                         <TableRow
-                          key={r.id}
+                          key={row.key}
                           className={cn(
                             "cursor-pointer transition-colors",
                             isSel
@@ -962,7 +1074,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                   <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2.5 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
                     <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                     <span>
-                      始点または終点のクラスが未設定、または削除されており（「不明」と表示）、このリレーション定義は不完全です。始点・終点クラスを設定し直してください。
+                      始点(A)または終点(B)のクラスが未設定、または削除されており（「不明」と表示）、このリレーション定義は不完全です。始点(A)・終点(B)クラスを設定し直してください。
                     </span>
                   </div>
                 )}
@@ -985,14 +1097,14 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                       <Input value={editNameEn} onChange={(e) => setEditNameEn(e.target.value)} className="h-8" placeholder="例：causes" />
                     </div>
                     <div className="space-y-1.5">
-                      <Label className="text-sm font-medium">始点・終点クラスのペア <span className="text-destructive">*</span></Label>
+                      <Label className="text-sm font-medium">始点(A)・終点(B)クラスのペア <span className="text-destructive">*</span></Label>
                       <div className="space-y-2">
                         {editPairs.map((pair, i) => (
                           <div key={i} className="flex items-center gap-2">
                             <Select value={pair.sourceClassId || "__none__"}
                               onValueChange={(v) => updateEditPair(i, "sourceClassId", v && v !== "__none__" ? v : "")}>
                               <SelectTrigger className="h-8 min-w-0 flex-1">
-                                <SelectValue>{pair.sourceClassId ? className(pair.sourceClassId) : "始点クラス"}</SelectValue>
+                                <SelectValue>{pair.sourceClassId ? className(pair.sourceClassId) : "始点(A)クラス"}</SelectValue>
                               </SelectTrigger>
                               <SelectContent className="max-h-72">
                                 {classes.map((c) => (
@@ -1004,7 +1116,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                             <Select value={pair.targetClassId || "__none__"}
                               onValueChange={(v) => updateEditPair(i, "targetClassId", v && v !== "__none__" ? v : "")}>
                               <SelectTrigger className="h-8 min-w-0 flex-1">
-                                <SelectValue>{pair.targetClassId ? className(pair.targetClassId) : "終点クラス"}</SelectValue>
+                                <SelectValue>{pair.targetClassId ? className(pair.targetClassId) : "終点(B)クラス"}</SelectValue>
                               </SelectTrigger>
                               <SelectContent className="max-h-72">
                                 {classes.map((c) => (
@@ -1038,6 +1150,26 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                     <div className="space-y-1.5">
                       <Label className="text-sm font-medium">説明</Label>
                       <Textarea rows={4} value={editDesc} onChange={(e) => setEditDesc(e.target.value)} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-sm font-medium">グループ</Label>
+                      <Select
+                        value={selectedGroup?.id ?? "__none__"}
+                        onValueChange={(v) => handleChangeGroup(selected.id, v === "__none__" ? null : v)}
+                      >
+                        <SelectTrigger className="h-8" disabled={movingGroup}>
+                          <SelectValue>{selectedGroup?.name ?? "未分類"}</SelectValue>
+                        </SelectTrigger>
+                        <SelectContent className="max-h-72">
+                          <SelectItem value="__none__">未分類</SelectItem>
+                          {groups.map((g) => (
+                            <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-muted-foreground">
+                        一覧を見やすくするための整理用の区分です。オントロジーの意味やエクスポートには影響しません（選ぶと即座に保存されます）。
+                      </p>
                     </div>
                   </div>
                 </section>
@@ -1103,14 +1235,14 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                 placeholder="例：causes" />
             </div>
             <div className="space-y-2">
-              <Label>始点・終点クラスのペア <span className="text-destructive">*</span></Label>
+              <Label>始点(A)・終点(B)クラスのペア <span className="text-destructive">*</span></Label>
               <div className="space-y-2">
                 {newPairs.map((pair, i) => (
                   <div key={i} className="flex items-center gap-2">
                     <Select value={pair.sourceClassId || "__none__"}
                       onValueChange={(v) => updateNewPair(i, "sourceClassId", v && v !== "__none__" ? v : "")}>
                       <SelectTrigger className="min-w-0 flex-1">
-                        <SelectValue>{pair.sourceClassId ? className(pair.sourceClassId) : "始点クラス"}</SelectValue>
+                        <SelectValue>{pair.sourceClassId ? className(pair.sourceClassId) : "始点(A)クラス"}</SelectValue>
                       </SelectTrigger>
                       <SelectContent>
                         {classes.map((c) => (
@@ -1122,7 +1254,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                     <Select value={pair.targetClassId || "__none__"}
                       onValueChange={(v) => updateNewPair(i, "targetClassId", v && v !== "__none__" ? v : "")}>
                       <SelectTrigger className="min-w-0 flex-1">
-                        <SelectValue>{pair.targetClassId ? className(pair.targetClassId) : "終点クラス"}</SelectValue>
+                        <SelectValue>{pair.targetClassId ? className(pair.targetClassId) : "終点(B)クラス"}</SelectValue>
                       </SelectTrigger>
                       <SelectContent>
                         {classes.map((c) => (
@@ -1333,6 +1465,20 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
       </Dialog>
 
       {/* リレーション定義インポート */}
+      {currentProject && (
+        <GroupManagerDialog
+          open={showGroupManager}
+          onOpenChange={setShowGroupManager}
+          projectId={currentProject.id}
+          groups={groups}
+          onSaved={(saved) => {
+            setGroups(saved)
+            // 削除されたグループを指していた分は未分類に戻る（サーバ側で groupId を外す）
+            fetchRelations()
+          }}
+        />
+      )}
+
       <ImportDialog<RelationExportItem>
         open={showImport}
         onOpenChange={setShowImport}
