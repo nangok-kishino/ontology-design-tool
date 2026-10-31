@@ -33,28 +33,6 @@ export function sortGroups(groups: OntologyGroup[]): OntologyGroup[] {
   return [...groups].sort((a, b) => (a.order - b.order) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
 }
 
-// 所属グループごとに仕分けする。未設定・既に存在しないグループを指すものは未分類へ。
-export function groupItems<T extends Sortable>(
-  items: T[],
-  groups: OntologyGroup[],
-): { group: OntologyGroup | null; items: T[] }[] {
-  const known = new Set(groups.map((g) => g.id))
-  const buckets = new Map<string, T[]>()
-  for (const item of items) {
-    const key = item.groupId && known.has(item.groupId) ? item.groupId : UNGROUPED
-    const bucket = buckets.get(key)
-    if (bucket) bucket.push(item)
-    else buckets.set(key, [item])
-  }
-  const sections: { group: OntologyGroup | null; items: T[] }[] = sortGroups(groups).map((group) => ({
-    group,
-    items: sortByOrder(buckets.get(group.id) ?? []),
-  }))
-  // 未分類は常に最後に置く（空でも表示側が「未分類」の受け皿として使えるよう返す）
-  sections.push({ group: null, items: sortByOrder(buckets.get(UNGROUPED) ?? []) })
-  return sections
-}
-
 // 新しく末尾に足すときの order
 export function nextOrder(items: { order?: number }[]): number {
   const max = items.reduce((m, i) => (i.order !== undefined && i.order > m ? i.order : m), 0)

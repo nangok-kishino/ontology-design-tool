@@ -33,9 +33,10 @@ import { Tooltip } from "@/components/ui/tooltip"
 import { ImportDialog } from "@/components/import-dialog"
 import { SectionHeader } from "@/components/section-header"
 import { GroupManagerDialog, useGroups } from "@/components/group-manager"
+import { GroupBoard, type ReorderUpdate } from "@/components/group-board"
 import { cn } from "@/lib/utils"
-import { groupItems, renumber, sortByOrder } from "@/lib/organize"
-import type { OntologyRelation, OntologyClass, OntologyAttribute, OntologyGroup, AttributeRequired, ClassPair, RelationCondition, RelationConditionOperator } from "@/lib/types"
+import { renumber, sortByOrder } from "@/lib/organize"
+import type { OntologyRelation, OntologyClass, OntologyAttribute, AttributeRequired, ClassPair, RelationCondition, RelationConditionOperator } from "@/lib/types"
 import {
   buildRelationsYaml,
   downloadYaml,
@@ -444,27 +445,30 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
 
   const selectedGroup = groups.find((g) => g.id === (selected?.groupId ?? "")) ?? null
 
-  // 一覧に描く行。グループ表示のときだけ見出し行を挟む。
-  type ListRow =
-    | { kind: "group"; key: string; group: OntologyGroup | null; count: number }
-    | { kind: "relation"; key: string; rel: OntologyRelation }
-
-  const listRows: ListRow[] =
-    viewMode === "flat"
-      ? displayedRelations.map((rel) => ({ kind: "relation" as const, key: rel.id, rel }))
-      : groupItems(displayedRelations, groups).flatMap((section) => {
-          // 未分類は中身があるときだけ見出しを出す（空のグループは存在を示すため常に出す）
-          if (!section.group && section.items.length === 0) return []
-          return [
-            {
-              kind: "group" as const,
-              key: `group:${section.group?.id ?? "ungrouped"}`,
-              group: section.group,
-              count: section.items.length,
-            },
-            ...section.items.map((rel) => ({ kind: "relation" as const, key: rel.id, rel })),
-          ]
-        })
+  // ボード上のドラッグ結果を保存する。groupId と order だけを動かす。
+  const applyReorder = async (updates: ReorderUpdate[]): Promise<boolean> => {
+    if (!currentProject) return false
+    const byId = new Map(updates.map((u) => [u.id, u]))
+    const before = relations
+    setRelations((prev) =>
+      prev.map((r) => {
+        const u = byId.get(r.id)
+        return u ? { ...r, groupId: u.groupId, order: u.order } : r
+      }),
+    )
+    try {
+      const res = await fetch("/api/relations/reorder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId: currentProject.id, updates }),
+      })
+      if (!res.ok) { setRelations(before); return false }
+      return true
+    } catch {
+      setRelations(before)
+      return false
+    }
+  }
 
   // 所属グループの変更。移動先グループの末尾に置く。
   // 既存データは order 未設定（＝末尾）なので、この機会に移動先だけ 1000 刻みで振り直す。
@@ -903,7 +907,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
             <span className="ml-3 text-muted-foreground">並び：</span>
             {([
               { key: "flat", label: "一覧" },
-              { key: "group", label: "グループ（整理）" },
+              { key: "group", label: "グループ（整理ボード）" },
             ] as { key: "flat" | "group"; label: string }[]).map((opt) => (
               <button
                 key={opt.key}
@@ -927,6 +931,11 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
             >
               グループを管理
             </button>
+            {viewMode === "group" && (
+              <span className="text-muted-foreground">
+                カードをドラッグしてグループの移動・並び替えができます
+              </span>
+            )}
           </div>
           {selectedIds.size > 0 && (canBulkConfirm || canBulkUnconfirm) && (
             <div className="flex items-center gap-2 px-6 pb-3 text-xs">
@@ -944,7 +953,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
               )}
             </div>
           )}
-          <div className="flex-1 overflow-auto px-6 pb-6">
+          <div className={cn("flex-1 px-6 pb-6", viewMode === "group" ? "min-h-0 overflow-hidden" : "overflow-auto")}>
             {loading && relations.length === 0 ? (
               <div className="flex h-32 items-center justify-center text-muted-foreground">
                 <Loader2 className="h-5 w-5 animate-spin" />
@@ -953,6 +962,14 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
               <p className="p-4 text-center text-sm text-muted-foreground">
                 {currentProject ? "リレーションが登録されていません" : "プロジェクトを選択してください"}
               </p>
+            ) : viewMode === "group" ? (
+              <GroupBoard
+                items={displayedRelations}
+                groups={groups}
+                selectedId={selectedId}
+                onSelect={setSelectedId}
+                onReorder={applyReorder}
+              />
             ) : (
               <div className="overflow-x-auto rounded-lg border border-border">
                 <Table className="table-fixed">
@@ -978,24 +995,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {listRows.map((row) => {
-                      if (row.kind === "group") {
-                        return (
-                          <TableRow key={row.key} className="bg-muted/40 hover:bg-muted/40">
-                            <TableCell colSpan={5} className="py-1.5">
-                              <span className="flex items-center gap-2 text-xs font-semibold text-foreground">
-                                <span
-                                  className="h-2.5 w-2.5 rounded-full border border-border"
-                                  style={row.group?.color ? { backgroundColor: row.group.color } : undefined}
-                                />
-                                {row.group?.name ?? "未分類"}
-                                <span className="font-normal text-muted-foreground">{row.count}件</span>
-                              </span>
-                            </TableCell>
-                          </TableRow>
-                        )
-                      }
-                      const r = row.rel
+                    {displayedRelations.map((r) => {
                       const isSel = selectedId === r.id
                       const pairs = r.classPairs ?? []
                       const confirmStatus = deriveConfirmationStatus(r.confirmations)
@@ -1003,7 +1003,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                       const isChecked = selectedIds.has(r.id)
                       return (
                         <TableRow
-                          key={row.key}
+                          key={r.id}
                           className={cn(
                             "cursor-pointer transition-colors",
                             isSel

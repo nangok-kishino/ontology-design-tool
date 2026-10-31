@@ -33,9 +33,10 @@ import { Tooltip } from "@/components/ui/tooltip"
 import { ImportDialog } from "@/components/import-dialog"
 import { SectionHeader } from "@/components/section-header"
 import { GroupManagerDialog, useGroups } from "@/components/group-manager"
+import { GroupBoard, type ReorderUpdate } from "@/components/group-board"
 import { cn } from "@/lib/utils"
-import { groupItems, renumber, sortByOrder } from "@/lib/organize"
-import type { OntologyClass, OntologyAttribute, OntologyGroup, OntologyRelation, AttributeRequired } from "@/lib/types"
+import { renumber, sortByOrder } from "@/lib/organize"
+import type { OntologyClass, OntologyAttribute, OntologyRelation, AttributeRequired } from "@/lib/types"
 import {
   buildClassesYaml,
   downloadYaml,
@@ -512,28 +513,33 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
     ? flatClassesAll
     : flatClassesAll.filter(({ node }) => deriveConfirmationStatus(node.confirmations).state === filterState)
 
-  // 一覧に描く行。ツリー表示は継承の親子をインデントで、グループ表示は
-  // グループ見出しを挟んだ平坦な並びで出す（2つの階層を同時には出さない）。
-  type ListRow =
-    | { kind: "group"; key: string; group: OntologyGroup | null; count: number }
-    | { kind: "class"; key: string; node: TreeNode; depth: number }
+  // 整理ボードへ渡す項目（確認状態フィルタはボードにも効かせる）
+  const boardItems = flatClasses.map(({ node }) => node)
 
-  const listRows: ListRow[] =
-    viewMode === "tree"
-      ? flatClasses.map(({ node, depth }) => ({ kind: "class" as const, key: node.id, node, depth }))
-      : groupItems(flatClasses.map(({ node }) => node), groups).flatMap((section) => {
-          // 未分類は中身があるときだけ見出しを出す（空のグループは存在を示すため常に出す）
-          if (!section.group && section.items.length === 0) return []
-          return [
-            {
-              kind: "group" as const,
-              key: `group:${section.group?.id ?? "ungrouped"}`,
-              group: section.group,
-              count: section.items.length,
-            },
-            ...section.items.map((node) => ({ kind: "class" as const, key: node.id, node, depth: 0 })),
-          ]
-        })
+  // ボード上のドラッグ結果を保存する。groupId と order だけを動かす。
+  const applyReorder = async (updates: ReorderUpdate[]): Promise<boolean> => {
+    if (!currentProject) return false
+    const byId = new Map(updates.map((u) => [u.id, u]))
+    const before = classes
+    setClasses((prev) =>
+      prev.map((c) => {
+        const u = byId.get(c.id)
+        return u ? { ...c, groupId: u.groupId, order: u.order } : c
+      }),
+    )
+    try {
+      const res = await fetch("/api/classes/reorder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId: currentProject.id, updates }),
+      })
+      if (!res.ok) { setClasses(before); return false }
+      return true
+    } catch {
+      setClasses(before)
+      return false
+    }
+  }
 
   // 所属グループの変更。移動先グループの末尾に置く。
   // 既存データは order 未設定（＝末尾）なので、この機会に移動先だけ 1000 刻みで振り直す。
@@ -831,7 +837,7 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
             <span className="ml-3 text-muted-foreground">並び：</span>
             {([
               { key: "tree", label: "ツリー（継承）" },
-              { key: "group", label: "グループ（整理）" },
+              { key: "group", label: "グループ（整理ボード）" },
             ] as { key: "tree" | "group"; label: string }[]).map((opt) => (
               <button
                 key={opt.key}
@@ -855,6 +861,11 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
             >
               グループを管理
             </button>
+            {viewMode === "group" && (
+              <span className="text-muted-foreground">
+                カードをドラッグしてグループの移動・並び替えができます
+              </span>
+            )}
           </div>
           {selectedIds.size > 0 && (canBulkConfirm || canBulkUnconfirm) && (
             <div className="flex items-center gap-2 px-6 pb-3 text-xs">
@@ -884,7 +895,7 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
               )}
             </div>
           )}
-          <div className="flex-1 overflow-auto px-6 pb-6">
+          <div className={cn("flex-1 px-6 pb-6", viewMode === "group" ? "min-h-0 overflow-hidden" : "overflow-auto")}>
             {loading && classes.length === 0 ? (
               <div className="flex h-32 items-center justify-center text-muted-foreground">
                 <Loader2 className="h-5 w-5 animate-spin" />
@@ -893,6 +904,14 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
               <p className="p-4 text-center text-sm text-muted-foreground">
                 {currentProject ? "クラスが登録されていません" : "プロジェクトを選択してください"}
               </p>
+            ) : viewMode === "group" ? (
+              <GroupBoard
+                items={boardItems}
+                groups={groups}
+                selectedId={selectedId}
+                onSelect={setSelectedId}
+                onReorder={applyReorder}
+              />
             ) : (
               <div className="overflow-x-auto rounded-lg border border-border">
                 <Table>
@@ -916,31 +935,14 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {listRows.map((row) => {
-                      if (row.kind === "group") {
-                        return (
-                          <TableRow key={row.key} className="bg-muted/40 hover:bg-muted/40">
-                            <TableCell colSpan={3} className="py-1.5">
-                              <span className="flex items-center gap-2 text-xs font-semibold text-foreground">
-                                <span
-                                  className="h-2.5 w-2.5 rounded-full border border-border"
-                                  style={row.group?.color ? { backgroundColor: row.group.color } : undefined}
-                                />
-                                {row.group?.name ?? "未分類"}
-                                <span className="font-normal text-muted-foreground">{row.count}件</span>
-                              </span>
-                            </TableCell>
-                          </TableRow>
-                        )
-                      }
-                      const { node, depth } = row
+                    {flatClasses.map(({ node, depth }) => {
                       const isSel = selectedId === node.id
                       const confirmStatus = deriveConfirmationStatus(node.confirmations)
                       const state = confirmStatus.state
                       const isChecked = selectedIds.has(node.id)
                       return (
                         <TableRow
-                          key={row.key}
+                          key={node.id}
                           className={cn(
                             "cursor-pointer transition-colors",
                             isSel
