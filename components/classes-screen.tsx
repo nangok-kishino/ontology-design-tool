@@ -530,7 +530,7 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
     return sections
   }, [classes, groups, filterState])
 
-  const flatClasses = groupSections.flatMap((s) => s.rows)
+  const flatClasses = useMemo(() => groupSections.flatMap((s) => s.rows), [groupSections])
 
   type ListRow =
     | { kind: "group"; key: string; group: OntologyGroup | null; count: number }
@@ -554,7 +554,7 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
         })
 
   // 整理ボードへ渡す項目（確認状態フィルタはボードにも効かせる）
-  const boardItems = flatClasses.map(({ node }) => node)
+  const boardItems = useMemo(() => flatClasses.map(({ node }) => node), [flatClasses])
 
   // ボード上のドラッグ結果を保存する。groupId と order だけを動かす。
   const applyReorder = async (updates: ReorderUpdate[]): Promise<boolean> => {

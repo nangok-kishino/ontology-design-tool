@@ -441,9 +441,13 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
   const selected = relations.find((r) => r.id === selectedId)
 
   // 表示中のリレーション（確認状態フィルタ）
-  const displayedRelations = filterState === "all"
-    ? relations
-    : relations.filter((r) => deriveConfirmationStatus(r.confirmations).state === filterState)
+  const displayedRelations = useMemo(
+    () =>
+      filterState === "all"
+        ? relations
+        : relations.filter((r) => deriveConfirmationStatus(r.confirmations).state === filterState),
+    [relations, filterState],
+  )
 
   const selectedGroup = groups.find((g) => g.id === (selected?.groupId ?? "")) ?? null
 

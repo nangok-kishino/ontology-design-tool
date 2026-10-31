@@ -15,9 +15,11 @@ import {
   DragOverlay,
   PointerSensor,
   closestCorners,
+  pointerWithin,
   useDroppable,
   useSensor,
   useSensors,
+  type CollisionDetection,
   type DragEndEvent,
   type DragOverEvent,
   type DragStartEvent,
@@ -46,6 +48,13 @@ export type BoardItem = {
 export type ReorderUpdate = { id: string; order: number; groupId: string | null }
 
 type Lanes = Record<string, BoardItem[]>
+
+// カーソルの真下にあるものを最優先に判定する。空のレーンはカードが無く、
+// 角の距離で比べると隣のレーンのカードに負けてしまうため。
+const collisionDetection: CollisionDetection = (args) => {
+  const underPointer = pointerWithin(args)
+  return underPointer.length > 0 ? underPointer : closestCorners(args)
+}
 
 function buildLanes(items: BoardItem[], groups: OntologyGroup[]): Lanes {
   const known = new Set(groups.map((g) => g.id))
@@ -176,9 +185,24 @@ export function GroupBoard({
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }))
 
+  // 親は毎レンダリング新しい配列を渡しうるので、配列の同一性では組み直さない。
+  // ドラッグ中に組み直すと、掴んで動かしたカードが元の位置へ戻ってしまう
+  //（特に空のレーンでは、戻る→またカーソル下に入るの繰り返しで一切移動できなくなる）。
+  const signature = useMemo(
+    () =>
+      items.map((i) => `${i.id}:${i.groupId ?? ""}:${i.order ?? ""}`).join("|") +
+      "#" +
+      groups.map((g) => g.id).join("|"),
+    [items, groups],
+  )
+  const itemsRef = useRef(items)
+  const groupsRef = useRef(groups)
+  itemsRef.current = items
+  groupsRef.current = groups
+
   useEffect(() => {
-    setLanes(buildLanes(items, groups))
-  }, [items, groups, setLanes])
+    setLanes(buildLanes(itemsRef.current, groupsRef.current))
+  }, [signature, setLanes])
 
   const groupLanes = useMemo(() => sortGroups(groups), [groups])
 
@@ -222,7 +246,18 @@ export function GroupBoard({
     if (!ok) setLanes(buildLanes(items, groups))
   }
 
-  const handleDragStart = (event: DragStartEvent) => setActiveId(String(event.active.id))
+  // 掴んだ時点の位置。終了時に「本当に動いたか」を判定するのに使う
+  // （onDragOver でレーンをまたいだ後だと、終了時の位置だけでは判断できない）。
+  const dragOriginRef = useRef<{ lane: string; index: number } | null>(null)
+
+  const handleDragStart = (event: DragStartEvent) => {
+    const id = String(event.active.id)
+    const lane = laneKeyOf(id)
+    dragOriginRef.current = lane
+      ? { lane, index: lanesRef.current[lane].findIndex((i) => i.id === id) }
+      : null
+    setActiveId(id)
+  }
 
   // レーンをまたいだ時点で先に入れ替えて、見た目を指に追従させる
   const handleDragOver = (event: DragOverEvent) => {
@@ -247,23 +282,46 @@ export function GroupBoard({
     })
   }
 
+  // 落とした時点の active / over だけで最終形を決める。
+  // onDragOver が走ったかどうかに依存しないので、レーンをまたぐ移動も取りこぼさない。
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event
     setActiveId(null)
     if (!over) return
     const activeKey = String(active.id)
     const overKey = String(over.id)
-    const laneKey = laneKeyOf(activeKey)
-    if (!laneKey) return
+    const from = laneKeyOf(activeKey)
+    const to = laneKeyOf(overKey)
+    if (!from || !to) return
 
     const current = lanesRef.current
-    const lane = current[laneKey]
-    const from = lane.findIndex((i) => i.id === activeKey)
-    const overIndex = lane.findIndex((i) => i.id === overKey)
-    const to = overIndex < 0 ? lane.length - 1 : overIndex
-    const next = from < 0 || from === to ? current : { ...current, [laneKey]: arrayMove(lane, from, to) }
+    let next: Lanes
+    if (from === to) {
+      const lane = current[from]
+      const fromIndex = lane.findIndex((i) => i.id === activeKey)
+      const overIndex = lane.findIndex((i) => i.id === overKey)
+      const toIndex = overIndex < 0 ? lane.length - 1 : overIndex
+      next = fromIndex < 0 || fromIndex === toIndex ? current : { ...current, [from]: arrayMove(lane, fromIndex, toIndex) }
+    } else {
+      const item = current[from].find((i) => i.id === activeKey)
+      if (!item) return
+      const target = current[to]
+      const overIndex = target.findIndex((i) => i.id === overKey)
+      const insertAt = overIndex < 0 ? target.length : overIndex
+      next = {
+        ...current,
+        [from]: current[from].filter((i) => i.id !== activeKey),
+        [to]: [...target.slice(0, insertAt), item, ...target.slice(insertAt)],
+      }
+    }
     setLanes(next)
-    persist(next, laneKey, activeKey)
+    // 掴んだ場所に戻しただけなら保存しない。逆に、onDragOver でレーンをまたいでいれば
+    // 終了時の見た目が動いていなくても保存する必要がある。
+    const origin = dragOriginRef.current
+    const finalIndex = (next[to] ?? []).findIndex((i) => i.id === activeKey)
+    dragOriginRef.current = null
+    if (origin && origin.lane === to && origin.index === finalIndex) return
+    persist(next, to, activeKey)
   }
 
   const activeItem = activeId ? findItem(activeId) : null
@@ -271,7 +329,7 @@ export function GroupBoard({
   return (
     <DndContext
       sensors={sensors}
-      collisionDetection={closestCorners}
+      collisionDetection={collisionDetection}
       onDragStart={handleDragStart}
       onDragOver={handleDragOver}
       onDragEnd={handleDragEnd}
