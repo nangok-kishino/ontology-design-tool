@@ -1310,6 +1310,9 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
                     {inheritedRelations.length > 0 && (
                       <div className="space-y-2">
                         <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">継承されたリレーション</p>
+                        <p className="text-xs text-muted-foreground">
+                          親クラスで定義したリレーションは、子クラスが自動的に継承します。子クラスを始点・終点に指定し直す必要はありません。
+                        </p>
                         <div className="rounded-lg border border-border">
                           <Table className="table-fixed">
                             <TableHeader>

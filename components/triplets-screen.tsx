@@ -30,6 +30,7 @@ import { TopBar } from "@/components/top-bar"
 import { SectionHeader } from "@/components/section-header"
 import { AttrValueList, hasMissingRequired } from "@/components/attr-fields"
 import { cn } from "@/lib/utils"
+import { classMap, isSelfOrDescendant } from "@/lib/relation-inherit"
 import { useProject } from "@/app/project-context"
 import { isRegistered } from "@/lib/instance-status"
 import { buildCypher } from "@/lib/graph-export"
@@ -373,22 +374,27 @@ export function TripletsScreen({ active }: { active?: boolean }) {
   }
 
   // クラスペア整合に基づく絞り込み（主語クラス → 選べる述語 → 選べる目的語クラス）。
-  // 判定は lib/triplet-resolve.ts の relationAllowsPair と同じ完全一致（子クラスは
-  // リレーション側でペア展開済みという前提）。
+  // 判定は lib/relation-inherit.ts と同じ：リレーションは親クラスで宣言され、
+  // 子クラスのインスタンスはその宣言を継承して通る。
+  const classByIdForPairs = useMemo(() => classMap(classes), [classes])
   const subjClassOf = (id: string) => instById.get(id)?.classId ?? null
   const relationsForSubject = (subjectId: string) => {
     const scid = subjectId ? subjClassOf(subjectId) : null
     if (!scid) return relations
-    return relations.filter((r) => (r.classPairs ?? []).some((p) => p.sourceClassId === scid))
+    return relations.filter((r) =>
+      (r.classPairs ?? []).some((p) => isSelfOrDescendant(scid, p.sourceClassId, classByIdForPairs)),
+    )
   }
   const objectsForSubjectRel = (subjectId: string, relId: string) => {
     const scid = subjectId ? subjClassOf(subjectId) : null
     const rel = relId ? relById.get(relId) : null
     if (!scid || !rel) return registeredInstances
-    const targets = new Set(
-      (rel.classPairs ?? []).filter((p) => p.sourceClassId === scid).map((p) => p.targetClassId),
+    const targets = (rel.classPairs ?? [])
+      .filter((p) => isSelfOrDescendant(scid, p.sourceClassId, classByIdForPairs))
+      .map((p) => p.targetClassId)
+    return registeredInstances.filter(
+      (i) => i.classId && targets.some((t) => isSelfOrDescendant(i.classId, t, classByIdForPairs)),
     )
-    return registeredInstances.filter((i) => i.classId && targets.has(i.classId))
   }
 
   const TripleSelects = ({ draft, onChange }: { draft: Draft; onChange: (d: Draft) => void }) => {

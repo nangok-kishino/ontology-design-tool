@@ -4,6 +4,7 @@ import { getPrincipalName } from "@/lib/auth"
 import { checkProjectAccess } from "@/lib/project-access"
 import { isRegistered } from "@/lib/instance-status"
 import { relationAllowsPair } from "@/lib/triplet-resolve"
+import { loadClassParents } from "@/lib/class-parents"
 import type { Triplet, OntologyInstance, OntologyRelation } from "@/lib/types"
 
 const CONTAINER = "triplets"
@@ -32,6 +33,7 @@ export async function GET(request: NextRequest) {
 
 // 手動追加。主語・目的語は本登録インスタンス、述語は定義済みリレーション。
 // (主語クラス, 目的語クラス) がリレーションの classPairs に無ければ 400（型矛盾）で作成不可。
+// 子クラスは親クラスの宣言を継承するので、親で宣言されていれば子クラスのインスタンスでも通る。
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
@@ -48,10 +50,11 @@ export async function POST(request: NextRequest) {
       getContainer(CONTAINER),
     ])
 
-    const [{ resource: subject }, { resource: object }, { resource: relRaw }] = await Promise.all([
+    const [{ resource: subject }, { resource: object }, { resource: relRaw }, classes] = await Promise.all([
       instContainer.item(subjectInstanceId, subjectInstanceId).read<OntologyInstance>(),
       instContainer.item(objectInstanceId, objectInstanceId).read<OntologyInstance>(),
       relContainer.item(predicateRelationId, predicateRelationId).read<any>(),
+      loadClassParents(projectId),
     ])
 
     if (!subject || subject.projectId !== projectId) {
@@ -73,7 +76,7 @@ export async function POST(request: NextRequest) {
       ? relRaw
       : { ...relRaw, classPairs: [{ sourceClassId: relRaw.sourceClassId, targetClassId: relRaw.targetClassId }] }
 
-    if (!relationAllowsPair(relation, subject.classId, object.classId)) {
+    if (!relationAllowsPair(relation, subject.classId, object.classId, classes)) {
       return NextResponse.json(
         {
           error: `型矛盾：〈${subject.name}〉→〈${object.name}〉の組み合わせは、リレーション「${relation.name}」の許可クラスペアに含まれていません。述語かリレーション定義を見直してください。`,

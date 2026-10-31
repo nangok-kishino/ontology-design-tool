@@ -23,6 +23,7 @@ import {
 import { TopBar } from "@/components/top-bar"
 import { useProject } from "@/app/project-context"
 import { cn } from "@/lib/utils"
+import { classMap, relationAllowsPair } from "@/lib/relation-inherit"
 import type { OntologyClass, OntologyRelation } from "@/lib/types"
 import { normalizeName } from "@/lib/normalize"
 import { runWithConcurrency, groupBy } from "@/lib/concurrency"
@@ -143,6 +144,9 @@ export function ReviewScreen({ active, ingestVersion, onIngested }: { active?: b
   // 「定義済みと同一（同名＋同一クラスペア）」の候補を除外する（重複抽出のはじき）。
   const existingRelationsRef = useRef<OntologyRelation[]>([])
   useEffect(() => { existingRelationsRef.current = existingRelations }, [existingRelations])
+  // 候補の重複判定でクラスの親子関係を見る（子クラスは親の宣言を継承する）
+  const classesRef = useRef<OntologyClass[]>([])
+  useEffect(() => { classesRef.current = classes }, [classes])
 
   // 既存クラス・リレーションを取得する（解析結果は消さない）。
   // 画面はマウント維持されるため、クラス管理等でクラスを追加した後に
@@ -257,17 +261,19 @@ export function ReviewScreen({ active, ingestVersion, onIngested }: { active?: b
 
     // リレーション候補の重複除去：
     //   (1) バッチ内で始点・終点・名称が一致するものを1つにまとめる
-    //   (2) 既に定義済みのリレーション（同名かつ同一の始点→終点クラスペアを既に持つ）は除外する
+    //   (2) 既に定義済みのリレーション（同名かつそのクラスペアを既に持つ）は除外する
     //       ※同名でもそのクラスペアを持たない場合は「新しいペアの追加候補」として残す
+    //       ※親クラスで宣言済みなら、その子クラスのペアは既に継承しているので候補にしない
     const rawRels: any[] = Array.isArray(ontology?.relations) ? ontology!.relations : []
     const existingRels = existingRelationsRef.current
+    const classByIdForPairs = classMap(classesRef.current)
     const isExistingPair = (r: any) => {
       if (!r.sourceClassId || !r.targetClassId) return false
       const name = (r.relationName || "").trim().toLowerCase()
       return existingRels.some(
         (er) =>
           (er.name || "").trim().toLowerCase() === name &&
-          (er.classPairs ?? []).some((p) => p.sourceClassId === r.sourceClassId && p.targetClassId === r.targetClassId),
+          relationAllowsPair(er, r.sourceClassId, r.targetClassId, classByIdForPairs),
       )
     }
     const seenRel = new Set<string>()

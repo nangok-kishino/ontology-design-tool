@@ -3,6 +3,7 @@ import { getContainer } from "@/lib/cosmos"
 import { checkProjectAccess } from "@/lib/project-access"
 import { isRegistered } from "@/lib/instance-status"
 import { resolveCandidate } from "@/lib/triplet-resolve"
+import { loadClassParents } from "@/lib/class-parents"
 import type { OntologyInstance, OntologyRelation, TripletCandidate } from "@/lib/types"
 
 const CANDIDATES = "tripletCandidates"
@@ -22,10 +23,11 @@ export async function GET(request: NextRequest) {
       getContainer("relations"),
       getContainer("instances"),
     ])
-    const [{ resources: candidates }, { resources: relationsRaw }, { resources: instancesAll }] = await Promise.all([
+    const [{ resources: candidates }, { resources: relationsRaw }, { resources: instancesAll }, classes] = await Promise.all([
       candContainer.items.query<TripletCandidate>({ query: "SELECT * FROM c WHERE c.projectId = @p", parameters: [{ name: "@p", value: projectId }] }).fetchAll(),
       relContainer.items.query<any>({ query: "SELECT * FROM c WHERE c.projectId = @p", parameters: [{ name: "@p", value: projectId }] }).fetchAll(),
       instContainer.items.query<OntologyInstance>({ query: "SELECT * FROM c WHERE c.projectId = @p", parameters: [{ name: "@p", value: projectId }] }).fetchAll(),
+      loadClassParents(projectId),
     ])
     const relations: OntologyRelation[] = relationsRaw.map((r) =>
       r.classPairs ? r : { ...r, classPairs: [{ sourceClassId: r.sourceClassId, targetClassId: r.targetClassId }] },
@@ -33,7 +35,7 @@ export async function GET(request: NextRequest) {
     // トリプレット candidate の解決は本登録済み（provisional/confirmed）のインスタンスを対象。
     // 名寄せチェック済み限定にはしない（統合済み merged のみ除外）。
     const registeredInstances = instancesAll.filter((i) => isRegistered(i))
-    const resolved = candidates.map((c) => resolveCandidate(c, registeredInstances, relations))
+    const resolved = candidates.map((c) => resolveCandidate(c, registeredInstances, relations, classes))
     return NextResponse.json(resolved)
   } catch (error) {
     console.error("GET /api/triplet-candidates:", error)

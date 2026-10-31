@@ -53,3 +53,10 @@ export function classSections(classes: OntologyClass[], groups: OntologyGroup[])
 export function orderedClassRoots(classes: OntologyClass[], groups: OntologyGroup[]): ClassTreeNode[] {
   return classSections(classes, groups).flatMap((s) => s.trees)
 }
+
+export type ClassTreeRow = { node: ClassTreeNode; depth: number }
+
+// 木を上から順に1列へ流す（親のすぐ下に子が並ぶ）。選択肢の並びに使う。
+export function flattenClassTree(nodes: ClassTreeNode[], depth = 0): ClassTreeRow[] {
+  return nodes.flatMap((node) => [{ node, depth }, ...flattenClassTree(node.children, depth + 1)])
+}

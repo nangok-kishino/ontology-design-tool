@@ -2,24 +2,15 @@
 // すべて LLM 不要のサーバ側照合処理。インスタンスが本登録されるたびに再解決すれば
 // 未解決→正当/型矛盾 へ自動で埋まる（設計書 §2-2）。
 //
-// フェーズ1では手動追加のクラスペア整合チェック（classifyTriplet / relationAllowsPair）を使う。
+// 手動追加のクラスペア整合チェックは classifyTriplet / relationAllowsPair を使う。
 // 文書candidateの表層解決（resolveByText）はフェーズ2の文書取込みビューで使用する。
 
 import type { OntologyInstance, OntologyRelation, TripletCandidate, TripletResolveStatus } from "./types"
 import { isRegistered } from "./instance-status"
+import { relationAllowsPair, type ClassLike } from "./relation-inherit"
 
-// リレーションが (sourceClassId, targetClassId) のクラスペアを許可しているか。
-// フェーズ1は完全一致。将来 parentId 継承（サブクラス許容）を足す余地あり。
-export function relationAllowsPair(
-  relation: Pick<OntologyRelation, "classPairs">,
-  sourceClassId: string | null | undefined,
-  targetClassId: string | null | undefined,
-): boolean {
-  if (!sourceClassId || !targetClassId) return false
-  return (relation.classPairs ?? []).some(
-    (p) => p.sourceClassId === sourceClassId && p.targetClassId === targetClassId,
-  )
-}
+// クラスペアの照合は lib/relation-inherit.ts に置いてある（子クラスは親の宣言で通る）。
+export { relationAllowsPair }
 
 // 本登録インスタンス2つ＋リレーションから、トリプレットの整合性を判定する。
 //   valid          : クラスペアが許可されている
@@ -29,10 +20,12 @@ export function classifyTriplet(params: {
   subject?: Pick<OntologyInstance, "classId"> | null
   object?: Pick<OntologyInstance, "classId"> | null
   relation?: Pick<OntologyRelation, "classPairs"> | null
+  // 親クラスの宣言を子クラスにも効かせるために必要
+  classes: ClassLike[]
 }): TripletResolveStatus {
-  const { subject, object, relation } = params
+  const { subject, object, relation, classes } = params
   if (!subject || !object || !relation) return "unresolved"
-  return relationAllowsPair(relation, subject.classId, object.classId) ? "valid" : "type_conflict"
+  return relationAllowsPair(relation, subject.classId, object.classId, classes) ? "valid" : "type_conflict"
 }
 
 // candidate（選ばれた id）を、現在の本登録インスタンス・定義済みリレーションに対して
@@ -61,11 +54,12 @@ export function resolveCandidate(
   cand: TripletCandidate,
   instances: OntologyInstance[],
   relations: OntologyRelation[],
+  classes: ClassLike[],
 ): ResolvedTripletCandidate {
   const subject = instances.find((i) => i.id === cand.subjectInstanceId && isRegistered(i)) ?? null
   const object = instances.find((i) => i.id === cand.objectInstanceId && isRegistered(i)) ?? null
   const relation = relations.find((r) => r.id === cand.predicateRelationId) ?? null
-  const status = classifyTriplet({ subject, object, relation })
+  const status = classifyTriplet({ subject, object, relation, classes })
   return {
     ...cand,
     resolvedStatus: status,

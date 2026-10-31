@@ -93,7 +93,7 @@ export async function POST(request: NextRequest) {
     // オントロジー抽出（主）とトリプレット抽出（従属）を並行実行
     const [ontology, tripletResult] = await Promise.all([
       extractOntology(model, text, { classes, relations, instances: instancesAll }),
-      extractTriplets(model, text, { registeredInstances, relations, classNameById, classSynonymsById }),
+      extractTriplets(model, text, { registeredInstances, relations, classNameById, classSynonymsById, classes }),
     ])
 
     // オントロジー候補を保留セッションとして保存（全体の文書取込み画面が読む）
@@ -141,12 +141,12 @@ export async function POST(request: NextRequest) {
         confidence: t.confidence,
         createdBy: actor,
         createdAt: now,
-        resolvedStatus: classifyTriplet({ subject, object, relation }),
+        resolvedStatus: classifyTriplet({ subject, object, relation, classes }),
       }
       const { resource } = await candContainer.items.create(cand)
       if (resource) savedCandidates.push(resource)
     }
-    const resolvedCandidates = savedCandidates.map((c) => resolveCandidate(c, registeredInstances, relations))
+    const resolvedCandidates = savedCandidates.map((c) => resolveCandidate(c, registeredInstances, relations, classes))
 
     let tripletNote: string | undefined
     if (registeredInstances.length === 0 || relations.length === 0) {

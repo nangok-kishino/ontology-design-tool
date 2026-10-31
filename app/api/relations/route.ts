@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server"
 import { getContainer } from "@/lib/cosmos"
 import { getPrincipalName } from "@/lib/auth"
 import { checkProjectAccess } from "@/lib/project-access"
+import { loadClassParents } from "@/lib/class-parents"
+import { normalizeClassPairs } from "@/lib/relation-inherit"
 import type { OntologyRelation } from "@/lib/types"
 
 const CONTAINER = "relations"
@@ -18,13 +20,20 @@ export async function GET(request: NextRequest) {
     if (projectId) {
       const access = await checkProjectAccess(request, projectId)
       if ("error" in access) return access.error
-      const { resources } = await container.items
-        .query<any>({
-          query: "SELECT * FROM c WHERE c.projectId = @projectId",
-          parameters: [{ name: "@projectId", value: projectId }],
-        })
-        .fetchAll()
-      return NextResponse.json(resources.map(normalize))
+      const [{ resources }, classes] = await Promise.all([
+        container.items
+          .query<any>({
+            query: "SELECT * FROM c WHERE c.projectId = @projectId",
+            parameters: [{ name: "@projectId", value: projectId }],
+          })
+          .fetchAll(),
+        loadClassParents(projectId),
+      ])
+      // 子クラスは親の宣言を継承するので、親で説明できるペア・参照先が消えたペアは返さない。
+      // （過去に子クラス分まで展開して保存されたデータが、「不明」として残り続けないように）
+      return NextResponse.json(
+        resources.map(normalize).map((r) => ({ ...r, classPairs: normalizeClassPairs(r.classPairs, classes) })),
+      )
     }
 
     const { resources } = await container.items.readAll<any>().fetchAll()
@@ -42,6 +51,7 @@ export async function POST(request: NextRequest) {
       const access = await checkProjectAccess(request, body.projectId)
       if ("error" in access) return access.error
     }
+    const classes = body.projectId ? await loadClassParents(body.projectId) : []
     const now = new Date().toISOString()
     const actor = getPrincipalName(request)
     const item: OntologyRelation = {
@@ -50,7 +60,8 @@ export async function POST(request: NextRequest) {
       name: body.name,
       nameEn: body.nameEn ?? "",
       description: body.description ?? "",
-      classPairs: body.classPairs ?? [],
+      // 子クラス分のペアは持たない（親の宣言を継承する）
+      classPairs: normalizeClassPairs(body.classPairs ?? [], classes),
       parentRelationId: body.parentRelationId ?? null,
       conditions: Array.isArray(body.conditions) ? body.conditions : [],
       createdBy: actor,

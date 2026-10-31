@@ -4,6 +4,7 @@ import { getPrincipalName } from "@/lib/auth"
 import { checkProjectAccess } from "@/lib/project-access"
 import { isRegistered } from "@/lib/instance-status"
 import { relationAllowsPair } from "@/lib/triplet-resolve"
+import { loadClassParents } from "@/lib/class-parents"
 import { appendEditEvent, diffTripletFields } from "@/lib/confirmation"
 import type { Triplet, OntologyInstance, OntologyRelation } from "@/lib/types"
 
@@ -49,6 +50,7 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
       instContainer.item(objectInstanceId, objectInstanceId).read<OntologyInstance>(),
       relContainer.item(predicateRelationId, predicateRelationId).read<any>(),
     ])
+    const classes = await loadClassParents(existing.projectId)
     if (!subject || subject.projectId !== existing.projectId) {
       return NextResponse.json({ error: "主語インスタンスが見つかりません" }, { status: 400 })
     }
@@ -67,7 +69,7 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
     const relation: OntologyRelation = relRaw.classPairs
       ? relRaw
       : { ...relRaw, classPairs: [{ sourceClassId: relRaw.sourceClassId, targetClassId: relRaw.targetClassId }] }
-    if (!relationAllowsPair(relation, subject.classId, object.classId)) {
+    if (!relationAllowsPair(relation, subject.classId, object.classId, classes)) {
       return NextResponse.json(
         {
           error: `型矛盾：〈${subject.name}〉→〈${object.name}〉の組み合わせは、リレーション「${relation.name}」の許可クラスペアに含まれていません。`,

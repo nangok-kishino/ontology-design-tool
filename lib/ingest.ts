@@ -10,6 +10,7 @@
 import Anthropic from "@anthropic-ai/sdk"
 import type { OntologyClass, OntologyInstance, OntologyRelation } from "./types"
 import { relationAllowsPair } from "./triplet-resolve"
+import { normalizeClassPairs, type ClassLike } from "./relation-inherit"
 import { normalizeName } from "./normalize"
 
 export async function extractTextFromFile(file: File): Promise<string> {
@@ -93,6 +94,7 @@ const ONTOLOGY_SYSTEM =
   "   - リレーション名は簡潔な動詞句にしてください。良い例：「含む」「構成する」「搭載される」「評価される」「準拠する」「影響する」（格助詞を付けた「を含む」「に搭載される」なども可）。悪い例：「潤滑油の低粘度化が燃費・電費を向上させる」（主語・目的語・条件を含む）／「性能に影響する」（目的語の名詞『性能』を含む）。\n" +
   "   - 特定の指標・数値・条件・形容表現を埋め込んだ文章的で過度に具体的な関係は避け、そのクラスの多くのインスタンスに一般的に当てはまる述語へ一般化してください。似た関係は無理に細分化せず1つにまとめてください。\n" +
   "   - 始点・終点にはできる限り【定義済みクラス】を割り当て（sourceClassId／targetClassId にIDを指定）、該当する既存クラスが無い場合のみ新規クラス名を sourceClassName／targetClassName に記載してください。\n" +
+  "   - 始点・終点には、その関係が当てはまる【いちばん上位のクラス】を指定してください。子クラスは親クラスのリレーションを自動的に継承するため、親クラスで言えることを子クラスごとに繰り返して提案してはいけません。\n" +
   "   - 【定義済みリレーション】と同一の組み合わせ（始点・終点・意味が一致）や、候補どうしで重複するものは除外し、必ず一意にしてください。"
 
 const ONTOLOGY_FUNCTION: ToolFunction = {
@@ -178,7 +180,7 @@ export async function extractOntology(
     : "（定義済みクラスなし）"
   const relListText = relations.length > 0
     ? relations.map((r) => {
-        const pairsText = ((r.classPairs ?? []) as any[]).map((p) => `${classIdMap.get(p.sourceClassId) ?? p.sourceClassId} → ${classIdMap.get(p.targetClassId) ?? p.targetClassId}`).join(", ")
+        const pairsText = normalizeClassPairs(r.classPairs, classes).map((p) => `${classIdMap.get(p.sourceClassId) ?? p.sourceClassId} → ${classIdMap.get(p.targetClassId) ?? p.targetClassId}`).join(", ")
         return `- 名前: ${r.name}${r.nameEn ? ` (${r.nameEn})` : ""}, ペア: ${pairsText}`
       }).join("\n")
     : "（定義済みリレーションなし）"
@@ -308,9 +310,11 @@ export async function extractTriplets(
     relations: OntologyRelation[]
     classNameById: Map<string, string>
     classSynonymsById?: Map<string, string[]>
+    // 子クラスは親クラスの許可ペアを継承する。その判定にクラスの親子関係が要る。
+    classes: ClassLike[]
   },
 ): Promise<{ triplets: ExtractedTriplet[]; dropped: number }> {
-  const { registeredInstances, relations, classNameById, classSynonymsById } = ctx
+  const { registeredInstances, relations, classNameById, classSynonymsById, classes } = ctx
   if (registeredInstances.length === 0 || relations.length === 0) return { triplets: [], dropped: 0 }
 
   const instById = new Map(registeredInstances.map((i) => [i.id, i]))
@@ -327,14 +331,14 @@ export async function extractTriplets(
     .join("\n")
   const relText = relations
     .map((r) => {
-      const pairs = (r.classPairs ?? []).map((p) => `${classNameById.get(p.sourceClassId) ?? "?"}→${classNameById.get(p.targetClassId) ?? "?"}`).join(", ")
+      const pairs = normalizeClassPairs(r.classPairs, classes).map((p) => `${classNameById.get(p.sourceClassId) ?? "?"}→${classNameById.get(p.targetClassId) ?? "?"}`).join(", ")
       return `- id=${r.id} 名前=${r.name} 許可ペア=[${pairs || "未定義"}]`
     })
     .join("\n")
 
   const userContent =
     `【登録済みインスタンス】（主語・目的語はこの中から id で選ぶ）\n${instText}\n\n` +
-    `【定義済みリレーション】（述語はこの中から id で選ぶ。許可ペアに一致する組み合わせのみ）\n${relText}\n\n` +
+    `【定義済みリレーション】（述語はこの中から id で選ぶ。許可ペアに一致する組み合わせのみ。許可ペアのクラスの子クラスに属するインスタンスも、そのペアに一致するものとして扱う）\n${relText}\n\n` +
     `【文書】\n${text.slice(0, 12000)}`
 
   const raw = await runExtraction(model, TRIPLET_SYSTEM, userContent, TRIPLET_FUNCTION)
@@ -349,7 +353,7 @@ export async function extractTriplets(
     // リストに無いid、または許可クラスペアに適合しない組み合わせは候補にしない
     // （定義済みオントロジーに適合するものだけを抽出する＝本質）
     if (!subject || !relation || !object) { dropped++; continue }
-    if (!relationAllowsPair(relation, subject.classId, object.classId)) { dropped++; continue }
+    if (!relationAllowsPair(relation, subject.classId, object.classId, classes)) { dropped++; continue }
     out.push({
       subjectInstanceId: subject.id,
       predicateRelationId: relation.id,

@@ -37,6 +37,7 @@ import { GroupBoard, ViewToggle, type BoardViewMode, type ReorderUpdate } from "
 import { DragRow, DropRow, ListDndContext } from "@/components/list-dnd"
 import { cn } from "@/lib/utils"
 import { UNGROUPED, placeAt, reorderUpdates, sortByOrder, sortGroups } from "@/lib/organize"
+import { buildClassTree, flattenClassTree, sortClassTree } from "@/lib/class-tree"
 import type { OntologyRelation, OntologyClass, OntologyAttribute, OntologyGroup, AttributeRequired, ClassPair, RelationCondition, RelationConditionOperator } from "@/lib/types"
 import {
   buildRelationsYaml,
@@ -119,9 +120,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
   const [newNameEn, setNewNameEn] = useState("")
   const [newDesc, setNewDesc] = useState("")
   const [newPairs, setNewPairs] = useState<ClassPair[]>([{ sourceClassId: "", targetClassId: "" }])
-  const [newIncludeChildren, setNewIncludeChildren] = useState(true)
   const [newConditions, setNewConditions] = useState<RelationCondition[]>([])
-  const [editIncludeChildren, setEditIncludeChildren] = useState(true)
   const [adding, setAdding] = useState(false)
 
   // 編集モード
@@ -262,7 +261,6 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
       setEditDesc(rel.description ?? "")
       setEditPairs(rel.classPairs ?? [])
       setEditConditions(rel.conditions ?? [])
-      setEditIncludeChildren(true)
     }
     fetchAllAttrs(selectedId, currentProject.id)
   }, [selectedId, currentProject?.id])
@@ -280,7 +278,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
           name: newName.trim(),
           nameEn: newNameEn.trim(),
           description: newDesc.trim(),
-          classPairs: newIncludeChildren ? expandPairs(newPairs) : newPairs,
+          classPairs: newPairs,
           conditions: normalizeConditions(newConditions),
         }),
       })
@@ -318,7 +316,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
           name: editName.trim(),
           nameEn: editNameEn.trim(),
           description: editDesc.trim(),
-          classPairs: editIncludeChildren ? expandPairs(editPairs) : editPairs,
+          classPairs: editPairs,
           conditions: normalizeConditions(editConditions),
         }),
       })
@@ -647,37 +645,21 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
   // 参照先クラスが削除された（存在しない）／未設定の端点を「不明」とみなす
   const classMissing = (id: string | null | undefined) => !id || !classes.some((c) => c.id === id)
 
-  // クラス階層：ある親クラスの子孫クラスidを再帰列挙。
-  const hasChildren = (classId: string) => classes.some((c) => c.parentId === classId)
-  const descendantIds = (classId: string): string[] => {
-    const out: string[] = []
-    const stack = classes.filter((c) => c.parentId === classId).map((c) => c.id)
-    while (stack.length) {
-      const id = stack.pop()!
-      out.push(id)
-      for (const c of classes) if (c.parentId === id) stack.push(c.id)
-    }
-    return out
-  }
-  // 親クラスを指定したペアを、その子孫クラスを含む全組合せに展開（重複除去）。
-  const expandPairs = (pairs: ClassPair[]): ClassPair[] => {
-    const seen = new Set<string>()
-    const out: ClassPair[] = []
-    for (const p of pairs) {
-      if (!p.sourceClassId || !p.targetClassId) continue
-      const sources = [p.sourceClassId, ...descendantIds(p.sourceClassId)]
-      const targets = [p.targetClassId, ...descendantIds(p.targetClassId)]
-      for (const s of sources)
-        for (const t of targets) {
-          const k = `${s}|${t}`
-          if (!seen.has(k)) { seen.add(k); out.push({ sourceClassId: s, targetClassId: t }) }
-        }
-    }
-    return out
-  }
-  // ペア群に子クラスを持つ親クラスが含まれるか（子クラス取り込みオプションの表示判定）
-  const pairsHaveParent = (pairs: ClassPair[]) =>
-    pairs.some((p) => (p.sourceClassId && hasChildren(p.sourceClassId)) || (p.targetClassId && hasChildren(p.targetClassId)))
+  // 始点・終点には親クラスだけを指定する。子クラスは親の宣言を自動的に継承するので、
+  // 子クラス分のペアは保存しない（lib/relation-inherit.ts）。かつて展開して保存した
+  // ペアは、サーバが返す時点で親のペアに畳まれている。
+  // 選択肢は親の下に子が並ぶ順（深さ付き）で出し、どれが親クラスかを見て選べるようにする。
+  const classOptions = useMemo(() => flattenClassTree(sortClassTree(buildClassTree(classes))), [classes])
+  const renderClassOptions = () =>
+    classOptions.map(({ node, depth }) => (
+      <SelectItem key={node.id} value={node.id}>
+        <span style={{ paddingLeft: depth * 12 }}>
+          {depth > 0 && <span className="mr-1 text-muted-foreground">└</span>}
+          {node.name}
+          {node.nameEn && <span className="ml-1.5 text-xs text-muted-foreground">{node.nameEn}</span>}
+        </span>
+      </SelectItem>
+    ))
   // classPairs のいずれかの端点が不明なら、定義が不完全なリレーション
   const relationIncomplete = (r: OntologyRelation) =>
     (r.classPairs ?? []).length === 0 ||
@@ -966,7 +948,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
               </button>
             </div>
             <Button size="sm" variant="outline" className="h-8 shrink-0 gap-1.5 bg-transparent"
-              onClick={() => { setNewName(""); setNewNameEn(""); setNewDesc(""); setNewPairs([{ sourceClassId: "", targetClassId: "" }]); setNewIncludeChildren(true); setNewConditions([]); setShowAdd(true) }}>
+              onClick={() => { setNewName(""); setNewNameEn(""); setNewDesc(""); setNewPairs([{ sourceClassId: "", targetClassId: "" }]); setNewConditions([]); setShowAdd(true) }}>
               <Plus className="h-3.5 w-3.5" />追加
             </Button>
           </div>
@@ -1195,9 +1177,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                                 <SelectValue>{pair.sourceClassId ? className(pair.sourceClassId) : "始点(A)クラス"}</SelectValue>
                               </SelectTrigger>
                               <SelectContent className="max-h-72">
-                                {classes.map((c) => (
-                                  <SelectItem key={c.id} value={c.id}>{c.name}{c.nameEn && <span className="ml-1.5 text-xs text-muted-foreground">{c.nameEn}</span>}</SelectItem>
-                                ))}
+                                {renderClassOptions()}
                               </SelectContent>
                             </Select>
                             <ArrowRight className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
@@ -1207,9 +1187,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                                 <SelectValue>{pair.targetClassId ? className(pair.targetClassId) : "終点(B)クラス"}</SelectValue>
                               </SelectTrigger>
                               <SelectContent className="max-h-72">
-                                {classes.map((c) => (
-                                  <SelectItem key={c.id} value={c.id}>{c.name}{c.nameEn && <span className="ml-1.5 text-xs text-muted-foreground">{c.nameEn}</span>}</SelectItem>
-                                ))}
+                                {renderClassOptions()}
                               </SelectContent>
                             </Select>
                             {editPairs.length > 1 && (
@@ -1224,16 +1202,9 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                       <Button size="sm" variant="outline" className="gap-1 bg-transparent" onClick={addEditPair}>
                         <Plus className="h-3.5 w-3.5" />ペアを追加
                       </Button>
-                      {pairsHaveParent(editPairs) && (
-                        <label className="mt-1 flex cursor-pointer items-start gap-2 rounded-md border border-border bg-muted/30 px-3 py-2">
-                          <input type="checkbox" checked={editIncludeChildren}
-                            onChange={(e) => setEditIncludeChildren(e.target.checked)}
-                            className="mt-0.5 h-4 w-4 accent-indigo-600" />
-                          <span className="text-xs text-muted-foreground">
-                            親クラスを指定したペアは、その<strong className="font-medium text-foreground">子クラスも対象に含める</strong>（推奨）。保存時に子クラス分のペアへ自動展開します。
-                          </span>
-                        </label>
-                      )}
+                      <p className="mt-1 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                        子クラスは<strong className="font-medium text-foreground">親クラスのリレーションを自動的に継承</strong>します。ここには親クラスだけを指定してください。
+                      </p>
                     </div>
                     <div className="space-y-1.5">
                       <Label className="text-sm font-medium">説明</Label>
@@ -1328,9 +1299,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                         <SelectValue>{pair.sourceClassId ? className(pair.sourceClassId) : "始点(A)クラス"}</SelectValue>
                       </SelectTrigger>
                       <SelectContent>
-                        {classes.map((c) => (
-                          <SelectItem key={c.id} value={c.id}>{c.name}{c.nameEn && <span className="ml-1.5 text-xs text-muted-foreground">{c.nameEn}</span>}</SelectItem>
-                        ))}
+                        {renderClassOptions()}
                       </SelectContent>
                     </Select>
                     <ArrowRight className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
@@ -1340,9 +1309,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                         <SelectValue>{pair.targetClassId ? className(pair.targetClassId) : "終点(B)クラス"}</SelectValue>
                       </SelectTrigger>
                       <SelectContent>
-                        {classes.map((c) => (
-                          <SelectItem key={c.id} value={c.id}>{c.name}{c.nameEn && <span className="ml-1.5 text-xs text-muted-foreground">{c.nameEn}</span>}</SelectItem>
-                        ))}
+                        {renderClassOptions()}
                       </SelectContent>
                     </Select>
                     {newPairs.length > 1 && (
@@ -1359,16 +1326,9 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                 <Plus className="h-3.5 w-3.5" />
                 ペアを追加
               </Button>
-              {pairsHaveParent(newPairs) && (
-                <label className="mt-1 flex cursor-pointer items-start gap-2 rounded-md border border-border bg-muted/30 px-3 py-2">
-                  <input type="checkbox" checked={newIncludeChildren}
-                    onChange={(e) => setNewIncludeChildren(e.target.checked)}
-                    className="mt-0.5 h-4 w-4 accent-indigo-600" />
-                  <span className="text-xs text-muted-foreground">
-                    親クラスを指定したペアは、その<strong className="font-medium text-foreground">子クラスも対象に含める</strong>（推奨）。登録時に子クラス分のペアへ自動展開します。
-                  </span>
-                </label>
-              )}
+              <p className="mt-1 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                子クラスは<strong className="font-medium text-foreground">親クラスのリレーションを自動的に継承</strong>します。ここには親クラスだけを指定してください。
+              </p>
             </div>
             <div className="space-y-2">
               <Label>説明</Label>
