@@ -15,6 +15,7 @@ import ForceGraph2D from "react-force-graph-2d"
 import type { OntologyClass, OntologyRelation } from "@/lib/types"
 import { formatRelationCondition } from "@/lib/relation-conditions"
 import { hueForClass, neon, esc } from "@/lib/graph-colors"
+import { radialTreeLayout } from "@/lib/radial-layout"
 
 type SchemaNode = {
   id: string
@@ -500,6 +501,31 @@ export default function SchemaGraphCanvas({
     if (!userMovedRef.current) fitToView(500)
   }, [data, layoutKey, fitToView])
 
+  // 放射状ツリー（マインドマップ）に並べ直して固定する。
+  // 1つのクラスに子や関連が何十個もぶら下がると力学では団子になるため、
+  // 階層を見つけて外周へ逃がす。並べた結果はそのまま配置として保存する。
+  const arrangeRadial = useCallback(() => {
+    const placement = radialTreeLayout(
+      data.nodes.map((n) => n.id),
+      data.links.map((l) => ({ source: endId(l.source), target: endId(l.target) })),
+      // クラス名は円の中に実寸で描くので、広げすぎると全体を収めたときに字が潰れる。
+      // 円が重ならない範囲で詰める。
+      { ringGap: 210, nodeSpacing: 130, componentGap: 300 },
+    )
+    const layout: SavedLayout = {}
+    for (const n of data.nodes) {
+      const pos = placement.get(n.id)
+      if (!pos) continue
+      n.x = n.fx = pos.x
+      n.y = n.fy = pos.y
+      layout[n.id] = { x: Math.round(pos.x), y: Math.round(pos.y) }
+    }
+    saveLayout(layoutKey, layout)
+    userMovedRef.current = false
+    fgRef.current?.d3ReheatSimulation()
+    window.setTimeout(() => fitToView(500), 60)
+  }, [data, layoutKey, fitToView])
+
   // 保存した配置を捨てて、力学計算で並べ直す
   const resetLayout = useCallback(() => {
     clearLayout(layoutKey)
@@ -895,6 +921,13 @@ export default function SchemaGraphCanvas({
             {t.text}
           </button>
         ))}
+        <button
+          type="button"
+          onClick={arrangeRadial}
+          className="rounded-md border border-sky-200/20 bg-[#0a1a2f]/80 px-2.5 py-1 text-xs text-sky-50 backdrop-blur-sm transition-colors hover:bg-sky-900/60"
+        >
+          放射状に並べる
+        </button>
         <button
           type="button"
           onClick={resetLayout}

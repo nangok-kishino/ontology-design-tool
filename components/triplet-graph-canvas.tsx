@@ -4,13 +4,18 @@
 //   react-force-graph-2d を top-level import するため、SSR を避ける目的で
 //   triplet-graph.tsx から next/dynamic({ ssr:false }) 経由でのみ読み込む。
 //   ノード=インスタンス（クラス色で発光）、エッジ=述語（湾曲＋流れる光の粒）。
-//   ドラッグすると d3-force が再加熱し、グラフ全体が追従して動く（Neo4j踏襲）。
+//
+//   配置は力学任せにせず、放射状ツリー（マインドマップ）で決め打ちする。
+//   商品の構成のように1つのノードへ子が何十個もぶら下がる形だと、力学では
+//   子が同じ半径に密集して名前もエッジ名も重なって読めなくなるため。
+//   計算は lib/radial-layout.ts。ノードは fx/fy で固定し、掴めば動かせる。
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import ForceGraph2D from "react-force-graph-2d"
 import type { Triplet, OntologyInstance, RelationCondition } from "@/lib/types"
 import { formatRelationCondition } from "@/lib/relation-conditions"
 import { hueForClass, NO_CLASS_HUE, neon, esc } from "@/lib/graph-colors"
+import { radialTreeLayout } from "@/lib/radial-layout"
 
 type GraphNode = {
   id: string
@@ -20,6 +25,9 @@ type GraphNode = {
   color: string
   hue: number
   r: number
+  // 放射状配置の結果（ラベルを外向きに置くのに使う）
+  depth: number
+  angle: number
   // d3-force が付与: x, y, vx, vy, fx, fy
   x?: number
   y?: number
@@ -39,6 +47,10 @@ type GraphLink = {
 const MAX_ZOOM = 2.4 // 初期フィットの拡大率上限（少数ノードで拡大しすぎるのを防ぐ）
 const MIN_ZOOM = 0.05 // 初期フィットの縮小率下限
 const LINK_CURVATURE = 0.18 // エッジの湾曲（ラベル配置もこの値に合わせる）
+const LABEL_MIN_ZOOM = 0.12 // これ以下に縮めたらラベルは出さない
+const EDGE_LABEL_POS = 0.62 // エッジ名を置く位置（0=始点, 1=終点）。中心から離して重なりを減らす
+
+type LabelRect = { x0: number; y0: number; x1: number; y1: number }
 
 function linkEndNode(end: string | GraphNode): GraphNode | null {
   return typeof end === "object" ? end : null
@@ -94,6 +106,8 @@ export default function TripletGraphCanvas({
           hue,
           color: `hsl(${hue}, 85%, 63%)`,
           r: 4,
+          depth: 0,
+          angle: 0,
         })
       }
       degree.set(id, (degree.get(id) ?? 0) + 1)
@@ -123,35 +137,57 @@ export default function TripletGraphCanvas({
       n.r = 4 + Math.sqrt(d) * 2.4
     }
 
-    return { data: { nodes: [...nodeMap.values()], links }, adjacency }
+    // 放射状に配置して固定する（力学には位置を触らせない）
+    const nodes = [...nodeMap.values()]
+    const placement = radialTreeLayout(
+      nodes.map((n) => n.id),
+      links.map((l) => ({ source: linkEndId(l.source), target: linkEndId(l.target) })),
+    )
+    for (const n of nodes) {
+      const p = placement.get(n.id)
+      if (!p) continue
+      n.x = p.x
+      n.y = p.y
+      n.fx = p.x
+      n.fy = p.y
+      n.depth = p.depth
+      n.angle = p.angle
+    }
+
+    return { data: { nodes, links }, adjacency }
   }, [triplets, instById, classNameById])
 
-  // 全ノードが収まる拡大率を自前で算出し、上限(MAX_ZOOM)でクランプして一度だけ滑らかにフィット。
-  // zoomToFit は少数ノードで拡大しすぎるため使わない。
+  // 全ノードが収まる拡大率を自前で算出し、上限(MAX_ZOOM)でクランプしてフィット。
+  // 位置は放射状レイアウトで決まっているので、描画側(getGraphBbox)を待たずに
+  // 自分の座標から範囲を出す（描画前でも正しく収まる）。
   const fitToView = useCallback(
     (duration = 600) => {
       const fg = fgRef.current
-      if (!fg || width <= 0 || height <= 0) return false
-      let bbox: { x: [number, number]; y: [number, number] } | null = null
-      try {
-        bbox = fg.getGraphBbox()
-      } catch {
-        return false
+      if (!fg || width <= 0 || height <= 0 || data.nodes.length === 0) return false
+      let x0 = Infinity
+      let x1 = -Infinity
+      let y0 = Infinity
+      let y1 = -Infinity
+      for (const n of data.nodes) {
+        if (n.x == null || n.y == null) return false
+        x0 = Math.min(x0, n.x - n.r)
+        x1 = Math.max(x1, n.x + n.r)
+        y0 = Math.min(y0, n.y - n.r)
+        y1 = Math.max(y1, n.y + n.r)
       }
-      if (!bbox) return false
-      const spanX = bbox.x[1] - bbox.x[0]
-      const spanY = bbox.y[1] - bbox.y[0]
+      const spanX = x1 - x0
+      const spanY = y1 - y0
       const pad = 80
       const zx = spanX > 0 ? (width - 2 * pad) / spanX : MAX_ZOOM
       const zy = spanY > 0 ? (height - 2 * pad) / spanY : MAX_ZOOM
       const z = Math.max(MIN_ZOOM, Math.min(zx, zy, MAX_ZOOM))
       programmaticRef.current = true
-      fg.centerAt((bbox.x[0] + bbox.x[1]) / 2, (bbox.y[0] + bbox.y[1]) / 2, duration)
+      fg.centerAt((x0 + x1) / 2, (y0 + y1) / 2, duration)
       fg.zoom(z, duration)
       window.setTimeout(() => { programmaticRef.current = false }, duration + 120)
       return true
     },
-    [width, height],
+    [data, width, height],
   )
 
   // データ/サイズ変更でフィット状態をリセット
@@ -160,30 +196,31 @@ export default function TripletGraphCanvas({
     userMovedRef.current = false
   }, [data, width, height])
 
-  // ノードに座標が付くまで待って一度だけフィット（ユーザー操作が入ったら中止）
+  // 一度だけ全体を収める（ユーザーがズーム/パンしたら以後は触らない）。
+  // 描画の初期化が終わる前に呼ぶと効かないことがあるので、少しの間はやり直す。
   useEffect(() => {
     if (width <= 0 || height <= 0) return
     let tries = 0
     const iv = window.setInterval(() => {
-      if (hasFitRef.current || userMovedRef.current || tries++ > 40) {
+      if (userMovedRef.current || tries++ > 12) {
         window.clearInterval(iv)
         return
       }
-      if (fitToView(tries <= 1 ? 0 : 600)) {
-        hasFitRef.current = true
-        window.clearInterval(iv)
-      }
-    }, 120)
+      if (fitToView(tries <= 1 ? 0 : 400)) hasFitRef.current = true
+      if (tries >= 4) window.clearInterval(iv)
+    }, 150)
     return () => window.clearInterval(iv)
   }, [data, width, height, fitToView])
 
-  // d3-force のパラメータ調整（反発を強め、程よく広がるレイアウトに）
+  // 位置は放射状レイアウトで決めているので、力学は全て外す
+  // （残しておくと固定ノードの周りで粒子計算だけが走り続ける）
   useEffect(() => {
     const fg = fgRef.current
     if (!fg) return
     try {
-      fg.d3Force("charge")?.strength(-220)
-      fg.d3Force("link")?.distance(70)
+      fg.d3Force("charge", null)
+      fg.d3Force("link", null)
+      fg.d3Force("center", null)
     } catch {
       /* noop */
     }
@@ -210,6 +247,68 @@ export default function TripletGraphCanvas({
     [hoverId, hoverLink],
   )
 
+  // ラベルの重なり防止。1フレームごとに場所を取り合い、先に取った方だけが描かれる。
+  // 名前が読めないほど重なるくらいなら、間引いて読める分だけ出す方がよい。
+  const labelRectsRef = useRef<LabelRect[]>([])
+  const nodeLabelOkRef = useRef<Set<string>>(new Set())
+
+  const claimRect = useCallback((rect: LabelRect) => {
+    for (const r of labelRectsRef.current) {
+      if (rect.x0 < r.x1 && rect.x1 > r.x0 && rect.y0 < r.y1 && rect.y1 > r.y0) return false
+    }
+    labelRectsRef.current.push(rect)
+    return true
+  }, [])
+
+  // ノード名をどこへ出すか。根は真下、それ以外は中心から外向きに逃がす（マインドマップの読み方）。
+  const nodeLabelAnchor = useCallback((node: GraphNode, globalScale: number) => {
+    const x = node.x ?? 0
+    const y = node.y ?? 0
+    const fontSize = Math.max(11 / globalScale, 3)
+    const gap = node.r + 5 / globalScale
+    if (node.depth === 0) {
+      return { x, y: y + gap, align: "center" as CanvasTextAlign, baseline: "top" as CanvasTextBaseline, fontSize }
+    }
+    const right = Math.cos(node.angle) >= 0
+    return {
+      x: x + Math.cos(node.angle) * gap,
+      y: y + Math.sin(node.angle) * gap,
+      align: (right ? "left" : "right") as CanvasTextAlign,
+      baseline: "middle" as CanvasTextBaseline,
+      fontSize,
+    }
+  }, [])
+
+  const labelRectAt = (
+    anchor: { x: number; y: number; align: CanvasTextAlign; baseline: CanvasTextBaseline; fontSize: number },
+    width: number,
+  ): LabelRect => {
+    const x0 = anchor.align === "left" ? anchor.x : anchor.align === "right" ? anchor.x - width : anchor.x - width / 2
+    const y0 = anchor.baseline === "top" ? anchor.y : anchor.y - anchor.fontSize / 2
+    return { x0, y0, x1: x0 + width, y1: y0 + anchor.fontSize }
+  }
+
+  // 描画の最初に、ノード名の席を先に押さえる（エッジ名よりノード名を優先する）。
+  const handleRenderPre = useCallback(
+    (ctx: CanvasRenderingContext2D, globalScale: number) => {
+      labelRectsRef.current = []
+      const ok = new Set<string>()
+      if (globalScale > LABEL_MIN_ZOOM || hovering) {
+        const fontSize = Math.max(11 / globalScale, 3)
+        ctx.font = `${fontSize}px ui-sans-serif, system-ui, sans-serif`
+        // 中心に近いノードから席を取る（幹の名前を先に残す）
+        const ordered = [...data.nodes].sort((a, b) => a.depth - b.depth)
+        for (const node of ordered) {
+          if (hovering && !isNodeHi(node.id)) continue
+          const anchor = nodeLabelAnchor(node, globalScale)
+          if (claimRect(labelRectAt(anchor, ctx.measureText(node.name).width))) ok.add(node.id)
+        }
+      }
+      nodeLabelOkRef.current = ok
+    },
+    [data, hovering, isNodeHi, nodeLabelAnchor, claimRect],
+  )
+
   const paintNode = useCallback(
     (node: GraphNode, ctx: CanvasRenderingContext2D, globalScale: number) => {
       const x = node.x ?? 0
@@ -233,18 +332,18 @@ export default function TripletGraphCanvas({
       ctx.fillStyle = "rgba(255,255,255,0.9)"
       ctx.fill()
 
-      // ラベル（一定以上ズーム時、またはホバー近傍のみ）
-      if (globalScale > 0.55 || (hovering && hi)) {
-        const fontSize = Math.max(11 / globalScale, 3)
-        ctx.font = `${fontSize}px ui-sans-serif, system-ui, sans-serif`
-        ctx.textAlign = "center"
-        ctx.textBaseline = "top"
+      // ラベル（席を取れたものだけ。場所取りは handleRenderPre で済ませてある）
+      if (nodeLabelOkRef.current.has(node.id)) {
+        const anchor = nodeLabelAnchor(node, globalScale)
+        ctx.font = `${anchor.fontSize}px ui-sans-serif, system-ui, sans-serif`
+        ctx.textAlign = anchor.align
+        ctx.textBaseline = anchor.baseline
         ctx.fillStyle = hi ? "rgba(235,240,255,0.92)" : "rgba(160,170,200,0.4)"
-        ctx.fillText(node.name, x, y + node.r + 2)
+        ctx.fillText(node.name, anchor.x, anchor.y)
       }
       ctx.globalAlpha = 1
     },
-    [isNodeHi, hoverId, hovering],
+    [isNodeHi, hoverId, hovering, nodeLabelAnchor],
   )
 
   const paintNodePointerArea = useCallback(
@@ -268,31 +367,55 @@ export default function TripletGraphCanvas({
       const hi = isLinkHi(link)
       if (hovering && !hi) return // ホバー中は対象エッジのラベルのみ
 
-      const mx = (s.x + t.x) / 2
-      const my = (s.y + t.y) / 2
+      const label = link.label
+      if (!label) return
+      if (globalScale <= LABEL_MIN_ZOOM && !hi) return
+
+      // 中点ではなく終点寄りに置く。同じ述語の辺が1つのノードから何十本も出る形だと、
+      // 中点はすべて中心付近に集まってしまい、同じ文字が折り重なる。
       const dx = t.x - s.x
       const dy = t.y - s.y
       const len = Math.hypot(dx, dy) || 1
-      // 曲線(二次ベジェ)の頂点にラベルを載せる（線の真上）
-      const lx = mx + (-dy / len) * len * LINK_CURVATURE * 0.5
-      const ly = my + (dx / len) * len * LINK_CURVATURE * 0.5
+      const mx = s.x + dx * EDGE_LABEL_POS
+      const my = s.y + dy * EDGE_LABEL_POS
+      // 曲線(二次ベジェ)の膨らみに合わせて線の上に載せる
+      const bulge = 4 * EDGE_LABEL_POS * (1 - EDGE_LABEL_POS) * LINK_CURVATURE * 0.5
+      const lx = mx + (-dy / len) * len * bulge
+      const ly = my + (dx / len) * len * bulge
 
-      const label = link.label
-      if (!label) return
       const fontSize = Math.max(13 / globalScale, 2)
       ctx.font = `${fontSize}px ui-sans-serif, system-ui, sans-serif`
-      ctx.textAlign = "center"
-      ctx.textBaseline = "middle"
       const tw = ctx.measureText(label).width
       const padX = 3 / globalScale
       const padY = 1.5 / globalScale
+      // 席が空いていなければ出さない（重ねて読めなくするより間引く）。
+      // ホバーで名指しした1本だけは、重なっていても必ず出す。
+      const rect = {
+        x0: lx - tw / 2 - padX,
+        y0: ly - fontSize / 2 - padY,
+        x1: lx + tw / 2 + padX,
+        y1: ly + fontSize / 2 + padY,
+      }
+      // 席取りは描く枠より一回り大きく見る。同じ述語が何十本も並ぶと、
+      // 枠が接していなくても字が詰まって読みにくいため、隙間を強制する。
+      const gapX = 12 / globalScale
+      const gapY = 6 / globalScale
+      const focused = hoverLinkId === link.id
+      if (
+        !focused &&
+        !claimRect({ x0: rect.x0 - gapX, y0: rect.y0 - gapY, x1: rect.x1 + gapX, y1: rect.y1 + gapY })
+      )
+        return
+
+      ctx.textAlign = "center"
+      ctx.textBaseline = "middle"
       // 背景（可読性のため半透明の下地）
       ctx.fillStyle = hi ? "rgba(10,11,20,0.85)" : "rgba(10,11,20,0.72)"
-      ctx.fillRect(lx - tw / 2 - padX, ly - fontSize / 2 - padY, tw + padX * 2, fontSize + padY * 2)
+      ctx.fillRect(rect.x0, rect.y0, rect.x1 - rect.x0, rect.y1 - rect.y0)
       ctx.fillStyle = hi ? "rgba(235,240,255,1)" : "rgba(210,218,240,0.9)"
       ctx.fillText(label, lx, ly)
     },
-    [isLinkHi, hovering, showEdgeLabels],
+    [isLinkHi, hovering, showEdgeLabels, claimRect, hoverLinkId],
   )
 
   const handleNodeClick = useCallback(
@@ -310,20 +433,29 @@ export default function TripletGraphCanvas({
 
   const handleNodeDragEnd = useCallback((node: GraphNode) => {
     userMovedRef.current = true // 以後は自動フィットしない
-    // ドロップ位置に固定（配置を保持）
+    // ドロップ位置に固定（放射状の配置から動かしたぶんはそのまま残す）
     node.fx = node.x
     node.fy = node.y
   }, [])
 
   return (
     <div className="relative" style={{ width, height }}>
-      <button
-        type="button"
-        onClick={() => setShowEdgeLabels((v) => !v)}
-        className="absolute right-3 top-3 z-10 rounded-md border border-white/15 bg-black/50 px-2.5 py-1 text-xs text-zinc-200 backdrop-blur-sm transition-colors hover:bg-black/70"
-      >
-        エッジ名: {showEdgeLabels ? "ON" : "OFF"}
-      </button>
+      <div className="absolute right-3 top-3 z-10 flex gap-1.5">
+        <button
+          type="button"
+          onClick={() => { userMovedRef.current = false; fitToView(500) }}
+          className="rounded-md border border-white/15 bg-black/50 px-2.5 py-1 text-xs text-zinc-200 backdrop-blur-sm transition-colors hover:bg-black/70"
+        >
+          全体表示
+        </button>
+        <button
+          type="button"
+          onClick={() => setShowEdgeLabels((v) => !v)}
+          className="rounded-md border border-white/15 bg-black/50 px-2.5 py-1 text-xs text-zinc-200 backdrop-blur-sm transition-colors hover:bg-black/70"
+        >
+          エッジ名: {showEdgeLabels ? "ON" : "OFF"}
+        </button>
+      </div>
       <ForceGraph2D
       ref={fgRef}
       width={width}
@@ -390,11 +522,13 @@ export default function TripletGraphCanvas({
       onNodeClick={handleNodeClick as any}
       onNodeDragEnd={handleNodeDragEnd as any}
       onZoom={(() => {
-        // ユーザーがズーム/パンしたら自動フィットを止める（勝手に戻さない）
-        if (!programmaticRef.current) userMovedRef.current = true
+        // ユーザーがズーム/パンしたら自動フィットを止める（勝手に戻さない）。
+        // 初期化のときにも1度発火するので、最初のフィットが済むまでは数えない。
+        if (!programmaticRef.current && hasFitRef.current) userMovedRef.current = true
       }) as any}
-      warmupTicks={60}
-      cooldownTime={2000}
+      onRenderFramePre={handleRenderPre as any}
+      warmupTicks={0}
+      cooldownTicks={0}
       />
     </div>
   )
