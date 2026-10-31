@@ -8,6 +8,8 @@ import { Loader2 } from "lucide-react"
 import { TopBar } from "@/components/top-bar"
 import { TripletGraph } from "@/components/triplet-graph"
 import { useProject } from "@/app/project-context"
+import { buildHueMap } from "@/lib/graph-colors"
+import { sortByOrder } from "@/lib/organize"
 import type { Triplet, OntologyInstance, OntologyClass, OntologyAttribute, OntologyRelation, RelationCondition } from "@/lib/types"
 
 export function GraphScreen({ active }: { active?: boolean }) {
@@ -19,9 +21,15 @@ export function GraphScreen({ active }: { active?: boolean }) {
   const [attrNameById, setAttrNameById] = useState<Map<string, string>>(new Map())
   // リレーションid→成立条件（ホバー表示用）
   const [conditionsByRelationId, setConditionsByRelationId] = useState<Map<string, RelationCondition[]>>(new Map())
+  const [relations, setRelations] = useState<OntologyRelation[]>([])
   const [loading, setLoading] = useState(true)
 
   const classNameById = useMemo(() => new Map(classes.map((c) => [c.id, c.name])), [classes])
+  const relationNameById = useMemo(() => new Map(relations.map((r) => [r.id, r.name])), [relations])
+  // 色はクラス／リレーションの一覧の並び順で配る。同じクラスのインスタンスは
+  // 同じ色、同じリレーションのエッジは同じ色になる（スキーマビューとも揃う）。
+  const hueByClassId = useMemo(() => buildHueMap(sortByOrder(classes).map((c) => c.id)), [classes])
+  const hueByRelationId = useMemo(() => buildHueMap(sortByOrder(relations).map((r) => r.id), 6), [relations])
   const instById = useMemo(() => new Map(instances.map((i) => [i.id, i])), [instances])
 
   const fetchAll = useCallback(async () => {
@@ -38,6 +46,7 @@ export function GraphScreen({ active }: { active?: boolean }) {
       setTriplets(tlist)
       setInstances(Array.isArray(i) ? i : [])
       setClasses(Array.isArray(c) ? c : [])
+      setRelations(Array.isArray(rels) ? (rels as OntologyRelation[]) : [])
 
       const condMap = new Map<string, RelationCondition[]>()
       if (Array.isArray(rels)) {
@@ -67,7 +76,7 @@ export function GraphScreen({ active }: { active?: boolean }) {
   // プロジェクト切替時のみデータを捨てる。取得は下の表示時 effect に任せる。
   useEffect(() => {
     if (projectLoading) return
-    setTriplets([]); setInstances([]); setClasses([])
+    setTriplets([]); setInstances([]); setClasses([]); setRelations([])
     setLoading(!!currentProject)
   }, [currentProject?.id, projectLoading])
 
@@ -101,7 +110,16 @@ export function GraphScreen({ active }: { active?: boolean }) {
             プロジェクトを選択してください
           </div>
         ) : (
-          <TripletGraph triplets={triplets} instById={instById} classNameById={classNameById} attrNameById={attrNameById} conditionsByRelationId={conditionsByRelationId} />
+          <TripletGraph
+            triplets={triplets}
+            instById={instById}
+            classNameById={classNameById}
+            attrNameById={attrNameById}
+            conditionsByRelationId={conditionsByRelationId}
+            hueByClassId={hueByClassId}
+            hueByRelationId={hueByRelationId}
+            relationNameById={relationNameById}
+          />
         )}
       </div>
     </div>

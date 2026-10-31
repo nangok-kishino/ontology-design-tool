@@ -14,7 +14,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import ForceGraph2D from "react-force-graph-2d"
 import type { OntologyClass, OntologyRelation } from "@/lib/types"
 import { formatRelationCondition } from "@/lib/relation-conditions"
-import { hueForClass, neon, esc } from "@/lib/graph-colors"
+import { buildHueMap, neon, esc } from "@/lib/graph-colors"
+import { sortByOrder } from "@/lib/organize"
 import { mindMapLayout } from "@/lib/mindmap-layout"
 
 type SchemaNode = {
@@ -303,9 +304,11 @@ export default function SchemaGraphCanvas({
     // 保存済みの配置があるクラスはその位置に固定する（画面切替・再読込で配置が戻らないように）。
     // 新しく増えたクラスだけが力学計算で空いた場所へ置かれる。
     const saved = loadLayout(layoutKey)
+    // 色はクラス一覧の並び順で配る（グラフビューと同じ配り方なので両ビューで揃う）
+    const hueByClassId = buildHueMap(sortByOrder(classes).map((c) => c.id))
     const nodes: SchemaNode[] = classes.map((c) => {
       const d = degree.get(c.id) ?? 0
-      const node: SchemaNode = { id: c.id, cls: c, hue: hueForClass(c.id), isolated: !d, degree: d }
+      const node: SchemaNode = { id: c.id, cls: c, hue: hueByClassId.get(c.id) ?? 210, isolated: !d, degree: d }
       const pos = saved[c.id]
       if (pos) {
         node.x = node.fx = pos.x

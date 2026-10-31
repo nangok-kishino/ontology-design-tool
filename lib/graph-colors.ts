@@ -26,3 +26,20 @@ export function neon(hue: number, alpha: number): string {
 export function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
 }
+
+// クラスやリレーションに配る色相。id のハッシュだと近い色が隣り合って
+// 区別できないことがあるので、見分けのつく色相を出てくる順に配る。
+// 一巡したら少しずらして、同じ色が続けて出ないようにする。
+const PALETTE_HUES = [210, 25, 145, 275, 340, 190, 50, 300, 10, 165, 250, 95]
+
+// startIndex は配り始めの位置。クラスとリレーションで色が被らないよう、
+// リレーション側はパレットの半分ずらした所から配る。
+export function buildHueMap(ids: string[], startIndex = 0): Map<string, number> {
+  const map = new Map<string, number>()
+  ids.forEach((id, i) => {
+    const n = i + startIndex
+    const round = Math.floor(n / PALETTE_HUES.length)
+    map.set(id, (PALETTE_HUES[n % PALETTE_HUES.length] + round * 17) % 360)
+  })
+  return map
+}
