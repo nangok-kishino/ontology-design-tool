@@ -35,7 +35,7 @@ import { SectionHeader } from "@/components/section-header"
 import { GroupManagerDialog, useGroups } from "@/components/group-manager"
 import { GroupBoard, ViewToggle, type BoardViewMode, type ReorderUpdate } from "@/components/group-board"
 import { cn } from "@/lib/utils"
-import { UNGROUPED, renumber, sortByOrder, sortGroups } from "@/lib/organize"
+import { ORDER_STEP, UNGROUPED, renumber, sortByOrder, sortGroups } from "@/lib/organize"
 import type { OntologyRelation, OntologyClass, OntologyAttribute, OntologyGroup, AttributeRequired, ClassPair, RelationCondition, RelationConditionOperator } from "@/lib/types"
 import {
   buildRelationsYaml,
@@ -45,7 +45,7 @@ import {
   executeRelationsImport,
   type RelationExportItem,
 } from "@/lib/import-export"
-import { ArrowRight, Plus, Pencil, Trash2, Loader2, X, AlertTriangle, Info, Download, Upload, FileText, Tags, CheckCircle2, Filter } from "lucide-react"
+import { ArrowDown, ArrowRight, ArrowUp, Plus, Pencil, Trash2, Loader2, X, AlertTriangle, Info, Download, Upload, FileText, Tags, CheckCircle2, Filter } from "lucide-react"
 import { useProject } from "@/app/project-context"
 import { deriveConfirmationStatus, type ConfirmationState } from "@/lib/confirmation"
 import { hasConditions } from "@/lib/relation-conditions"
@@ -457,14 +457,20 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
 
   const selectedGroup = groups.find((g) => g.id === (selected?.groupId ?? "")) ?? null
 
+  // 並べ替えは全件表示のときだけ。絞り込み中は隠れた行と入れ替わって挙動が読めなくなる。
+  const canReorder = filterState === "all"
+
   type ListRow =
     | { kind: "group"; key: string; group: OntologyGroup | null; count: number }
-    | { kind: "relation"; key: string; rel: OntologyRelation }
+    // siblingIds / index は↑↓での入れ替えに使う（同じグループの並びの中だけで動かす）
+    | { kind: "relation"; key: string; rel: OntologyRelation; siblingIds: string[]; index: number }
 
   // グループごとに仕分けして並べる。グループが未作成のうちは見出しを出さない。
   const listRows: ListRow[] = useMemo(() => {
     if (groups.length === 0) {
-      return sortByOrder(displayedRelations).map((rel) => ({ kind: "relation" as const, key: rel.id, rel }))
+      const ordered = sortByOrder(displayedRelations)
+      const siblingIds = ordered.map((r) => r.id)
+      return ordered.map((rel, index) => ({ kind: "relation" as const, key: rel.id, rel, siblingIds, index }))
     }
     const known = new Set(groups.map((g) => g.id))
     const buckets = new Map<string, OntologyRelation[]>()
@@ -481,6 +487,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
     sections.push({ group: null, items: sortByOrder(buckets.get(UNGROUPED) ?? []) })
     return sections.flatMap((section) => {
       if (!section.group && section.items.length === 0) return []
+      const siblingIds = section.items.map((r) => r.id)
       return [
         {
           kind: "group" as const,
@@ -488,7 +495,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
           group: section.group,
           count: section.items.length,
         },
-        ...section.items.map((rel) => ({ kind: "relation" as const, key: rel.id, rel })),
+        ...section.items.map((rel, index) => ({ kind: "relation" as const, key: rel.id, rel, siblingIds, index })),
       ]
     })
   }, [displayedRelations, groups])
@@ -516,6 +523,42 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
       setRelations(before)
       return false
     }
+  }
+
+  // 並び順だけの更新（groupId は送らず、サーバ側で現状のまま据え置く）
+  const applyOrderOnly = async (updates: { id: string; order: number }[]) => {
+    if (!currentProject || updates.length === 0) return
+    const orderById = new Map(updates.map((u) => [u.id, u.order]))
+    const before = relations
+    setMovingGroup(true)
+    setRelations((prev) =>
+      prev.map((r) => {
+        const order = orderById.get(r.id)
+        return order === undefined ? r : { ...r, order }
+      }),
+    )
+    try {
+      const res = await fetch("/api/relations/reorder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId: currentProject.id, updates }),
+      })
+      if (!res.ok) setRelations(before)
+    } catch {
+      setRelations(before)
+    } finally {
+      setMovingGroup(false)
+    }
+  }
+
+  // 一覧での順序変更。同じグループの並びの中だけで入れ替える。
+  const moveRelation = (siblingIds: string[], index: number, delta: number) => {
+    const to = index + delta
+    if (to < 0 || to >= siblingIds.length) return
+    const ids = [...siblingIds]
+    const [moved] = ids.splice(index, 1)
+    ids.splice(to, 0, moved)
+    applyOrderOnly(ids.map((id, i) => ({ id, order: (i + 1) * ORDER_STEP })))
   }
 
   // 所属グループの変更。移動先グループの末尾に置く。
@@ -1019,6 +1062,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                       <TableHead className="w-44 pr-4 font-semibold text-foreground">確認</TableHead>
                       <TableHead className="w-20 font-semibold text-foreground">条件</TableHead>
                       <TableHead className="font-semibold text-foreground">始点(A) → 終点(B)クラス</TableHead>
+                      {canReorder && <TableHead className="w-20 font-semibold text-foreground">並び</TableHead>}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -1026,7 +1070,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                       if (row.kind === "group") {
                         return (
                           <TableRow key={row.key} className="bg-muted/40 hover:bg-muted/40">
-                            <TableCell colSpan={5} className="py-1.5">
+                            <TableCell colSpan={canReorder ? 6 : 5} className="py-1.5">
                               <span className="flex items-center gap-2 text-xs font-semibold text-foreground">
                                 <span
                                   className="h-2.5 w-2.5 rounded-full border border-border"
@@ -1099,6 +1143,32 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                               </div>
                             ) : "—"}
                           </TableCell>
+                          {canReorder && (
+                            <TableCell className="align-top" onClick={(e) => e.stopPropagation()}>
+                              <div className="flex items-center gap-0.5">
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  className="h-6 w-6"
+                                  aria-label={`${r.name}を上へ`}
+                                  disabled={row.index === 0 || movingGroup}
+                                  onClick={() => moveRelation(row.siblingIds, row.index, -1)}
+                                >
+                                  <ArrowUp className="h-3.5 w-3.5" />
+                                </Button>
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  className="h-6 w-6"
+                                  aria-label={`${r.name}を下へ`}
+                                  disabled={row.index === row.siblingIds.length - 1 || movingGroup}
+                                  onClick={() => moveRelation(row.siblingIds, row.index, 1)}
+                                >
+                                  <ArrowDown className="h-3.5 w-3.5" />
+                                </Button>
+                              </div>
+                            </TableCell>
+                          )}
                         </TableRow>
                       )
                     })}

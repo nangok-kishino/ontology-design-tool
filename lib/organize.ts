@@ -62,3 +62,18 @@ export function orderBetween(prev?: { order?: number }, next?: { order?: number 
 export function renumber<T extends Sortable>(ordered: T[]): { id: string; order: number }[] {
   return ordered.map((item, index) => ({ id: item.id, order: (index + 1) * ORDER_STEP }))
 }
+
+// 継承の根（parentId を辿り切った先）。見つからない／循環していたらそこで止める。
+// 子クラスのグループは個別に持たせず、根のグループに従わせるために使う
+// （グループは整理の都合なので、親子で別のレーンに散らばると却って分かりにくい）。
+export function rootOf<T extends { id: string; parentId?: string | null }>(item: T, byId: Map<string, T>): T {
+  let current = item
+  const seen = new Set<string>([current.id])
+  while (current.parentId) {
+    const parent = byId.get(current.parentId)
+    if (!parent || seen.has(parent.id)) break
+    seen.add(parent.id)
+    current = parent
+  }
+  return current
+}

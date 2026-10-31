@@ -4,6 +4,9 @@
 //   未分類レーンを左端に固定し、グループのレーンはその右側を横スクロールする
 //   （未分類はグループへ振り分ける元なので、スクロールで見失わないようにする）。
 //
+// クラスのサブクラスはカードの中に入れ子で描く。ドラッグできるのは親カードだけで、
+// 子は親と一塊で動く（子のグループは親に従い、個別には持たせない）。
+//
 // ここで変えるのは groupId と order だけで、オントロジーの意味には触らない。
 // 並び順は疎な値（lib/organize.ts の ORDER_STEP 刻み）なので、1回のドラッグで
 // 書き込むのは原則1件。まだ採番されていないレーン（order 未設定の既存データ）に
@@ -43,6 +46,21 @@ export type BoardItem = {
   groupId?: string | null
   order?: number
   createdAt?: string
+  // 子（クラスのサブクラス）。カードの中に入れ子で描き、親ごと一塊で動かす。
+  // 子のグループ・並び順は親に従うので、ここで個別に動かすことはできない。
+  children?: BoardItem[]
+}
+
+// 入れ子を含めた件数。レーンの見出しに出す。
+function countAll(items: BoardItem[]): number {
+  return items.reduce((n, i) => n + 1 + countAll(i.children ?? []), 0)
+}
+
+// レーンを組み直すかどうかの判定に使う、入れ子まで含めた中身の署名。
+function signatureOf(items: BoardItem[]): string {
+  return items
+    .map((i) => `${i.id}:${i.groupId ?? ""}:${i.order ?? ""}(${signatureOf(i.children ?? [])})`)
+    .join("|")
 }
 
 export type ReorderUpdate = { id: string; order: number; groupId: string | null }
@@ -71,14 +89,16 @@ function buildLanes(items: BoardItem[], groups: OntologyGroup[]): Lanes {
 
 function Card({
   item,
-  selected,
+  selectedId,
   onSelect,
 }: {
   item: BoardItem
-  selected: boolean
-  onSelect: () => void
+  selectedId: string | null
+  onSelect: (id: string) => void
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: item.id })
+  const children = item.children ?? []
+  const selected = item.id === selectedId
   return (
     <div
       ref={setNodeRef}
@@ -93,16 +113,55 @@ function Card({
       <button
         {...attributes}
         {...listeners}
-        aria-label={`${item.name}を移動`}
+        aria-label={children.length > 0 ? `${item.name}と配下のサブクラスを移動` : `${item.name}を移動`}
         className="shrink-0 cursor-grab text-muted-foreground/40 transition-colors hover:text-muted-foreground active:cursor-grabbing"
       >
         <GripVertical className="h-3.5 w-3.5" />
       </button>
-      <button type="button" className="min-w-0 flex-1 text-left" onClick={onSelect}>
-        <span className="block truncate font-medium text-foreground">{item.name}</span>
-        {item.nameEn && <span className="block truncate text-xs text-muted-foreground">{item.nameEn}</span>}
-      </button>
+      <div className="min-w-0 flex-1">
+        <button type="button" className="block w-full min-w-0 text-left" onClick={() => onSelect(item.id)}>
+          <span className="block truncate font-medium text-foreground">{item.name}</span>
+          {item.nameEn && <span className="block truncate text-xs text-muted-foreground">{item.nameEn}</span>}
+        </button>
+        {children.length > 0 && <ChildList items={children} selectedId={selectedId} onSelect={onSelect} />}
+      </div>
     </div>
+  )
+}
+
+// カード内に描くサブクラス。親と一緒に動くので、ここにはドラッグの取っ手を付けない。
+function ChildList({
+  items,
+  selectedId,
+  onSelect,
+}: {
+  items: BoardItem[]
+  selectedId: string | null
+  onSelect: (id: string) => void
+}) {
+  return (
+    <ul className="mt-1 space-y-0.5 border-l border-border pl-1.5">
+      {items.map((child) => (
+        <li key={child.id}>
+          <button
+            type="button"
+            className={cn(
+              "flex w-full min-w-0 items-center gap-1 rounded px-1 py-0.5 text-left text-xs transition-colors",
+              child.id === selectedId
+                ? "bg-indigo-200/70 text-indigo-900 dark:bg-indigo-900/50 dark:text-indigo-100"
+                : "text-muted-foreground hover:bg-muted",
+            )}
+            onClick={() => onSelect(child.id)}
+          >
+            <span className="shrink-0 text-muted-foreground/70">└</span>
+            <span className="truncate">{child.name}</span>
+          </button>
+          {(child.children?.length ?? 0) > 0 && (
+            <ChildList items={child.children ?? []} selectedId={selectedId} onSelect={onSelect} />
+          )}
+        </li>
+      ))}
+    </ul>
   )
 }
 
@@ -136,7 +195,7 @@ function Lane({
         <span className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">
           {group?.name ?? "未分類"}
         </span>
-        <span className="shrink-0 text-xs text-muted-foreground">{items.length}</span>
+        <span className="shrink-0 text-xs text-muted-foreground">{countAll(items)}</span>
       </div>
       <div
         ref={setNodeRef}
@@ -147,7 +206,7 @@ function Lane({
       >
         <SortableContext items={items.map((i) => i.id)} strategy={verticalListSortingStrategy}>
           {items.map((item) => (
-            <Card key={item.id} item={item} selected={item.id === selectedId} onSelect={() => onSelect(item.id)} />
+            <Card key={item.id} item={item} selectedId={selectedId} onSelect={onSelect} />
           ))}
         </SortableContext>
         {items.length === 0 && <p className="py-4 text-center text-xs text-muted-foreground">ここにドラッグ</p>}
@@ -189,10 +248,7 @@ export function GroupBoard({
   // ドラッグ中に組み直すと、掴んで動かしたカードが元の位置へ戻ってしまう
   //（特に空のレーンでは、戻る→またカーソル下に入るの繰り返しで一切移動できなくなる）。
   const signature = useMemo(
-    () =>
-      items.map((i) => `${i.id}:${i.groupId ?? ""}:${i.order ?? ""}`).join("|") +
-      "#" +
-      groups.map((g) => g.id).join("|"),
+    () => signatureOf(items) + "#" + groups.map((g) => g.id).join("|"),
     [items, groups],
   )
   const itemsRef = useRef(items)
@@ -369,6 +425,9 @@ export function GroupBoard({
           <div className="flex items-center gap-1.5 rounded-md border border-border bg-card px-2 py-1.5 text-sm shadow-lg">
             <GripVertical className="h-3.5 w-3.5 text-muted-foreground/40" />
             <span className="font-medium text-foreground">{activeItem.name}</span>
+            {countAll(activeItem.children ?? []) > 0 && (
+              <span className="text-xs text-muted-foreground">＋サブクラス{countAll(activeItem.children ?? [])}件</span>
+            )}
           </div>
         )}
       </DragOverlay>

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useCallback, useMemo } from "react"
+import { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -33,9 +33,9 @@ import { Tooltip } from "@/components/ui/tooltip"
 import { ImportDialog } from "@/components/import-dialog"
 import { SectionHeader } from "@/components/section-header"
 import { GroupManagerDialog, useGroups } from "@/components/group-manager"
-import { GroupBoard, ViewToggle, type BoardViewMode, type ReorderUpdate } from "@/components/group-board"
+import { GroupBoard, ViewToggle, type BoardItem, type BoardViewMode, type ReorderUpdate } from "@/components/group-board"
 import { cn } from "@/lib/utils"
-import { UNGROUPED, renumber, sortByOrder, sortGroups } from "@/lib/organize"
+import { ORDER_STEP, UNGROUPED, nextOrder, renumber, rootOf, sortByOrder, sortGroups } from "@/lib/organize"
 import type { OntologyClass, OntologyAttribute, OntologyGroup, OntologyRelation, AttributeRequired } from "@/lib/types"
 import {
   buildClassesYaml,
@@ -50,10 +50,12 @@ import { ConfirmationBadge } from "@/components/confirmation-badge"
 import { ConfirmDialog } from "@/components/confirm-dialog"
 import { ConfirmationSummary } from "@/components/confirmation-summary"
 import { SynonymInput } from "@/components/synonym-input"
-import { Plus, Pencil, Trash2, Loader2, AlertTriangle, Info, Download, Upload, FileText, Tags, Link2, CheckCircle2, X } from "lucide-react"
+import { Plus, Pencil, Trash2, Loader2, AlertTriangle, ArrowDown, ArrowUp, Info, Download, Upload, FileText, Tags, Link2, CheckCircle2, X } from "lucide-react"
 import { useProject } from "@/app/project-context"
 
 type TreeNode = OntologyClass & { children: TreeNode[] }
+// 一覧の1行。siblingIds / index は↑↓での入れ替えに使う（同じ親を持つ並びの中だけで動かす）
+type ClassRow = { node: TreeNode; depth: number; siblingIds: string[]; index: number }
 type AttrSectionKey = "project" | "parent" | "own"
 
 const CLASS_FIELD_LABEL: Record<string, string> = {
@@ -85,6 +87,11 @@ function buildTree(items: OntologyClass[]): TreeNode[] {
   return roots
 }
 
+// きょうだい同士を order で並べたツリー（深さを問わず同じ規則で並べる）
+function sortTree(nodes: TreeNode[]): TreeNode[] {
+  return sortByOrder(nodes).map((n) => ({ ...n, children: sortTree(n.children) }))
+}
+
 export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId?: string; active?: boolean }) {
   const { currentProject, loading: projectLoading } = useProject()
   const [classes, setClasses] = useState<OntologyClass[]>([])
@@ -100,6 +107,9 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
   const [newDesc, setNewDesc] = useState("")
   const [newParentId, setNewParentId] = useState<string | null>(null)
   const [adding, setAdding] = useState(false)
+  // 連続追加で、このダイアログを開いてから登録した名前（作業の控え）
+  const [addedNames, setAddedNames] = useState<string[]>([])
+  const newNameRef = useRef<HTMLInputElement>(null)
 
   // クラス編集（右詳細パネルで常時編集可）
   const [editName, setEditName] = useState("")
@@ -254,7 +264,8 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
     fetchAllAttrs(selectedId, cls?.parentId ?? null, currentProject.id)
   }, [selectedId, currentProject?.id])
 
-  const handleAdd = async () => {
+  // keepOpen: ダイアログを閉じずに親クラスを残したまま次の入力を受け付ける（サブクラスの連続作成）
+  const handleAdd = async (keepOpen = false) => {
     if (!newName.trim() || !currentProject) return
     setAdding(true)
     setAddError(null)
@@ -280,9 +291,17 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
       // 一覧はクラス・リレーションの全件を取り直さず、作成結果を足すだけにする
       const created: OntologyClass = await res.json()
       setClasses((prev) => [...prev, created])
+      if (keepOpen) {
+        // 親クラスはそのまま。名前まわりだけ空けて、すぐ次を打てるようにする
+        setAddedNames((prev) => [...prev, created.name])
+        setNewName(""); setNewNameEn(""); setNewSynonyms([]); setNewDesc("")
+        newNameRef.current?.focus()
+        return
+      }
       setSelectedId(created.id)
       setShowAdd(false)
       setNewName(""); setNewNameEn(""); setNewSynonyms([]); setNewDesc(""); setNewParentId(null)
+      setAddedNames([])
     } finally {
       setAdding(false)
     }
@@ -290,6 +309,10 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
 
   const handleSave = async () => {
     if (!editName.trim() || !selected) return
+    // 親を外して根クラスに戻すとき、グループは「それまで表示されていたグループ」を引き継ぐ。
+    // 引き継がないと、自分が昔持っていた groupId に戻って別のレーンへ飛んでしまう。
+    const becomesRoot = selected.parentId !== null && editParentId === null
+    const keepGroupId = becomesRoot ? (rootOf(selected, classById).groupId ?? null) : null
     setSaving(true)
     setSaveError(null)
     try {
@@ -309,6 +332,17 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
         const err = await res.json().catch(() => ({}))
         setSaveError(err.error ?? "クラスの更新に失敗しました")
         return
+      }
+      if (becomesRoot && keepGroupId !== (selected.groupId ?? null) && currentProject) {
+        const roots = classes.filter((c) => c.parentId === null && (c.groupId ?? null) === keepGroupId)
+        await fetch("/api/classes/reorder", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            projectId: currentProject.id,
+            updates: [{ id: selected.id, order: nextOrder(roots), groupId: keepGroupId }],
+          }),
+        })
       }
       await fetchClasses()
     } finally {
@@ -481,8 +515,14 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
     setShowScopeAlert(true)
   }
 
+  // 選択中のクラスを親の初期値にする（そのままサブクラスを足せるように）。
+  // 親に選べるのは根クラスだけなので、選択がサブクラスならその親を引き継ぐ。
   const openAddDialog = () => {
-    setNewName(""); setNewDesc(""); setNewParentId(null)
+    const base = selectedId ? classes.find((c) => c.id === selectedId) : undefined
+    setNewName(""); setNewNameEn(""); setNewSynonyms([]); setNewDesc("")
+    setNewParentId(base ? (base.parentId ?? base.id) : null)
+    setAddedNames([])
+    setAddError(null)
     setShowAdd(true)
   }
 
@@ -502,34 +542,40 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
     }
   }
 
-  // グループごとに、そのグループ内のクラスだけでツリーを組む。
-  // 親が別グループにいるときは、そのグループ内の根として扱う
-  //（インデントが示すのは「同じグループ内の親子」に限られる）。
+  // グループごとにツリーを組む。サブクラスのグループは親（根）に従うので、
+  // ひとつの木がグループをまたいで分断されることはない。
   const groupSections = useMemo(() => {
     const known = new Set(groups.map((g) => g.id))
+    const byId = new Map(classes.map((c) => [c.id, c]))
     const buckets = new Map<string, OntologyClass[]>()
     for (const c of classes) {
-      const key = c.groupId && known.has(c.groupId) ? c.groupId : UNGROUPED
+      const gid = rootOf(c, byId).groupId ?? null
+      const key = gid && known.has(gid) ? gid : UNGROUPED
       const list = buckets.get(key)
       if (list) list.push(c)
       else buckets.set(key, [c])
     }
+    const matches = (c: OntologyClass) =>
+      filterState === "all" || deriveConfirmationStatus(c.confirmations).state === filterState
+    // 子が条件に合うときは親も残す。親を落とすと子の居場所（階層）が分からなくなるため。
+    const prune = (nodes: TreeNode[]): TreeNode[] =>
+      nodes.flatMap((n) => {
+        const children = prune(n.children)
+        return matches(n) || children.length > 0 ? [{ ...n, children }] : []
+      })
     const build = (group: OntologyGroup | null, list: OntologyClass[]) => {
-      const rows: { node: TreeNode; depth: number }[] = []
+      const trees = prune(sortTree(buildTree(list)))
+      const rows: ClassRow[] = []
+      // きょうだい（同じ親を持つ並び）を行に持たせておき、一覧の↑↓で入れ替えられるようにする
       const walk = (nodes: TreeNode[], depth: number) => {
-        for (const n of sortByOrder(nodes)) {
-          rows.push({ node: n, depth })
+        const siblingIds = nodes.map((n) => n.id)
+        nodes.forEach((n, index) => {
+          rows.push({ node: n, depth, siblingIds, index })
           if (n.children.length) walk(n.children, depth + 1)
-        }
+        })
       }
-      walk(buildTree(list), 0)
-      return {
-        group,
-        rows:
-          filterState === "all"
-            ? rows
-            : rows.filter(({ node }) => deriveConfirmationStatus(node.confirmations).state === filterState),
-      }
+      walk(trees, 0)
+      return { group, trees, rows }
     }
     const sections = sortGroups(groups).map((g) => build(g, buckets.get(g.id) ?? []))
     sections.push(build(null, buckets.get(UNGROUPED) ?? []))
@@ -540,12 +586,12 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
 
   type ListRow =
     | { kind: "group"; key: string; group: OntologyGroup | null; count: number }
-    | { kind: "class"; key: string; node: TreeNode; depth: number }
+    | ({ kind: "class"; key: string } & ClassRow)
 
   // グループが未作成のうちは見出しを出さない（従来のツリー一覧と同じ見た目になる）
   const listRows: ListRow[] =
     groups.length === 0
-      ? flatClasses.map(({ node, depth }) => ({ kind: "class" as const, key: node.id, node, depth }))
+      ? flatClasses.map((row) => ({ kind: "class" as const, key: row.node.id, ...row }))
       : groupSections.flatMap((section) => {
           if (!section.group && section.rows.length === 0) return []
           return [
@@ -555,12 +601,24 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
               group: section.group,
               count: section.rows.length,
             },
-            ...section.rows.map(({ node, depth }) => ({ kind: "class" as const, key: node.id, node, depth })),
+            ...section.rows.map((row) => ({ kind: "class" as const, key: row.node.id, ...row })),
           ]
         })
 
-  // 整理ボードへ渡す項目（確認状態フィルタはボードにも効かせる）
-  const boardItems = useMemo(() => flatClasses.map(({ node }) => node), [flatClasses])
+  // 整理ボードへ渡す項目（確認状態フィルタはボードにも効かせる）。
+  // ドラッグできるのは根クラスだけで、サブクラスはカードの中に入れ子で付いていく。
+  const boardItems = useMemo(() => {
+    const toItem = (n: TreeNode): BoardItem => ({
+      id: n.id,
+      name: n.name,
+      nameEn: n.nameEn,
+      groupId: n.groupId,
+      order: n.order,
+      createdAt: n.createdAt,
+      children: n.children.map(toItem),
+    })
+    return groupSections.flatMap((section) => section.trees.map(toItem))
+  }, [groupSections])
 
   // ボード上のドラッグ結果を保存する。groupId と order だけを動かす。
   const applyReorder = async (updates: ReorderUpdate[]): Promise<boolean> => {
@@ -587,14 +645,54 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
     }
   }
 
+  // 並び順だけの更新（groupId は送らず、サーバ側で現状のまま据え置く）
+  const applyOrderOnly = async (updates: { id: string; order: number }[]) => {
+    if (!currentProject || updates.length === 0) return
+    const orderById = new Map(updates.map((u) => [u.id, u.order]))
+    const before = classes
+    setMovingGroup(true)
+    setClasses((prev) =>
+      prev.map((c) => {
+        const order = orderById.get(c.id)
+        return order === undefined ? c : { ...c, order }
+      }),
+    )
+    try {
+      const res = await fetch("/api/classes/reorder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId: currentProject.id, updates }),
+      })
+      if (!res.ok) setClasses(before)
+    } catch {
+      setClasses(before)
+    } finally {
+      setMovingGroup(false)
+    }
+  }
+
+  // 一覧での順序変更。同じ親を持つきょうだいの中だけで入れ替える。
+  // 親を動かせば配下のサブクラスは木ごと一緒に動く（行は木の順に並べているため）。
+  const moveClass = (row: ClassRow, delta: number) => {
+    const to = row.index + delta
+    if (to < 0 || to >= row.siblingIds.length) return
+    const ids = [...row.siblingIds]
+    const [moved] = ids.splice(row.index, 1)
+    ids.splice(to, 0, moved)
+    applyOrderOnly(ids.map((id, i) => ({ id, order: (i + 1) * ORDER_STEP })))
+  }
+
   // 所属グループの変更。移動先グループの末尾に置く。
   // 既存データは order 未設定（＝末尾）なので、この機会に移動先だけ 1000 刻みで振り直す。
   // 整理の都合なので確認履歴にも更新日時にも手を付けない（サーバ側も同じ方針）。
   const handleChangeGroup = async (classId: string, groupId: string | null) => {
     const moved = classes.find((c) => c.id === classId)
     if (!currentProject || !moved) return
+    // 並び順を持つのは根クラスだけ（サブクラスは親に従うので数に入れない）
     const ordered = [
-      ...sortByOrder(classes.filter((c) => c.id !== classId && (c.groupId ?? null) === groupId)),
+      ...sortByOrder(
+        classes.filter((c) => c.id !== classId && c.parentId === null && (c.groupId ?? null) === groupId),
+      ),
       moved,
     ]
     const updates = renumber(ordered).map((u) => (u.id === classId ? { ...u, groupId } : u))
@@ -696,8 +794,13 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
     setSelectedId(flatClasses[0].node.id)
   }, [loading, selectedId, flatClasses.length, viewMode])
 
+  // 並べ替えは全件表示のときだけ。絞り込み中は隠れた行と入れ替わって挙動が読めなくなる。
+  const canReorder = filterState === "all"
+  const classById = useMemo(() => new Map(classes.map((c) => [c.id, c])), [classes])
   const selected = classes.find((c) => c.id === selectedId)
-  const selectedGroup = groups.find((g) => g.id === (selected?.groupId ?? "")) ?? null
+  // サブクラスのグループは親（根）に従う。表示も変更先もその根を見る。
+  const selectedRoot = selected ? rootOf(selected, classById) : null
+  const selectedGroup = groups.find((g) => g.id === (selectedRoot?.groupId ?? "")) ?? null
   const childClasses = selected ? classes.filter((c) => c.parentId === selected.id) : []
   const hasChildren = childClasses.length > 0
   const parentClass = selected?.parentId ? classes.find((c) => c.id === selected.parentId) : null
@@ -959,6 +1062,7 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
                       </TableHead>
                       <TableHead className="font-semibold text-foreground">クラス名</TableHead>
                       <TableHead className="w-32 font-semibold text-foreground">確認</TableHead>
+                      {canReorder && <TableHead className="w-20 font-semibold text-foreground">並び</TableHead>}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -966,7 +1070,7 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
                       if (row.kind === "group") {
                         return (
                           <TableRow key={row.key} className="bg-muted/40 hover:bg-muted/40">
-                            <TableCell colSpan={3} className="py-1.5">
+                            <TableCell colSpan={canReorder ? 4 : 3} className="py-1.5">
                               <span className="flex items-center gap-2 text-xs font-semibold text-foreground">
                                 <span
                                   className="h-2.5 w-2.5 rounded-full border border-border"
@@ -1015,6 +1119,32 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
                           <TableCell>
                             <ConfirmationBadge state={state} latestConfirm={confirmStatus.latestConfirm} />
                           </TableCell>
+                          {canReorder && (
+                            <TableCell onClick={(e) => e.stopPropagation()}>
+                              <div className="flex items-center gap-0.5">
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  className="h-6 w-6"
+                                  aria-label={`${node.name}を上へ`}
+                                  disabled={row.index === 0 || movingGroup}
+                                  onClick={() => moveClass(row, -1)}
+                                >
+                                  <ArrowUp className="h-3.5 w-3.5" />
+                                </Button>
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  className="h-6 w-6"
+                                  aria-label={`${node.name}を下へ`}
+                                  disabled={row.index === row.siblingIds.length - 1 || movingGroup}
+                                  onClick={() => moveClass(row, 1)}
+                                >
+                                  <ArrowDown className="h-3.5 w-3.5" />
+                                </Button>
+                              </div>
+                            </TableCell>
+                          )}
                         </TableRow>
                       )
                     })}
@@ -1083,23 +1213,41 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
                     </div>
                     <div className="space-y-1.5">
                       <Label className="text-sm font-medium">グループ</Label>
-                      <Select
-                        value={selectedGroup?.id ?? "__none__"}
-                        onValueChange={(v) => handleChangeGroup(selected.id, v === "__none__" ? null : v)}
-                      >
-                        <SelectTrigger className="h-8" disabled={movingGroup}>
-                          <SelectValue>{selectedGroup?.name ?? "未分類"}</SelectValue>
-                        </SelectTrigger>
-                        <SelectContent className="max-h-72">
-                          <SelectItem value="__none__">未分類</SelectItem>
-                          {groups.map((g) => (
-                            <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <p className="text-xs text-muted-foreground">
-                        一覧を見やすくするための整理用の区分です。オントロジーの意味やエクスポートには影響しません（選ぶと即座に保存されます）。
-                      </p>
+                      {selected.parentId ? (
+                        // サブクラスは親と同じグループに置く。ここで個別に選ばせない
+                        <>
+                          <div className="flex h-8 items-center gap-2 rounded-lg border border-input bg-muted/40 px-2.5 text-sm text-foreground">
+                            <span
+                              className="h-2.5 w-2.5 shrink-0 rounded-full border border-border"
+                              style={selectedGroup?.color ? { backgroundColor: selectedGroup.color } : undefined}
+                            />
+                            <span className="truncate">{selectedGroup?.name ?? "未分類"}</span>
+                          </div>
+                          <p className="text-xs text-muted-foreground">
+                            サブクラスのグループは親クラス「{selectedRoot?.name}」に従います。変えるときは親クラスのグループを変えてください。
+                          </p>
+                        </>
+                      ) : (
+                        <>
+                          <Select
+                            value={selectedGroup?.id ?? "__none__"}
+                            onValueChange={(v) => handleChangeGroup(selected.id, v === "__none__" ? null : v)}
+                          >
+                            <SelectTrigger className="h-8" disabled={movingGroup}>
+                              <SelectValue>{selectedGroup?.name ?? "未分類"}</SelectValue>
+                            </SelectTrigger>
+                            <SelectContent className="max-h-72">
+                              <SelectItem value="__none__">未分類</SelectItem>
+                              {groups.map((g) => (
+                                <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <p className="text-xs text-muted-foreground">
+                            一覧を見やすくするための整理用の区分です。オントロジーの意味やエクスポートには影響しません（選ぶと即座に保存され、配下のサブクラスも一緒に移ります）。
+                          </p>
+                        </>
+                      )}
                     </div>
                   </div>
                 </section>
@@ -1232,9 +1380,9 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
           <div className="space-y-4 py-2">
             <div className="space-y-2">
               <Label htmlFor="cls-name">クラス名 <span className="text-destructive">*</span></Label>
-              <Input id="cls-name" value={newName} onChange={(e) => setNewName(e.target.value)}
+              <Input id="cls-name" ref={newNameRef} value={newName} onChange={(e) => setNewName(e.target.value)}
                 placeholder="例：不具合事例"
-                onKeyDown={(e) => e.key === "Enter" && !adding && handleAdd()} />
+                onKeyDown={(e) => e.key === "Enter" && !adding && handleAdd(true)} />
             </div>
             <div className="space-y-2">
               <Label htmlFor="cls-name-en">英語名</Label>
@@ -1269,12 +1417,28 @@ export function ClassesScreen({ initialSelectedId, active }: { initialSelectedId
                   ))}
                 </SelectContent>
               </Select>
+              {newParentId && (
+                <p className="text-xs text-muted-foreground">
+                  グループは親クラスと同じになります。Enter または［続けて追加］で、親を変えずに次のサブクラスを続けて登録できます。
+                </p>
+              )}
             </div>
+            {addedNames.length > 0 && (
+              <p className="rounded-md bg-muted/50 px-2.5 py-2 text-xs text-muted-foreground">
+                追加済み（{addedNames.length}件）：{addedNames.join("、")}
+              </p>
+            )}
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowAdd(false)}>キャンセル</Button>
-            <Button onClick={handleAdd} disabled={!newName.trim() || adding}>
-              {adding ? "登録中..." : "登録"}
+            <Button variant="outline" onClick={() => setShowAdd(false)}>
+              {addedNames.length > 0 ? "閉じる" : "キャンセル"}
+            </Button>
+            <Button variant="outline" onClick={() => handleAdd(true)} disabled={!newName.trim() || adding}>
+              {adding ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+              続けて追加
+            </Button>
+            <Button onClick={() => handleAdd(false)} disabled={!newName.trim() || adding}>
+              {adding ? "登録中..." : "登録して閉じる"}
             </Button>
           </DialogFooter>
         </DialogContent>
