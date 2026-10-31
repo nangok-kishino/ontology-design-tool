@@ -4,21 +4,18 @@
 //   react-force-graph-2d を top-level import するため、SSR を避ける目的で
 //   triplet-graph.tsx から next/dynamic({ ssr:false }) 経由でのみ読み込む。
 //
-//   配置は力学任せにしない。関係の向きで段を決めて左から右へ流す
-//   （lib/graph-layout.ts）。力学だと1つのノードに子が何十個もぶら下がった
-//   時点で全員が同じ半径に押し込まれ、名前が重なって読めなくなるうえ、
-//   どの関係でつながっているのかも見て取れない。
+//   配置は力学任せにしない。列はクラスで決めて左から右へ流す
+//   （lib/graph-layout.ts）。同じクラスのインスタンスは必ず同じ列に入る。
 //
-//   ノード = インスタンス。カードにはクラス名と名前を2段で出し、
-//   色はクラスごとに揃える（同じクラスなら同じ色）。
-//   エッジ = トリプレット。色はリレーション定義ごとに揃える。
-//   色の対応は凡例で示す。
+//   ノード = インスタンス。カードはクラス名と名前の2段。
+//   色は「どのクラスか」を示すためだけに使い、塗りは暗いまま縁と見出しに効かせる。
+//   エッジの色はリレーション定義ごと。
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import ForceGraph2D from "react-force-graph-2d"
 import type { Triplet, OntologyInstance, RelationCondition } from "@/lib/types"
 import { formatRelationCondition } from "@/lib/relation-conditions"
-import { NO_CLASS_HUE, neon, esc } from "@/lib/graph-colors"
+import { NO_CLASS_HUE, cardAccent, cardBorder, cardFill, line, esc } from "@/lib/graph-colors"
 import { layeredLayout } from "@/lib/graph-layout"
 
 type GraphNode = {
@@ -50,17 +47,22 @@ type GraphLink = {
   hue: number
 }
 
-const MAX_ZOOM = 1.6 // 初期フィットの拡大率上限（少数ノードで拡大しすぎるのを防ぐ）
+const MAX_ZOOM = 1.5 // 初期フィットの拡大率上限（少数ノードで拡大しすぎるのを防ぐ）
 const MIN_ZOOM = 0.05 // 初期フィットの縮小率下限
 const NAME_FONT = 13 // カードの名前の大きさ（グラフ座標）
 const CLASS_FONT = 10 // カードのクラス名の大きさ
-const CARD_H = 40 // カードの高さ（2段ぶん）
-const CARD_PAD_X = 13 // カードの左右の余白
-const CARD_MAX_W = 260 // カードの最大幅（超える名前は末尾を詰める）
-const CARD_MIN_W = 64
+const CARD_H = 42 // カードの高さ（2段ぶん）
+const CARD_R = 9 // カードの角の丸み
+const CARD_PAD_X = 14 // カードの左右の余白
+const CARD_MAX_W = 250 // カードの最大幅（超える名前は末尾を詰める）
+const CARD_MIN_W = 70
+const BG = "#0b0d13"
+const TEXT = "rgba(228,233,243,0.95)"
 const FONT_FAMILY = "ui-sans-serif, system-ui, sans-serif"
+const PARTICLE_PERIOD = 2400 // 粒が線を1周する時間(ms)
 
 type LabelRect = { x0: number; y0: number; x1: number; y1: number }
+type EdgePath = { forward: boolean; px: number; py: number; cx: number; cy: number; c1x: number; c2x: number }
 
 function linkEndNode(end: string | GraphNode): GraphNode | null {
   return typeof end === "object" ? end : null
@@ -84,6 +86,14 @@ function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: numbe
   ctx.closePath()
 }
 
+// 描いている曲線そのものの座標（粒を線の上に乗せるのに使う）
+function bezierAt(p: EdgePath, t: number) {
+  const u = 1 - t
+  const x = u * u * u * p.px + 3 * u * u * t * p.c1x + 3 * u * t * t * p.c2x + t * t * t * p.cx
+  const y = u * u * u * p.py + 3 * u * u * t * p.py + 3 * u * t * t * p.cy + t * t * t * p.cy
+  return { x, y }
+}
+
 export default function TripletGraphCanvas({
   triplets,
   instById,
@@ -92,7 +102,6 @@ export default function TripletGraphCanvas({
   conditionsByRelationId,
   hueByClassId,
   hueByRelationId,
-  relationNameById,
   width,
   height,
   onSelectNode,
@@ -115,9 +124,8 @@ export default function TripletGraphCanvas({
   const [hoverId, setHoverId] = useState<string | null>(null)
   const [hoverLinkId, setHoverLinkId] = useState<string | null>(null)
   const [showEdgeLabels, setShowEdgeLabels] = useState(false)
-  // エッジを流れる光の粒。常に動いていると目が疲れるので既定は止めておく。
+  // エッジを流れる粒。常に動いていると目が疲れるので既定は止めておく。
   const [animate, setAnimate] = useState(false)
-  const [showLegend, setShowLegend] = useState(true)
   const hasFitRef = useRef(false) // 初期フィット済みか
   const userMovedRef = useRef(false) // ユーザーがズーム/パンしたか（以後は自動フィットしない）
   const programmaticRef = useRef(false) // 自分でズームした瞬間か（onZoom を無視するため）
@@ -149,7 +157,7 @@ export default function TripletGraphCanvas({
   )
 
   // triplets → {nodes, links} + 隣接情報。配置もここで決めて固定する。
-  const { data, adjacency, legend } = useMemo(() => {
+  const { data, adjacency } = useMemo(() => {
     const nodeMap = new Map<string, GraphNode>()
     const adjacency = new Map<string, Set<string>>()
     const inner = CARD_MAX_W - CARD_PAD_X * 2
@@ -210,16 +218,8 @@ export default function TripletGraphCanvas({
       n.layer = p.layer
     }
 
-    // 凡例：出てきたクラスとリレーションだけを、色つきで並べる
-    const classLegend = [...new Map(nodes.map((n) => [n.className, n.hue])).entries()]
-    const relLegend = [
-      ...new Map(
-        links.map((l) => [relationNameById?.get(l.predicateRelationId) ?? l.label, l.hue]),
-      ).entries(),
-    ]
-
-    return { data: { nodes, links }, adjacency, legend: { classes: classLegend, relations: relLegend } }
-  }, [triplets, instById, classNameById, hueByClassId, hueByRelationId, relationNameById, measure, fitText])
+    return { data: { nodes, links }, adjacency }
+  }, [triplets, instById, classNameById, hueByClassId, hueByRelationId, measure, fitText])
 
   // 全ノードが収まる拡大率を自前で算出し、上限(MAX_ZOOM)でクランプしてフィット。
   const fitToView = useCallback(
@@ -237,7 +237,7 @@ export default function TripletGraphCanvas({
         y0 = Math.min(y0, n.y - n.h / 2)
         y1 = Math.max(y1, n.y + n.h / 2)
       }
-      const pad = 60
+      const pad = 56
       const zx = x1 > x0 ? (width - 2 * pad) / (x1 - x0) : MAX_ZOOM
       const zy = y1 > y0 ? (height - 2 * pad) / (y1 - y0) : MAX_ZOOM
       const z = Math.max(MIN_ZOOM, Math.min(zx, zy, MAX_ZOOM))
@@ -328,29 +328,27 @@ export default function TripletGraphCanvas({
       const x = node.x ?? 0
       const y = node.y ?? 0
       const hi = isNodeHi(node.id)
-      ctx.globalAlpha = hi ? 1 : 0.18
+      const focused = node.id === hoverId
+      ctx.globalAlpha = hi ? 1 : 0.22
 
       const x0 = x - node.w / 2
       const y0 = y - node.h / 2
-      ctx.shadowColor = `hsl(${node.hue}, 85%, 60%)`
-      ctx.shadowBlur = node.id === hoverId ? 18 : hi ? 7 : 0
-      roundRect(ctx, x0, y0, node.w, node.h, node.h / 2)
-      ctx.fillStyle = `hsl(${node.hue}, 66%, 60%)`
+      roundRect(ctx, x0, y0, node.w, node.h, CARD_R)
+      ctx.fillStyle = cardFill(node.hue)
       ctx.fill()
-      ctx.shadowBlur = 0
-      ctx.lineWidth = node.id === hoverId ? 2 : 1
-      ctx.strokeStyle = `hsl(${node.hue}, 80%, 76%)`
+      ctx.lineWidth = focused ? 1.6 : 1
+      ctx.strokeStyle = cardBorder(node.hue, focused)
       ctx.stroke()
 
-      ctx.textAlign = "center"
+      ctx.textAlign = "left"
       ctx.textBaseline = "middle"
       // 上段：クラス名（何の種類か）、下段：インスタンス名
       ctx.font = `${CLASS_FONT}px ${FONT_FAMILY}`
-      ctx.fillStyle = `hsl(${node.hue}, 70%, 22%)`
-      ctx.fillText(node.classLabel, x, y - CARD_H / 2 + 11)
-      ctx.font = `600 ${NAME_FONT}px ${FONT_FAMILY}`
-      ctx.fillStyle = "rgba(10,12,22,0.95)"
-      ctx.fillText(node.label, x, y + CARD_H / 2 - 13)
+      ctx.fillStyle = cardAccent(node.hue)
+      ctx.fillText(node.classLabel, x0 + CARD_PAD_X, y0 + 13)
+      ctx.font = `500 ${NAME_FONT}px ${FONT_FAMILY}`
+      ctx.fillStyle = TEXT
+      ctx.fillText(node.label, x0 + CARD_PAD_X, y0 + CARD_H - 15)
       ctx.globalAlpha = 1
     },
     [isNodeHi, hoverId],
@@ -359,27 +357,26 @@ export default function TripletGraphCanvas({
   const paintNodePointerArea = useCallback(
     (node: GraphNode, color: string, ctx: CanvasRenderingContext2D) => {
       ctx.fillStyle = color
-      roundRect(ctx, (node.x ?? 0) - node.w / 2, (node.y ?? 0) - node.h / 2, node.w, node.h, node.h / 2)
+      roundRect(ctx, (node.x ?? 0) - node.w / 2, (node.y ?? 0) - node.h / 2, node.w, node.h, CARD_R)
       ctx.fill()
     },
     [],
   )
 
-  // つながりの曲線。左の段のカードの右端から出て、右の段のカードの左端へ入る。
-  const edgePath = (link: GraphLink) => {
+  // つながりの曲線。左の列のカードの右端から出て、右の列のカードの左端へ入る。
+  const edgePath = (link: GraphLink): EdgePath | null => {
     const s = linkEndNode(link.source)
     const t = linkEndNode(link.target)
     if (!s || !t || s.x == null || s.y == null || t.x == null || t.y == null) return null
-    // 段が後ろ向き（右から左）や同じ段のときは、構造から外れた繋がりとして点線にする
-    const forward = t.layer > s.layer
-    const from = forward ? s : t.layer < s.layer ? t : s
-    const to = forward ? t : t.layer < s.layer ? s : t
+    const forward = t.layer !== s.layer
+    const from = t.layer >= s.layer ? s : t
+    const to = t.layer >= s.layer ? t : s
     const px = (from.x ?? 0) + from.w / 2
     const py = from.y ?? 0
     const cx = (to.x ?? 0) - to.w / 2
     const cy = to.y ?? 0
     const reach = Math.max(24, Math.abs(cx - px) * 0.5)
-    return { forward: t.layer !== s.layer, px, py, cx, cy, c1x: px + reach, c2x: cx - reach }
+    return { forward, px, py, cx, cy, c1x: px + reach, c2x: cx - reach }
   }
 
   const paintLink = useCallback(
@@ -388,8 +385,8 @@ export default function TripletGraphCanvas({
       if (!path) return
       const hi = isLinkHi(link)
       ctx.globalAlpha = 1
-      ctx.strokeStyle = !hovering ? neon(link.hue, 0.75) : hi ? neon(link.hue, 1) : "rgba(120,130,180,0.06)"
-      ctx.lineWidth = (hi ? 2.2 : 1.6) / Math.max(globalScale, 0.35)
+      ctx.strokeStyle = !hovering ? line(link.hue, 0.5) : hi ? line(link.hue, 0.95) : "rgba(130,140,170,0.05)"
+      ctx.lineWidth = (hi ? 1.8 : 1.2) / Math.max(globalScale, 0.35)
       const dash = 5 / Math.max(globalScale, 0.35)
       ctx.setLineDash(path.forward ? [] : [dash, dash * 1.4])
       ctx.beginPath()
@@ -398,12 +395,23 @@ export default function TripletGraphCanvas({
       ctx.stroke()
       ctx.setLineDash([])
 
+      // 粒は描いた曲線の上をそのまま流す（ライブラリの粒は自前の曲線を知らないので使わない）
+      if (animate && (!hovering || hi)) {
+        const base = (performance.now() % PARTICLE_PERIOD) / PARTICLE_PERIOD
+        ctx.fillStyle = line(link.hue, 0.95)
+        for (let k = 0; k < 2; k++) {
+          const pt = bezierAt(path, (base + k / 2) % 1)
+          ctx.beginPath()
+          ctx.arc(pt.x, pt.y, 2.2 / Math.max(globalScale, 0.35), 0, 2 * Math.PI)
+          ctx.fill()
+        }
+      }
+
       if (!showEdgeLabels || !link.label) return
       if (hovering && !hi) return
-      // 三次ベジェの中点
       const mx = (path.px + 3 * path.c1x + 3 * path.c2x + path.cx) / 8
       const my = (path.py + 3 * path.py + 3 * path.cy + path.cy) / 8
-      const fontSize = Math.max(12 / globalScale, 2)
+      const fontSize = Math.max(11 / globalScale, 2)
       ctx.font = `${fontSize}px ${FONT_FAMILY}`
       const tw = ctx.measureText(link.label).width
       const padX = 4 / globalScale
@@ -422,12 +430,12 @@ export default function TripletGraphCanvas({
         return
       ctx.textAlign = "center"
       ctx.textBaseline = "middle"
-      ctx.fillStyle = "rgba(10,11,20,0.82)"
+      ctx.fillStyle = "rgba(11,13,19,0.85)"
       ctx.fillRect(rect.x0, rect.y0, rect.x1 - rect.x0, rect.y1 - rect.y0)
-      ctx.fillStyle = neon(link.hue, 1)
+      ctx.fillStyle = line(link.hue, 1)
       ctx.fillText(link.label, mx, my)
     },
-    [isLinkHi, hovering, showEdgeLabels, claimRect, hoverLinkId],
+    [isLinkHi, hovering, showEdgeLabels, claimRect, hoverLinkId, animate],
   )
 
   const paintLinkPointerArea = useCallback(
@@ -465,7 +473,7 @@ export default function TripletGraphCanvas({
   }, [])
 
   const toggleClass =
-    "rounded-md border border-white/15 bg-black/50 px-2.5 py-1 text-xs text-zinc-200 backdrop-blur-sm transition-colors hover:bg-black/70"
+    "rounded-md border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-zinc-300 backdrop-blur-sm transition-colors hover:bg-white/10"
 
   return (
     <div className="relative" style={{ width, height }}>
@@ -479,45 +487,14 @@ export default function TripletGraphCanvas({
         <button type="button" className={toggleClass} onClick={() => setAnimate((v) => !v)}>
           アニメーション: {animate ? "ON" : "OFF"}
         </button>
-        <button type="button" className={toggleClass} onClick={() => setShowLegend((v) => !v)}>
-          凡例: {showLegend ? "ON" : "OFF"}
-        </button>
       </div>
-
-      {/* 凡例：カードの色＝クラス、線の色＝リレーション */}
-      {showLegend && (legend.classes.length > 0 || legend.relations.length > 0) && (
-        <div className="absolute left-3 top-3 z-10 max-h-[70%] overflow-y-auto rounded-md border border-white/15 bg-black/55 px-3 py-2 text-xs text-zinc-200 backdrop-blur-sm">
-          {legend.classes.length > 0 && (
-            <div className="mb-2">
-              <p className="mb-1 text-[10px] uppercase tracking-wider text-zinc-400">クラス（カードの色）</p>
-              {legend.classes.map(([name, hue]) => (
-                <div key={name} className="flex items-center gap-1.5 py-0.5">
-                  <span className="h-2.5 w-4 rounded-sm" style={{ backgroundColor: `hsl(${hue}, 66%, 60%)` }} />
-                  <span>{name}</span>
-                </div>
-              ))}
-            </div>
-          )}
-          {legend.relations.length > 0 && (
-            <div>
-              <p className="mb-1 text-[10px] uppercase tracking-wider text-zinc-400">リレーション（線の色）</p>
-              {legend.relations.map(([name, hue]) => (
-                <div key={name} className="flex items-center gap-1.5 py-0.5">
-                  <span className="h-0.5 w-4 rounded-sm" style={{ backgroundColor: neon(hue, 1) }} />
-                  <span>{name}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
 
       <ForceGraph2D
       ref={fgRef}
       width={width}
       height={height}
       graphData={data}
-      backgroundColor="#0a0b14"
+      backgroundColor={BG}
       nodeRelSize={1}
       nodeVal={((n: GraphNode) => n.w * n.h) as any}
       nodeCanvasObject={paintNode as any}
@@ -555,10 +532,8 @@ export default function TripletGraphCanvas({
       linkCanvasObjectMode={(() => "replace") as any}
       linkCanvasObject={paintLink as any}
       linkPointerAreaPaint={paintLinkPointerArea as any}
-      linkDirectionalParticles={((l: GraphLink) => (animate && (!hovering || isLinkHi(l)) ? 2 : 0)) as any}
-      linkDirectionalParticleWidth={2.4}
-      linkDirectionalParticleSpeed={0.006}
-      linkDirectionalParticleColor={((l: GraphLink) => neon(l.hue, 0.95)) as any}
+      // 既定では静止したときに再描画が止まる。粒を流す間だけ止めさせない。
+      autoPauseRedraw={!animate}
       onRenderFramePre={handleRenderPre as any}
       onNodeHover={(n: GraphNode | null) => setHoverId(n?.id ?? null)}
       onLinkHover={((l: GraphLink | null) => setHoverLinkId(l?.id ?? null)) as any}

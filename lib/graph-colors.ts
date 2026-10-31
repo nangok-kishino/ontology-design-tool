@@ -43,3 +43,21 @@ export function buildHueMap(ids: string[], startIndex = 0): Map<string, number> 
   })
   return map
 }
+
+// 暗い背景に置くカードの色。塗りは暗く、縁と見出しだけ色を効かせる。
+// 彩度の高い塗りを並べると画面が騒がしくなるので、色は「どのクラスか」を
+// 示すだけに留める。
+export function cardFill(hue: number): string {
+  return `hsl(${hue}, 22%, 15%)`
+}
+export function cardBorder(hue: number, strong = false): string {
+  return `hsl(${hue}, ${strong ? 50 : 32}%, ${strong ? 62 : 36}%)`
+}
+export function cardAccent(hue: number): string {
+  return `hsl(${hue}, 42%, 68%)`
+}
+// 線の色。ネオンほど主張させない。
+export function line(hue: number, alpha: number): string {
+  const [r, g, b] = hslToRgb(hue, 0.45, 0.62)
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`
+}
