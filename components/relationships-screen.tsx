@@ -26,7 +26,7 @@ import { ConfirmationSummary } from "@/components/confirmation-summary"
 import { DragRow, ListDndContext } from "@/components/list-dnd"
 import { ConditionValueList, hasIncompleteConditions } from "@/components/condition-fields"
 import { PropertyValueList } from "@/components/property-section"
-import { LabelChips } from "@/components/label-chip"
+import { LabelChip, LabelChips } from "@/components/label-chip"
 import { cn } from "@/lib/utils"
 import { ORDER_STEP, nextOrder, orderBetween, placeAt, sortByOrder } from "@/lib/organize"
 import { normalizeName } from "@/lib/normalize"
@@ -313,14 +313,15 @@ export function RelationshipsScreen({ active }: { active?: boolean }) {
   const liveNodes = useMemo(() => nodes.filter((n) => n.status !== "merged"), [nodes])
   const newStart = newStartId ? nodeById.get(newStartId) ?? null : null
 
-  // 始点のラベルで使えるタイプだけに絞る（スキーマに沿う指定のとき）
-  const typeChoices = useMemo(() => {
-    const sorted = orderedTypes
-    if (!restrictToSchema || !newStart) return sorted
-    return sorted.filter((t) =>
-      (t.labelPairs ?? []).some((p) => (newStart.labelIds ?? []).includes(p.sourceLabelId)),
-    )
-  }, [orderedTypes, restrictToSchema, newStart])
+  // 入力の順番は、リレーションシップタイプ → 始点ノード(A) → 終点ノード(B)。
+  // 「このタイプの関係を登録したい」とタイプから考えるのが、スキーマが先のこのアプリの使い方のため。
+  // ラベルペアのみを表示する指定のときは、選んだタイプのラベルペアで始点・終点の候補を絞る。
+  const newType = newTypeId ? typeById.get(newTypeId) ?? null : null
+  const startChoices = useMemo(() => {
+    if (!restrictToSchema || !newType) return liveNodes
+    const allowed = new Set((newType.labelPairs ?? []).map((p) => p.sourceLabelId))
+    return liveNodes.filter((n) => (n.labelIds ?? []).some((id) => allowed.has(id)))
+  }, [liveNodes, restrictToSchema, newType])
 
   // 選んだタイプ・始点で許される終点ラベルを持つノードだけに絞る
   const endChoices = useMemo(() => {
@@ -813,44 +814,71 @@ export function RelationshipsScreen({ active }: { active?: boolean }) {
           <div className="max-h-[65vh] space-y-3 overflow-y-auto pr-1">
             <label className="flex items-center gap-2 text-xs text-muted-foreground">
               <input type="checkbox" checked={restrictToSchema}
-                onChange={(e) => setRestrictToSchema(e.target.checked)} />
-              スキーマ（ラベルペア）に沿う組み合わせだけを出す
+                onChange={(e) => { setRestrictToSchema(e.target.checked); setNewStartId(""); setNewEndId("") }} />
+              スキーマ設計で定義されたラベルペアのみを表示する
             </label>
-            <div className="space-y-1.5">
-              <FieldLabel className="text-sm font-medium">
-                始点ノード <span className="text-destructive">*</span>
-              </FieldLabel>
-              <NodePicker nodes={liveNodes} labelName={labelName} value={newStartId}
-                onChange={(id) => { setNewStartId(id); setNewTypeId(""); setNewEndId("") }}
-                placeholder="始点にするノードを探す" />
-            </div>
             <div className="space-y-1.5">
               <FieldLabel className="text-sm font-medium">
                 リレーションシップタイプ <span className="text-destructive">*</span>
               </FieldLabel>
               <Select value={newTypeId}
-                onValueChange={(v) => { if (v) { setNewTypeId(v); setNewEndId("") } }}>
-                <SelectTrigger className="h-8" disabled={!newStartId}>
+                onValueChange={(v) => { if (v) { setNewTypeId(v); setNewStartId(""); setNewEndId("") } }}>
+                <SelectTrigger className="h-8">
                   <SelectValue>{typeById.get(newTypeId)?.name ?? "選択してください"}</SelectValue>
                 </SelectTrigger>
                 <SelectContent className="max-h-72">
-                  {typeChoices.map((t) => (
+                  {orderedTypes.map((t) => (
                     <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
-              {restrictToSchema && newStartId && typeChoices.length === 0 && (
-                <p className="text-xs text-amber-600 dark:text-amber-500">
-                  このノードのラベルを始点に持つタイプがありません。上のチェックを外すと全部出せます。
-                </p>
+              {newType && (newType.labelPairs ?? []).length > 0 && (
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                  ラベルペア：
+                  {(newType.labelPairs ?? []).map((p, i) => (
+                    <span key={i} className="inline-flex items-center gap-1">
+                      <LabelChip name={labelName(p.sourceLabelId)} />→<LabelChip name={labelName(p.targetLabelId)} />
+                    </span>
+                  ))}
+                </div>
               )}
             </div>
             <div className="space-y-1.5">
               <FieldLabel className="text-sm font-medium">
-                終点ノード <span className="text-destructive">*</span>
+                始点ノード(A) <span className="text-destructive">*</span>
               </FieldLabel>
-              <NodePicker nodes={endChoices} labelName={labelName} value={newEndId}
-                onChange={setNewEndId} placeholder="終点にするノードを探す" />
+              {!newTypeId ? (
+                <p className="text-xs text-muted-foreground">先にリレーションシップタイプを選んでください</p>
+              ) : (
+                <>
+                  <NodePicker nodes={startChoices} labelName={labelName} value={newStartId}
+                    onChange={(id) => { setNewStartId(id); setNewEndId("") }}
+                    placeholder="始点にするノードを探す" />
+                  {restrictToSchema && startChoices.length === 0 && (
+                    <p className="text-xs text-amber-600 dark:text-amber-500">
+                      このタイプのラベルペアの始点ラベルを持つノードがありません。
+                    </p>
+                  )}
+                </>
+              )}
+            </div>
+            <div className="space-y-1.5">
+              <FieldLabel className="text-sm font-medium">
+                終点ノード(B) <span className="text-destructive">*</span>
+              </FieldLabel>
+              {!newStartId ? (
+                <p className="text-xs text-muted-foreground">先に始点ノード(A)を選んでください</p>
+              ) : (
+                <>
+                  <NodePicker nodes={endChoices} labelName={labelName} value={newEndId}
+                    onChange={setNewEndId} placeholder="終点にするノードを探す" />
+                  {restrictToSchema && endChoices.length === 0 && (
+                    <p className="text-xs text-amber-600 dark:text-amber-500">
+                      このタイプのラベルペアの終点ラベルを持つノードがありません。
+                    </p>
+                  )}
+                </>
+              )}
             </div>
             {addError && <p className="text-xs text-destructive">{addError}</p>}
             <p className="text-xs text-muted-foreground">
