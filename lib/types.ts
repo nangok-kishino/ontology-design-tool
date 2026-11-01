@@ -111,14 +111,9 @@ export type RelationConditionOperator =
   | "in"
   | "notIn"
 
-// リレーション成立条件（1件＝1つの述語）。同一リレーションに紐づく複数条件は
-// すべて満たされたとき（AND）に成立とみなす。
-//   例）気温 ≥ 30℃／設置場所 = 屋外／長さ が 0.5〜0.8m の範囲内
-export type RelationCondition = {
-  // 対象データ名（自由記述）。例："気温", "設置場所", "長さ"
-  variable: string
-  // 単位（任意）。例："℃", "m", "kg"
-  unit?: string
+// 成立条件の「値」。演算子と、その演算子が要る値だけを持つ。
+// どの対象データについての条件かは、参照先の条件項目（RelationConditionSlot）が決める。
+export type ConditionValue = {
   operator: RelationConditionOperator
   // 比較演算(eq/ne/gt/gte/lt/lte)で用いる単一値
   value?: string
@@ -127,6 +122,36 @@ export type RelationCondition = {
   valueMax?: string
   // 集合演算(in/notIn)で用いる値の集合
   values?: string[]
+}
+
+// リレーションが宣言する「成立条件の項目」。
+//
+// 【重要】ここには具体的な数値・演算子を持たせない。リレーションの定義は
+// 「このリレーションには〈気温〉という条件が関わる」までで、
+// 「気温が何℃以上か」は個々のトリプレットごとに決まるため。
+// 属性（OntologyAttribute）と同じ分担：定義はリレーション、値はトリプレット。
+export type RelationConditionSlot = {
+  // トリプレット側から参照するキー
+  id: string
+  // 対象データ名（自由記述）。例："気温", "設置場所", "長さ"
+  variable: string
+  // 単位（任意）。例："℃", "m", "kg"
+  unit?: string
+  description?: string
+  // 具体値をリレーションに持たせていた頃のデータから引き継いだ参考表示。
+  // 読み取り専用で、トリプレットへ移し終えたら消せる（整形済みの1行）。
+  legacyText?: string
+}
+
+// トリプレット1件が持つ条件の値。キーは RelationConditionSlot.id。
+// 入っていない項目は「この条件は使わない」。入っているものはすべて満たしたときに成立。
+export type TripletConditions = Record<string, ConditionValue>
+
+// 具体値をリレーション側に持たせていた頃の形（読み取り互換のためだけに残す）。
+// lib/relation-conditions.ts の migrateLegacyConditions で条件項目へ読み替える。
+export type LegacyRelationCondition = ConditionValue & {
+  variable: string
+  unit?: string
 }
 
 export type OntologyRelation = {
@@ -138,7 +163,8 @@ export type OntologyRelation = {
   classPairs: ClassPair[]
   parentRelationId: string | null
   // 成立条件（AND評価）。未設定＝条件なし（常に成立）
-  conditions?: RelationCondition[]
+  // 成立条件の項目（具体値は持たない。値はトリプレット側）
+  conditions?: RelationConditionSlot[]
   createdBy?: string
   updatedBy?: string
   createdAt: string
@@ -276,6 +302,8 @@ export type ClassTriplet = {
   subjectName: string
   predicateName: string
   objectName: string
+  // 成立条件の値（Triplet と同じ扱い）
+  conditions?: TripletConditions
   // 一覧での並び順。インスタンストリプレットの order と同じ扱い（lib/organize.ts）。
   order?: number
   createdBy?: string
@@ -302,6 +330,9 @@ export type Triplet = {
   // このトリプレット（エッジ）固有の属性値。キーは述語リレーションに定義された
   // 属性の id（プロジェクト共通属性＋リレーション固有属性）。値は表示文字列。
   attributes?: Record<string, string>
+  // このトリプレットで成立に要る条件の値。キーは述語リレーションが宣言した
+  // 条件項目の id。入っていない項目は「使わない」。
+  conditions?: TripletConditions
   sourceCandidateId?: string // 由来の TripletCandidate（手動追加なら未設定）
   // 一覧での並び順。未設定は末尾（読み取り側で createdAt を副キーに安定ソート）。
   // クラス／リレーションと同じく 1000 刻みで振り、ドラッグ時は前後の中間値を

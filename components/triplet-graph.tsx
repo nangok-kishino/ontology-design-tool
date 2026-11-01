@@ -12,7 +12,7 @@ import dynamic from "next/dynamic"
 import { Loader2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { line } from "@/lib/graph-colors"
-import type { RelationCondition } from "@/lib/types"
+import type { RelationConditionSlot } from "@/lib/types"
 import type { GraphEdge, GraphEndKind } from "@/lib/graph-edges"
 
 const TripletGraphCanvas = dynamic(() => import("./triplet-graph-canvas"), {
@@ -64,7 +64,7 @@ export function TripletGraph({
   edges,
   classNameById,
   attrNameById,
-  conditionsByRelationId,
+  conditionSlotsByRelationId,
   hueByClassId,
   hueByRelationId,
   rootClassIdById,
@@ -75,7 +75,7 @@ export function TripletGraph({
   edges: GraphEdge[]
   classNameById: Map<string, string>
   attrNameById?: Map<string, string>
-  conditionsByRelationId?: Map<string, RelationCondition[]>
+  conditionSlotsByRelationId?: Map<string, RelationConditionSlot[]>
   // クラス／リレーションごとの色（一覧の並び順で配ってある）
   hueByClassId?: Map<string, number>
   hueByRelationId?: Map<string, number>
@@ -188,7 +188,7 @@ export function TripletGraph({
           edges={visible}
           classNameById={classNameById}
           attrNameById={attrNameById}
-          conditionsByRelationId={conditionsByRelationId}
+          conditionSlotsByRelationId={conditionSlotsByRelationId}
           hueByClassId={hueByClassId}
           hueByRelationId={hueByRelationId}
           rootClassIdById={rootClassIdById}

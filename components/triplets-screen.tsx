@@ -30,6 +30,7 @@ import { TopBar } from "@/components/top-bar"
 import { DragRow, DropRow, ListDndContext } from "@/components/list-dnd"
 import { SectionHeader } from "@/components/section-header"
 import { AttrValueList, hasMissingRequired } from "@/components/attr-fields"
+import { ConditionValueList, hasIncompleteConditions } from "@/components/condition-fields"
 import { cn } from "@/lib/utils"
 import { classMap, isSelfOrDescendant } from "@/lib/relation-inherit"
 import { useProject } from "@/app/project-context"
@@ -37,8 +38,8 @@ import { isRegistered } from "@/lib/instance-status"
 import { groupBy, runWithConcurrency } from "@/lib/concurrency"
 import { orderBetween, placeAt, renumber, sortByOrder } from "@/lib/organize"
 import { buildCypher } from "@/lib/graph-export"
-import type { Triplet, ClassTriplet, OntologyInstance, OntologyRelation, OntologyClass, OntologyAttribute } from "@/lib/types"
-import { ArrowRight, Plus, Trash2, Loader2, Download, FileText, Tags, CheckCircle2, X, ChevronDown, ChevronRight } from "lucide-react"
+import type { Triplet, ClassTriplet, OntologyInstance, OntologyRelation, OntologyClass, OntologyAttribute, TripletConditions } from "@/lib/types"
+import { ArrowRight, Plus, Trash2, Loader2, Download, FileText, Tags, SlidersHorizontal, CheckCircle2, X, ChevronDown, ChevronRight } from "lucide-react"
 import { deriveConfirmationStatus, type ConfirmationState } from "@/lib/confirmation"
 import type { ConfirmationEvent } from "@/lib/types"
 import { ConfirmationBadge } from "@/components/confirmation-badge"
@@ -159,6 +160,18 @@ export function TripletsScreen({ active }: { active?: boolean }) {
 
   // 右ペイン編集
   const [editDraft, setEditDraft] = useState<Draft>(EMPTY_DRAFT)
+  // クラスを含むトリプレットの編集下書き（端の種類も変えられる）
+  type ClassDraft = {
+    subjectKind: EndKind
+    subjectId: string
+    predicateRelationId: string
+    objectKind: EndKind
+    objectId: string
+  }
+  const EMPTY_CLASS_DRAFT: ClassDraft = {
+    subjectKind: "class", subjectId: "", predicateRelationId: "", objectKind: "class", objectId: "",
+  }
+  const [editClassDraft, setEditClassDraft] = useState<ClassDraft>(EMPTY_CLASS_DRAFT)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
 
@@ -188,6 +201,9 @@ export function TripletsScreen({ active }: { active?: boolean }) {
   // 追加ダイアログ／編集ペインそれぞれの属性値（キー＝属性id）
   const [addAttrValues, setAddAttrValues] = useState<Record<string, string>>({})
   const [editAttrValues, setEditAttrValues] = useState<Record<string, string>>({})
+  // 成立条件の値（キー＝リレーションが宣言した条件項目の id）
+  const [addConditions, setAddConditions] = useState<TripletConditions>({})
+  const [editConditions, setEditConditions] = useState<TripletConditions>({})
 
   const registeredInstances = useMemo(
     () => instances.filter((i) => isRegistered(i)).sort((a, b) => a.name.localeCompare(b.name, "ja")),
@@ -196,6 +212,8 @@ export function TripletsScreen({ active }: { active?: boolean }) {
   const classNameById = useMemo(() => new Map(classes.map((c) => [c.id, c.name])), [classes])
   const instById = useMemo(() => new Map(instances.map((i) => [i.id, i])), [instances])
   const relById = useMemo(() => new Map(relations.map((r) => [r.id, r])), [relations])
+  // 述語に選んだリレーションが宣言している条件項目（具体値はトリプレット側で入れる）
+  const slotsOf = (relationId: string) => relById.get(relationId)?.conditions ?? []
   const className = (id: string | null) => (id ? (classNameById.get(id) ?? "不明") : "未分類")
 
   const fetchAll = useCallback(async () => {
@@ -493,7 +511,19 @@ export function TripletsScreen({ active }: { active?: boolean }) {
         objectInstanceId: selected.objectInstanceId,
       })
       setEditAttrValues(selected.attributes ?? {})
+      setEditConditions(selected.conditions ?? {})
       if (selected.predicateRelationId) ensureRelAttrs(selected.predicateRelationId)
+      setSaveError(null)
+    }
+    if (selectedClassTriplet) {
+      setEditClassDraft({
+        subjectKind: selectedClassTriplet.subjectKind,
+        subjectId: selectedClassTriplet.subjectId,
+        predicateRelationId: selectedClassTriplet.predicateRelationId,
+        objectKind: selectedClassTriplet.objectKind,
+        objectId: selectedClassTriplet.objectId,
+      })
+      setEditConditions(selectedClassTriplet.conditions ?? {})
       setSaveError(null)
     }
   }, [selectedId])
@@ -512,7 +542,7 @@ export function TripletsScreen({ active }: { active?: boolean }) {
   // クラスを端に使えるので、インスタンスが2件なくても作れる
   const noPrereq = relations.length === 0 || classes.length === 0
 
-  const openAdd = () => { setAddDraft(EMPTY_ADD); setAddAttrValues({}); setAddError(null); setShowAdd(true) }
+  const openAdd = () => { setAddDraft(EMPTY_ADD); setAddAttrValues({}); setAddConditions({}); setAddError(null); setShowAdd(true) }
 
   // 端（クラス or インスタンス）を型として見るときのクラスid
   const classIdOfEnd = (kind: EndKind, id: string) => (kind === "class" ? id : instById.get(id)?.classId ?? null)
@@ -552,6 +582,8 @@ export function TripletsScreen({ active }: { active?: boolean }) {
 
   // 追加／編集で述語が変わったら、その述語リレーションの属性定義を読み込む
   useEffect(() => { if (addDraft.predicateRelationId) ensureRelAttrs(addDraft.predicateRelationId) }, [addDraft.predicateRelationId, ensureRelAttrs])
+  // 述語が変われば条件項目も変わるので、入れていた値は持ち越さない
+  useEffect(() => { setAddConditions({}) }, [addDraft.predicateRelationId])
   useEffect(() => { if (editDraft.predicateRelationId) ensureRelAttrs(editDraft.predicateRelationId) }, [editDraft.predicateRelationId, ensureRelAttrs])
 
   // 指定リレーションに定義された属性のうち、値が入っているものだけを {id: value} で返す
@@ -574,6 +606,8 @@ export function TripletsScreen({ active }: { active?: boolean }) {
     const { predicateRelationId, subjectKind, objectKind } = addDraft
     const toInstances = subjectKind === "instance" && objectKind === "instance"
     const attributes = collectAttrValues(predicateRelationId, addAttrValues)
+    // 選んだ組み合わせ全件に同じ条件を入れる（属性と同じ扱い）
+    const conditions = addConditions
     let created = 0
     const errors: string[] = []
     const jobs = addCombos.map((combo) => async () => {
@@ -589,6 +623,7 @@ export function TripletsScreen({ active }: { active?: boolean }) {
                   predicateRelationId,
                   objectInstanceId: combo.objectId,
                   attributes,
+                  conditions,
                 }
               : {
                   projectId: currentProject.id,
@@ -597,6 +632,7 @@ export function TripletsScreen({ active }: { active?: boolean }) {
                   predicateRelationId,
                   objectKind,
                   objectId: combo.objectId,
+                  conditions,
                 },
           ),
         })
@@ -629,7 +665,8 @@ export function TripletsScreen({ active }: { active?: boolean }) {
     editDraft.subjectInstanceId !== selected.subjectInstanceId ||
     editDraft.predicateRelationId !== selected.predicateRelationId ||
     editDraft.objectInstanceId !== selected.objectInstanceId ||
-    !attrsEqual(collectAttrValues(editDraft.predicateRelationId, editAttrValues), selected.attributes ?? {})
+    !attrsEqual(collectAttrValues(editDraft.predicateRelationId, editAttrValues), selected.attributes ?? {}) ||
+    JSON.stringify(editConditions) !== JSON.stringify(selected.conditions ?? {})
   )
 
   const handleSave = async () => {
@@ -639,7 +676,41 @@ export function TripletsScreen({ active }: { active?: boolean }) {
       const res = await fetch(`/api/triplets/${selected.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...editDraft, attributes: collectAttrValues(editDraft.predicateRelationId, editAttrValues) }),
+        body: JSON.stringify({
+          ...editDraft,
+          attributes: collectAttrValues(editDraft.predicateRelationId, editAttrValues),
+          conditions: editConditions,
+        }),
+      })
+      const updated = await res.json()
+      if (!res.ok) { setSaveError(updated.error ?? "保存に失敗しました"); return }
+      await fetchAll()
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const classEditComplete = !!(
+    editClassDraft.subjectId && editClassDraft.predicateRelationId && editClassDraft.objectId
+  ) && !(editClassDraft.subjectKind === "instance" && editClassDraft.objectKind === "instance")
+
+  const classEditDirty = !!selectedClassTriplet && (
+    editClassDraft.subjectKind !== selectedClassTriplet.subjectKind ||
+    editClassDraft.subjectId !== selectedClassTriplet.subjectId ||
+    editClassDraft.predicateRelationId !== selectedClassTriplet.predicateRelationId ||
+    editClassDraft.objectKind !== selectedClassTriplet.objectKind ||
+    editClassDraft.objectId !== selectedClassTriplet.objectId ||
+    JSON.stringify(editConditions) !== JSON.stringify(selectedClassTriplet.conditions ?? {})
+  )
+
+  const handleSaveClassTriplet = async () => {
+    if (!selectedClassTriplet || !classEditComplete) return
+    setSaving(true); setSaveError(null)
+    try {
+      const res = await fetch(`/api/class-triplets/${selectedClassTriplet.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...editClassDraft, conditions: editConditions }),
       })
       const updated = await res.json()
       if (!res.ok) { setSaveError(updated.error ?? "保存に失敗しました"); return }
@@ -874,6 +945,95 @@ export function TripletsScreen({ active }: { active?: boolean }) {
         ? classes.filter((c) => targets.some((t) => isSelfOrDescendant(c.id, t, classByIdForPairs)))
         : registeredInstances.filter((i) => targets.some((t) => isSelfOrDescendant(i.classId, t, classByIdForPairs)))
     return endItems(objectKind, list)
+  }
+
+  // 成立条件の欄。述語を選ぶまでは出す項目が決まらない。
+  const renderConditionsSection = (relationId: string) => {
+    if (!relationId) {
+      return <p className="text-sm text-muted-foreground">述語（エッジ）を選択すると、そのリレーションの条件項目が表示されます。</p>
+    }
+    const slots = slotsOf(relationId)
+    if (slots.length === 0) {
+      return (
+        <p className="text-sm text-muted-foreground">
+          このリレーションには条件項目が設定されていません（常に成立）。項目はリレーション管理で決めます。
+        </p>
+      )
+    }
+    return <ConditionValueList slots={slots} values={editConditions} onChange={setEditConditions} />
+  }
+
+  // クラスを含むトリプレットの編集欄。述語・両端の種類と相手を差し替えられる。
+  // 候補は追加ダイアログと同じ絞り込み（クラスペアの整合を継承込みで見る）。
+  const renderClassTripletEditor = () => {
+    const d = editClassDraft
+    const subjects = subjectCandidates(d.predicateRelationId, d.subjectKind)
+    const objects = objectCandidates(d.predicateRelationId, d.subjectKind, d.subjectId ? [d.subjectId] : [], d.objectKind)
+    const nameOf = (items: PickItem[], id: string) => items.find((i) => i.id === id)?.name
+    const endRow = (
+      label: string,
+      kind: EndKind,
+      id: string,
+      items: PickItem[],
+      onKind: (k: EndKind) => void,
+      onId: (v: string) => void,
+      fallback: string,
+    ) => (
+      <div className="space-y-1.5">
+        <div className="flex items-center justify-between gap-2">
+          <Label className="text-sm font-medium">{label} <span className="text-destructive">*</span></Label>
+          {renderKindToggle(kind, onKind)}
+        </div>
+        <Select value={id || "__none__"} onValueChange={(v) => onId(v && v !== "__none__" ? v : "")}>
+          <SelectTrigger className="h-8 w-full min-w-0">
+            <SelectValue>{nameOf(items, id) ?? (id ? fallback : "選択")}</SelectValue>
+          </SelectTrigger>
+          <SelectContent className="max-h-72">
+            {items.length === 0
+              ? <SelectItem value="__none__" disabled>選べるものがありません</SelectItem>
+              : items.map((i) => (
+                  <SelectItem key={i.id} value={i.id}>
+                    {i.name}{i.group ? `　〈${i.group}〉` : ""}
+                  </SelectItem>
+                ))}
+          </SelectContent>
+        </Select>
+      </div>
+    )
+    return (
+      <div className="space-y-3">
+        <div className="space-y-1.5">
+          <Label className="text-sm font-medium">エッジ（述語） <span className="text-destructive">*</span></Label>
+          <Select value={d.predicateRelationId || "__none__"}
+            onValueChange={(v) => setEditClassDraft((prev) => ({
+              ...prev,
+              predicateRelationId: v && v !== "__none__" ? v : "",
+              subjectId: "",
+              objectId: "",
+            }))}>
+            <SelectTrigger className="h-8 w-full min-w-0">
+              <SelectValue>{d.predicateRelationId ? (relById.get(d.predicateRelationId)?.name ?? "選択") : "選択"}</SelectValue>
+            </SelectTrigger>
+            <SelectContent className="max-h-72">
+              {relations.map((r) => <SelectItem key={r.id} value={r.id}>{r.name}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+        {endRow("ノード（主語）", d.subjectKind, d.subjectId, subjects,
+          (k) => setEditClassDraft((prev) => ({ ...prev, subjectKind: k, subjectId: "", objectId: "" })),
+          (v) => setEditClassDraft((prev) => ({ ...prev, subjectId: v, objectId: "" })),
+          selectedClassTriplet?.subjectName ?? "不明")}
+        {endRow("ノード（目的語）", d.objectKind, d.objectId, objects,
+          (k) => setEditClassDraft((prev) => ({ ...prev, objectKind: k, objectId: "" })),
+          (v) => setEditClassDraft((prev) => ({ ...prev, objectId: v })),
+          selectedClassTriplet?.objectName ?? "不明")}
+        {d.subjectKind === "instance" && d.objectKind === "instance" && (
+          <p className="rounded-md border border-amber-300/60 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-800/60 dark:bg-amber-950/40 dark:text-amber-200">
+            両端ともインスタンスにはできません（それはインスタンス同士のトリプレットなので、削除して作り直してください）。
+          </p>
+        )}
+      </div>
+    )
   }
 
   const handleDeleteClassTriplet = async (id: string) => {
@@ -1237,6 +1397,12 @@ export function TripletsScreen({ active }: { active?: boolean }) {
                     )}
                   </div>
                 </section>
+
+                {/* 成立条件（述語リレーションが宣言した項目に、このトリプレットの値を入れる） */}
+                <section className="space-y-3">
+                  <SectionHeader icon={SlidersHorizontal} title="成立条件" />
+                  {renderConditionsSection(editDraft.predicateRelationId)}
+                </section>
               </div>
 
               <div className="flex items-center justify-between border-t border-border px-4 py-3">
@@ -1245,7 +1411,7 @@ export function TripletsScreen({ active }: { active?: boolean }) {
                   onClick={() => setShowDelete(true)}>
                   <Trash2 className="h-3.5 w-3.5" />削除
                 </Button>
-                <Button size="sm" variant="success" onClick={handleSave} disabled={!isComplete(editDraft) || saving || !editDirty || hasMissingRequired(attrsByRelation[editDraft.predicateRelationId] ?? [], editAttrValues)}>
+                <Button size="sm" variant="success" onClick={handleSave} disabled={!isComplete(editDraft) || saving || !editDirty || hasMissingRequired(attrsByRelation[editDraft.predicateRelationId] ?? [], editAttrValues) || hasIncompleteConditions(slotsOf(editDraft.predicateRelationId), editConditions)}>
                   {saving && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}保存
                 </Button>
               </div>
@@ -1261,13 +1427,8 @@ export function TripletsScreen({ active }: { active?: boolean }) {
                       <p>登録日 {formatDateTime(selectedClassTriplet.createdAt)}{selectedClassTriplet.createdBy ? `（${selectedClassTriplet.createdBy}）` : ""}</p>
                       <p>更新日 {formatDateTime(selectedClassTriplet.updatedAt)}{selectedClassTriplet.updatedBy ? `（${selectedClassTriplet.updatedBy}）` : ""}</p>
                     </div>
-                    {(() => {
-                      const row = rowById.get(selectedClassTriplet.id)
-                      return row ? <RowTriple row={row} size="base" /> : null
-                    })()}
-                    <p className="rounded-md border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-                      端にクラスを含むトリプレットは、ここでは差し替えられません。変えるときは削除して作り直してください。
-                    </p>
+                    {renderClassTripletEditor()}
+                    {saveError && <p className="text-sm text-destructive">{saveError}</p>}
                     <div className="space-y-1.5">
                       <Label className="text-sm font-medium">確認</Label>
                       <div className="flex items-center gap-2">
@@ -1289,6 +1450,12 @@ export function TripletsScreen({ active }: { active?: boolean }) {
                     </div>
                   </div>
                 </section>
+
+                {/* 成立条件 */}
+                <section className="space-y-3">
+                  <SectionHeader icon={SlidersHorizontal} title="成立条件" />
+                  {renderConditionsSection(editClassDraft.predicateRelationId)}
+                </section>
               </div>
 
               <div className="flex items-center justify-between border-t border-border px-4 py-3">
@@ -1303,6 +1470,10 @@ export function TripletsScreen({ active }: { active?: boolean }) {
                     ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
                     : <Trash2 className="h-3.5 w-3.5" />}
                   削除
+                </Button>
+                <Button size="sm" variant="success" onClick={handleSaveClassTriplet}
+                  disabled={!classEditComplete || saving || !classEditDirty || hasIncompleteConditions(slotsOf(editClassDraft.predicateRelationId), editConditions)}>
+                  {saving && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}保存
                 </Button>
               </div>
             </>
@@ -1405,10 +1576,22 @@ export function TripletsScreen({ active }: { active?: boolean }) {
                   </div>
                 ) : null
               )}
+              {/* 成立条件（述語リレーションが宣言した項目に、ここで値を入れる） */}
+              {addDraft.predicateRelationId && slotsOf(addDraft.predicateRelationId).length > 0 && (
+                <div className="space-y-3">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">成立条件</p>
+                  <ConditionValueList
+                    slots={slotsOf(addDraft.predicateRelationId)}
+                    values={addConditions}
+                    onChange={setAddConditions}
+                  />
+                </div>
+              )}
               {addCombos.length > 0 && (
                 <p className="text-xs text-muted-foreground">
                   {addCombos.length}件のトリプレットを作成します{addSkipped > 0 ? `（登録済みの${addSkipped}件は除きます）` : ""}。
                   {bothInstance && (attrsByRelation[addDraft.predicateRelationId] ?? []).length > 0 && "属性の値は全件に同じものが入ります。"}
+                  {Object.keys(addConditions).length > 0 && "成立条件も全件に同じものが入ります。"}
                 </p>
               )}
               {addCombos.length === 0 && addSkipped > 0 && (
@@ -1419,7 +1602,7 @@ export function TripletsScreen({ active }: { active?: boolean }) {
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowAdd(false)}>キャンセル</Button>
-            <Button onClick={handleAdd} disabled={noPrereq || addCombos.length === 0 || adding || (bothInstance && hasMissingRequired(attrsByRelation[addDraft.predicateRelationId] ?? [], addAttrValues))}>
+            <Button onClick={handleAdd} disabled={noPrereq || addCombos.length === 0 || adding || (bothInstance && hasMissingRequired(attrsByRelation[addDraft.predicateRelationId] ?? [], addAttrValues)) || hasIncompleteConditions(slotsOf(addDraft.predicateRelationId), addConditions)}>
               {adding ? "登録中..." : addCombos.length > 0 ? `${addCombos.length}件を登録` : "登録"}
             </Button>
           </DialogFooter>

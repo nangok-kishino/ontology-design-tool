@@ -5,6 +5,7 @@ import { checkProjectAccess } from "@/lib/project-access"
 import { appendEditEvent, diffRelationFields } from "@/lib/confirmation"
 import { loadClassParents } from "@/lib/class-parents"
 import { normalizeClassPairs } from "@/lib/relation-inherit"
+import { migrateLegacyConditions, normalizeConditionSlots } from "@/lib/relation-conditions"
 import type { OntologyRelation } from "@/lib/types"
 
 const CONTAINER = "relations"
@@ -49,7 +50,9 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
       description: body.description ?? existing.description,
       classPairs: normalizeClassPairs(body.classPairs ?? existing.classPairs, classes),
       parentRelationId: body.parentRelationId !== undefined ? body.parentRelationId : existing.parentRelationId,
-      conditions: Array.isArray(body.conditions) ? body.conditions : (existing.conditions ?? []),
+      conditions: Array.isArray(body.conditions)
+        ? normalizeConditionSlots(body.conditions)
+        : migrateLegacyConditions(existing.conditions),
       updatedBy: actor,
       updatedAt: new Date().toISOString(),
     }

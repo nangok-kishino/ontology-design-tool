@@ -15,9 +15,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import ForceGraph2D from "react-force-graph-2d"
-import type { RelationCondition } from "@/lib/types"
+import type { RelationConditionSlot } from "@/lib/types"
 import { endKey, type GraphEdge } from "@/lib/graph-edges"
-import { formatRelationCondition } from "@/lib/relation-conditions"
+import { formatTripletConditions } from "@/lib/relation-conditions"
 import { NO_CLASS_HUE, cardAccent, cardBorder, cardFill, line, esc } from "@/lib/graph-colors"
 import { layeredLayout } from "@/lib/graph-layout"
 
@@ -51,6 +51,8 @@ type GraphLink = {
   label: string
   predicateRelationId: string
   attributes: Record<string, string>
+  // 整形済みの成立条件（このトリプレット自身のもの）
+  conditions: string[]
   hue: number
 }
 
@@ -105,7 +107,7 @@ export default function TripletGraphCanvas({
   edges,
   classNameById,
   attrNameById,
-  conditionsByRelationId,
+  conditionSlotsByRelationId,
   hueByClassId,
   hueByRelationId,
   rootClassIdById,
@@ -117,7 +119,8 @@ export default function TripletGraphCanvas({
   edges: GraphEdge[]
   classNameById: Map<string, string>
   attrNameById?: Map<string, string>
-  conditionsByRelationId?: Map<string, RelationCondition[]>
+  // リレーションid→条件項目の宣言（エッジの条件を日本語に直すのに使う）
+  conditionSlotsByRelationId?: Map<string, RelationConditionSlot[]>
   // クラス／リレーションごとの色。一覧の並び順で配ってあるので、
   // 同じクラスのインスタンス・同じリレーションのエッジは必ず同じ色になる。
   hueByClassId?: Map<string, number>
@@ -207,6 +210,7 @@ export default function TripletGraphCanvas({
         label: e.predicateName,
         predicateRelationId: e.predicateRelationId,
         attributes: e.attributes,
+        conditions: formatTripletConditions(conditionSlotsByRelationId?.get(e.predicateRelationId), e.conditions),
         hue: hueByRelationId?.get(e.predicateRelationId) ?? 210,
       })
       if (!adjacency.has(sid)) adjacency.set(sid, new Set())
@@ -240,7 +244,7 @@ export default function TripletGraphCanvas({
     }
 
     return { data: { nodes, links }, adjacency }
-  }, [edges, classNameById, hueByClassId, hueByRelationId, rootClassIdById, measure, fitText])
+  }, [edges, classNameById, hueByClassId, hueByRelationId, rootClassIdById, conditionSlotsByRelationId, measure, fitText])
 
   // 全ノードが収まる拡大率を自前で算出し、上限(MAX_ZOOM)でクランプしてフィット。
   const fitToView = useCallback(
@@ -546,16 +550,15 @@ export default function TripletGraphCanvas({
               `<span class="gv-tt-attr-key">${esc(attrNameById?.get(id) ?? id)}</span>` +
               `<span class="gv-tt-attr-val">${esc(String(v))}</span>`,
           )
-        // 述語リレーションに紐づく成立条件を日本語1行の箇条書きで表示
-        const conds = conditionsByRelationId?.get(l.predicateRelationId) ?? []
-        const condHtml = conds.length
+        // このトリプレット自身の成立条件を日本語1行の箇条書きで表示
+        const condHtml = l.conditions.length
           ? `<div class="gv-tt-cond-title">成立条件（すべて満たす場合）</div>` +
-            conds
+            l.conditions
               .map(
-                (c) =>
+                (text) =>
                   `<div class="gv-tt-cond-row">` +
                   `<span class="gv-tt-cond-bullet">・</span>` +
-                  `<span class="gv-tt-cond-text">${esc(formatRelationCondition(c))}</span>` +
+                  `<span class="gv-tt-cond-text">${esc(text)}</span>` +
                   `</div>`,
               )
               .join("")

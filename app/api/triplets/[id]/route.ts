@@ -6,6 +6,7 @@ import { isRegistered } from "@/lib/instance-status"
 import { relationAllowsPair } from "@/lib/triplet-resolve"
 import { loadClassParents } from "@/lib/class-parents"
 import { appendEditEvent, diffTripletFields } from "@/lib/confirmation"
+import { normalizeTripletConditions } from "@/lib/relation-conditions"
 import type { Triplet, OntologyInstance, OntologyRelation } from "@/lib/types"
 
 const CONTAINER = "triplets"
@@ -119,6 +120,9 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
       sourceDocName: body.sourceDocName ?? existing.sourceDocName,
       evidence: body.evidence ?? existing.evidence,
       attributes: body.attributes ?? existing.attributes ?? {},
+      conditions: body.conditions === undefined
+        ? existing.conditions ?? {}
+        : normalizeTripletConditions(body.conditions),
       // 内容が変わったので同期状態はリセット（再エクスポートで冪等に反映）
       neo4jSynced: false,
       neo4jSyncedAt: undefined,

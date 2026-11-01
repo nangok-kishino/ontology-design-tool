@@ -87,7 +87,7 @@ export function diffInstanceFields(before: OntologyInstance, after: OntologyInst
 }
 
 // トリプレット編集で確認履歴の [edit] を積むべきフィールドを比較。
-// 対象: 主語/述語/目的語（スナップショット名も含む）・属性値
+// 対象: 主語/述語/目的語（スナップショット名も含む）・属性値・成立条件の値
 export function diffTripletFields(before: Triplet, after: Triplet): string[] {
   const changed: string[] = []
   if (before.subjectInstanceId !== after.subjectInstanceId) changed.push("subjectInstanceId")
@@ -97,6 +97,7 @@ export function diffTripletFields(before: Triplet, after: Triplet): string[] {
   if ((before.predicateName ?? "") !== (after.predicateName ?? "")) changed.push("predicateName")
   if ((before.objectName ?? "") !== (after.objectName ?? "")) changed.push("objectName")
   if (JSON.stringify(before.attributes ?? {}) !== JSON.stringify(after.attributes ?? {})) changed.push("attributes")
+  if (JSON.stringify(before.conditions ?? {}) !== JSON.stringify(after.conditions ?? {})) changed.push("conditions")
   return changed
 }
 

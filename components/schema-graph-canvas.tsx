@@ -13,7 +13,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import ForceGraph2D from "react-force-graph-2d"
 import type { OntologyClass, OntologyRelation } from "@/lib/types"
-import { formatRelationCondition } from "@/lib/relation-conditions"
+
 import { buildHueMap, neon, esc } from "@/lib/graph-colors"
 import { sortByOrder } from "@/lib/organize"
 import { mindMapLayout } from "@/lib/mindmap-layout"
@@ -857,16 +857,16 @@ export default function SchemaGraphCanvas({
       }
       const r = l.relation!
       const parent = r.parentRelationId ? relationById.get(r.parentRelationId)?.name : undefined
-      // 成立条件を日本語1行の箇条書きで表示（グラフビューと同じ形式）
+      // 成立条件はここでは項目名だけ（演算子と値はトリプレットごとに決まるため）
       const conds = r.conditions ?? []
       const condHtml = conds.length
-        ? `<div class="gv-tt-cond-title">成立条件（すべて満たす場合）</div>` +
+        ? `<div class="gv-tt-cond-title">成立条件の項目</div>` +
           conds
             .map(
               (c) =>
                 `<div class="gv-tt-cond-row">` +
                 `<span class="gv-tt-cond-bullet">・</span>` +
-                `<span class="gv-tt-cond-text">${esc(formatRelationCondition(c))}</span>` +
+                `<span class="gv-tt-cond-text">${esc(c.variable)}${c.unit ? `（${esc(c.unit)}）` : ""}</span>` +
                 `</div>`,
             )
             .join("")

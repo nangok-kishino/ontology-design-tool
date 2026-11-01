@@ -5,6 +5,7 @@ import { checkProjectAccess } from "@/lib/project-access"
 import { isRegistered } from "@/lib/instance-status"
 import { relationAllowsPair } from "@/lib/triplet-resolve"
 import { loadClassParents } from "@/lib/class-parents"
+import { normalizeTripletConditions } from "@/lib/relation-conditions"
 import type { Triplet, OntologyInstance, OntologyRelation } from "@/lib/types"
 
 const CONTAINER = "triplets"
@@ -121,6 +122,7 @@ export async function POST(request: NextRequest) {
       sourceDocName: body.sourceDocName ?? "手動追加",
       evidence: body.evidence ?? "",
       attributes: body.attributes ?? {},
+      conditions: normalizeTripletConditions(body.conditions),
       sourceCandidateId: body.sourceCandidateId,
       approvedBy: actor,
       approvedAt: now,

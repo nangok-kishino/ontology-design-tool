@@ -4,7 +4,7 @@
 // （classTriplets）は保存場所も型も別だが、描くときはどちらも「ノード→ノード」
 // の1本でしかない。描画側が2種類の型を意識しなくて済むよう、ここで1つに均す。
 
-import type { ClassTriplet, OntologyInstance, Triplet } from "./types"
+import type { ClassTriplet, OntologyInstance, TripletConditions, Triplet } from "./types"
 
 export type GraphEndKind = "class" | "instance"
 
@@ -24,6 +24,8 @@ export type GraphEdge = {
   predicateRelationId: string
   predicateName: string
   attributes: Record<string, string>
+  // このトリプレットで成立に要る条件の値（キーは述語リレーションの条件項目 id）
+  conditions: TripletConditions
 }
 
 // ノードのキー。クラスとインスタンスでid空間が別なので、種類を前置して混ざらないようにする。
@@ -58,6 +60,7 @@ export function buildGraphEdges(
       predicateRelationId: t.predicateRelationId,
       predicateName: t.predicateName,
       attributes: t.attributes ?? {},
+      conditions: t.conditions ?? {},
     })),
     ...classTriplets.map((ct) => ({
       id: ct.id,
@@ -66,6 +69,7 @@ export function buildGraphEdges(
       predicateRelationId: ct.predicateRelationId,
       predicateName: ct.predicateName,
       attributes: {},
+      conditions: ct.conditions ?? {},
     })),
   ]
 }

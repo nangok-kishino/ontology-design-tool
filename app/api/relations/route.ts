@@ -5,6 +5,7 @@ import { checkProjectAccess } from "@/lib/project-access"
 import { loadClassParents } from "@/lib/class-parents"
 import { normalizeClassPairs } from "@/lib/relation-inherit"
 import { groupsOf } from "@/lib/organize"
+import { migrateLegacyConditions, normalizeConditionSlots } from "@/lib/relation-conditions"
 import type { OntologyRelation } from "@/lib/types"
 
 const CONTAINER = "relations"
@@ -15,8 +16,13 @@ export async function GET(request: NextRequest) {
     const projectId = searchParams.get("projectId")
     const container = await getContainer(CONTAINER)
 
-    const normalize = (r: any): OntologyRelation =>
-      r.classPairs ? r : { ...r, classPairs: [{ sourceClassId: r.sourceClassId, targetClassId: r.targetClassId }] }
+    // 具体値をリレーションに持たせていた頃の条件は、条件項目へ読み替えて返す
+    // （保存はし直さない。移すかどうかは人が決める）。
+    const normalize = (r: any): OntologyRelation => ({
+      ...r,
+      classPairs: r.classPairs ?? [{ sourceClassId: r.sourceClassId, targetClassId: r.targetClassId }],
+      conditions: migrateLegacyConditions(r.conditions),
+    })
 
     if (projectId) {
       const access = await checkProjectAccess(request, projectId)
@@ -69,7 +75,8 @@ export async function POST(request: NextRequest) {
       // 子クラス分のペアは持たない（親の宣言を継承する）
       classPairs: normalizeClassPairs(body.classPairs ?? [], classes),
       parentRelationId: body.parentRelationId ?? null,
-      conditions: Array.isArray(body.conditions) ? body.conditions : [],
+      // 条件は項目（対象データ名・単位）だけ。具体値はトリプレット側に持つ。
+      conditions: normalizeConditionSlots(body.conditions),
       groupId,
       order: typeof body.order === "number" ? body.order : undefined,
       createdBy: actor,

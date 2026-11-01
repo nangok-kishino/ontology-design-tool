@@ -37,7 +37,7 @@ import { GroupBoard, ViewToggle, type BoardViewMode, type ReorderUpdate } from "
 import { DragRow, DropRow, ListDndContext } from "@/components/list-dnd"
 import { cn } from "@/lib/utils"
 import { UNGROUPED, nextOrder, placeAt, reorderUpdates, sortByOrder, sortGroups } from "@/lib/organize"
-import type { OntologyRelation, OntologyClass, OntologyAttribute, OntologyGroup, AttributeRequired, ClassPair, RelationCondition, RelationConditionOperator } from "@/lib/types"
+import type { OntologyRelation, OntologyClass, OntologyAttribute, OntologyGroup, AttributeRequired, ClassPair, RelationConditionSlot } from "@/lib/types"
 import {
   buildRelationsYaml,
   downloadYaml,
@@ -49,7 +49,7 @@ import {
 import { ArrowRight, Plus, Pencil, Trash2, Loader2, X, AlertTriangle, Info, Download, Upload, FileText, Tags, CheckCircle2, Filter, ChevronDown, ChevronRight } from "lucide-react"
 import { useProject } from "@/app/project-context"
 import { deriveConfirmationStatus, type ConfirmationState } from "@/lib/confirmation"
-import { hasConditions } from "@/lib/relation-conditions"
+import { hasConditionSlots, normalizeConditionSlots } from "@/lib/relation-conditions"
 import { ConfirmationBadge } from "@/components/confirmation-badge"
 import { ConfirmDialog } from "@/components/confirm-dialog"
 import { ConfirmationSummary } from "@/components/confirmation-summary"
@@ -62,39 +62,12 @@ const RELATION_FIELD_LABEL: Record<string, string> = {
   description: "説明",
   classPairs: "始点(A)/終点(B)",
   parentRelationId: "上位リレーション",
-  conditions: "成立条件",
+  conditions: "成立条件の項目",
   attributes: "属性",
 }
 
-// 成立条件の演算子カタログ（表示ラベル・略記号・分類）
-const CONDITION_OPERATORS: { value: RelationConditionOperator; symbol: string; label: string; group: "比較" | "範囲" | "集合" }[] = [
-  { value: "eq", symbol: "＝", label: "に等しい", group: "比較" },
-  { value: "ne", symbol: "≠", label: "に等しくない", group: "比較" },
-  { value: "gte", symbol: "≥", label: "以上", group: "比較" },
-  { value: "gt", symbol: "＞", label: "より大きい", group: "比較" },
-  { value: "lte", symbol: "≤", label: "以下", group: "比較" },
-  { value: "lt", symbol: "＜", label: "より小さい", group: "比較" },
-  { value: "between", symbol: "範囲内", label: "下限〜上限（両端含む）", group: "範囲" },
-  { value: "notBetween", symbol: "範囲外", label: "下限〜上限（両端含む）", group: "範囲" },
-  { value: "in", symbol: "IN", label: "いずれかに一致", group: "集合" },
-  { value: "notIn", symbol: "NOT IN", label: "いずれにも一致しない", group: "集合" },
-]
-
-const isRangeOperator = (op: RelationConditionOperator) => op === "between" || op === "notBetween"
-const isSetOperator = (op: RelationConditionOperator) => op === "in" || op === "notIn"
-const isScalarOperator = (op: RelationConditionOperator) => !isRangeOperator(op) && !isSetOperator(op)
-
-// 集合演算子の入力欄（カンマ区切り）↔ values 配列
-const parseValues = (text: string): string[] =>
-  text.split(",").map((s) => s.trim()).filter((s) => s.length > 0)
-const formatValues = (vs: string[] | undefined) => (vs ?? []).join(", ")
-
-// 新規条件のデフォルト
-const newDefaultCondition = (): RelationCondition => ({
-  variable: "",
-  operator: "gte",
-  value: "",
-})
+// 新しい条件項目の初期値。id は保存時に振る（ここでは空のまま並べる）。
+const newConditionSlot = (): RelationConditionSlot => ({ id: crypto.randomUUID(), variable: "" })
 
 function formatDateTime(iso: string | undefined): string {
   if (!iso) return "—"
@@ -119,7 +92,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
   const [newNameEn, setNewNameEn] = useState("")
   const [newDesc, setNewDesc] = useState("")
   const [newPairs, setNewPairs] = useState<ClassPair[]>([{ sourceClassId: "", targetClassId: "" }])
-  const [newConditions, setNewConditions] = useState<RelationCondition[]>([])
+  const [newConditions, setNewConditions] = useState<RelationConditionSlot[]>([])
   // 登録時の所属グループ（"" ＝未分類）。後から詳細ペインでも変えられる。
   const [newGroupId, setNewGroupId] = useState<string>("")
   const [adding, setAdding] = useState(false)
@@ -129,7 +102,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
   const [editNameEn, setEditNameEn] = useState("")
   const [editDesc, setEditDesc] = useState("")
   const [editPairs, setEditPairs] = useState<ClassPair[]>([])
-  const [editConditions, setEditConditions] = useState<RelationCondition[]>([])
+  const [editConditions, setEditConditions] = useState<RelationConditionSlot[]>([])
   const [saving, setSaving] = useState(false)
 
   // 削除確認ダイアログ
@@ -685,75 +658,25 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
     (r.classPairs ?? []).length === 0 ||
     (r.classPairs ?? []).some((p) => classMissing(p.sourceClassId) || classMissing(p.targetClassId))
 
-  // 成立条件の妥当性判定：対象データ名は必須、演算子ごとに必要な値欄が埋まっている必要がある
-  const conditionsValid = (list: RelationCondition[]): boolean =>
-    list.every((c) => {
-      if (!c.variable || !c.variable.trim()) return false
-      if (isRangeOperator(c.operator)) {
-        return (c.valueMin ?? "").trim() !== "" && (c.valueMax ?? "").trim() !== ""
-      }
-      if (isSetOperator(c.operator)) {
-        return (c.values ?? []).length > 0
-      }
-      return (c.value ?? "").trim() !== ""
-    })
+  // 条件項目の妥当性：対象データ名が入っていること（具体値はここでは持たない）
+  const conditionsValid = (list: RelationConditionSlot[]): boolean =>
+    list.every((c) => c.variable.trim() !== "")
 
-  // 保存前に条件を正規化（trim・不要フィールド除去）
-  const normalizeConditions = (list: RelationCondition[]): RelationCondition[] =>
-    list.map((c) => {
-      const base: RelationCondition = {
-        variable: c.variable.trim(),
-        operator: c.operator,
-      }
-      const unit = (c.unit ?? "").trim()
-      if (unit) base.unit = unit
-      if (isRangeOperator(c.operator)) {
-        base.valueMin = (c.valueMin ?? "").trim()
-        base.valueMax = (c.valueMax ?? "").trim()
-      } else if (isSetOperator(c.operator)) {
-        base.values = (c.values ?? []).map((v) => v.trim()).filter((v) => v.length > 0)
-      } else {
-        base.value = (c.value ?? "").trim()
-      }
-      return base
-    })
+  const normalizeConditions = (list: RelationConditionSlot[]): RelationConditionSlot[] =>
+    normalizeConditionSlots(list)
 
-  // 条件行の更新ヘルパー
   const updateCondition = (
-    setter: (updater: (prev: RelationCondition[]) => RelationCondition[]) => void,
+    setter: (updater: (prev: RelationConditionSlot[]) => RelationConditionSlot[]) => void,
     index: number,
-    patch: Partial<RelationCondition>,
-  ) => {
-    setter((prev) => prev.map((c, i) => {
-      if (i !== index) return c
-      const merged: RelationCondition = { ...c, ...patch }
-      const nextOp = patch.operator ?? c.operator
-      // 演算子の種類が変わったら値フィールドを演算子に合わせて初期化する
-      if (isRangeOperator(nextOp)) {
-        merged.value = undefined
-        merged.values = undefined
-        if (merged.valueMin === undefined) merged.valueMin = ""
-        if (merged.valueMax === undefined) merged.valueMax = ""
-      } else if (isSetOperator(nextOp)) {
-        merged.value = undefined
-        merged.valueMin = undefined
-        merged.valueMax = undefined
-        if (!merged.values) merged.values = []
-      } else {
-        merged.valueMin = undefined
-        merged.valueMax = undefined
-        merged.values = undefined
-        if (merged.value === undefined) merged.value = ""
-      }
-      return merged
-    }))
-  }
+    patch: Partial<RelationConditionSlot>,
+  ) => setter((prev) => prev.map((c, i) => (i === index ? { ...c, ...patch } : c)))
+
   const addCondition = (
-    setter: (updater: (prev: RelationCondition[]) => RelationCondition[]) => void,
-    condition: RelationCondition = newDefaultCondition(),
-  ) => setter((prev) => [...prev, condition])
+    setter: (updater: (prev: RelationConditionSlot[]) => RelationConditionSlot[]) => void,
+  ) => setter((prev) => [...prev, newConditionSlot()])
+
   const removeCondition = (
-    setter: (updater: (prev: RelationCondition[]) => RelationCondition[]) => void,
+    setter: (updater: (prev: RelationConditionSlot[]) => RelationConditionSlot[]) => void,
     index: number,
   ) => setter((prev) => prev.filter((_, i) => i !== index))
 
@@ -841,99 +764,71 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
       ? "この属性はプロジェクト全体で共有されます。変更はすべてのクラス・リレーションに影響します。"
       : null
 
-  // 成立条件エディタ（追加ダイアログ・詳細パネルの双方で使用）
+  // 成立条件の項目エディタ（追加ダイアログ・詳細パネルの双方で使用）。
+  // ここで決めるのは「何についての条件か」だけ。演算子と具体値は、
+  // そのリレーションを述語に使うトリプレットごとに決まるのでここには置かない。
   const renderConditionsEditor = (
-    conditions: RelationCondition[],
-    setConditions: (updater: (prev: RelationCondition[]) => RelationCondition[]) => void,
+    conditions: RelationConditionSlot[],
+    setConditions: (updater: (prev: RelationConditionSlot[]) => RelationConditionSlot[]) => void,
   ) => (
     <div className="space-y-2">
       <p className="text-[11px] text-muted-foreground">
-        ※ 以下の条件を<strong className="font-medium text-foreground">「すべて満たす場合」</strong>に成立します。
+        成立に関わる<strong className="font-medium text-foreground">対象データ</strong>をここで挙げます。
+        実際の演算子と値は<strong className="font-medium text-foreground">トリプレットごと</strong>に決めます
+        （トリプレット管理の詳細で、使う条件だけに値を入れます）。
       </p>
       {conditions.length === 0 ? (
         <p className="rounded-md border border-dashed border-border py-2 text-center text-xs text-muted-foreground">
-          条件なし（常に成立）
+          条件項目なし（常に成立）
         </p>
       ) : (
         <div className="space-y-1.5">
           {conditions.map((c, i) => (
-            <div key={i} className="flex items-center gap-1.5">
-              <Input
-                className="h-8 min-w-0 flex-1"
-                placeholder="変数名"
-                value={c.variable}
-                onChange={(e) => updateCondition(setConditions, i, { variable: e.target.value })}
-              />
-              <Select
-                value={c.operator}
-                onValueChange={(v) => updateCondition(setConditions, i, { operator: v as RelationConditionOperator })}
-              >
-                <SelectTrigger className="h-8 w-24 shrink-0">
-                  <SelectValue>
-                    {CONDITION_OPERATORS.find((o) => o.value === c.operator)?.symbol ?? c.operator}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  {CONDITION_OPERATORS.map((o) => (
-                    <SelectItem key={o.value} value={o.value}>
-                      <span className="inline-block w-16 font-mono">{o.symbol}</span>
-                      <span className="text-muted-foreground">{o.label}</span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {isRangeOperator(c.operator) ? (
-                <div className="flex min-w-0 flex-1 items-center gap-1">
-                  <Input
-                    className="h-8 min-w-0 flex-1"
-                    placeholder="下限"
-                    value={c.valueMin ?? ""}
-                    onChange={(e) => updateCondition(setConditions, i, { valueMin: e.target.value })}
-                  />
-                  <span className="shrink-0 text-xs text-muted-foreground">〜</span>
-                  <Input
-                    className="h-8 min-w-0 flex-1"
-                    placeholder="上限"
-                    value={c.valueMax ?? ""}
-                    onChange={(e) => updateCondition(setConditions, i, { valueMax: e.target.value })}
-                  />
+            <div key={c.id} className="space-y-1">
+              <div className="flex items-center gap-1.5">
+                <Input
+                  className="h-8 min-w-0 flex-1"
+                  placeholder="対象データ名（例：気温）"
+                  value={c.variable}
+                  onChange={(e) => updateCondition(setConditions, i, { variable: e.target.value })}
+                />
+                <Input
+                  className="h-8 w-20 shrink-0"
+                  placeholder="単位"
+                  value={c.unit ?? ""}
+                  onChange={(e) => updateCondition(setConditions, i, { unit: e.target.value })}
+                />
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-8 w-8 shrink-0 text-muted-foreground"
+                  onClick={() => removeCondition(setConditions, i)}
+                  aria-label="この条件項目を削除"
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+              {c.legacyText && (
+                <div className="flex items-center gap-1.5 rounded-md border border-amber-300/60 bg-amber-50 px-2 py-1 text-[11px] text-amber-900 dark:border-amber-800/60 dark:bg-amber-950/40 dark:text-amber-200">
+                  <span className="shrink-0 font-medium">以前の値</span>
+                  <span className="min-w-0 flex-1 truncate" title={c.legacyText}>{c.legacyText}</span>
+                  <button
+                    type="button"
+                    aria-label="以前の値の表示を消す"
+                    title="トリプレットへ移し終えたら消してください"
+                    className="shrink-0 rounded p-0.5 transition-colors hover:bg-amber-200/60 dark:hover:bg-amber-900/60"
+                    onClick={() => updateCondition(setConditions, i, { legacyText: undefined })}
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
                 </div>
-              ) : isSetOperator(c.operator) ? (
-                <Input
-                  className="h-8 min-w-0 flex-1"
-                  placeholder="値1, 値2, ... (カンマ区切り)"
-                  value={formatValues(c.values)}
-                  onChange={(e) => updateCondition(setConditions, i, { values: parseValues(e.target.value) })}
-                />
-              ) : (
-                <Input
-                  className="h-8 min-w-0 flex-1"
-                  placeholder="値"
-                  value={c.value ?? ""}
-                  onChange={(e) => updateCondition(setConditions, i, { value: e.target.value })}
-                />
               )}
-              <Input
-                className="h-8 w-16 shrink-0"
-                placeholder="単位"
-                value={c.unit ?? ""}
-                onChange={(e) => updateCondition(setConditions, i, { unit: e.target.value })}
-              />
-              <Button
-                size="icon"
-                variant="ghost"
-                className="h-8 w-8 shrink-0 text-muted-foreground"
-                onClick={() => removeCondition(setConditions, i)}
-                aria-label="この条件を削除"
-              >
-                <X className="h-4 w-4" />
-              </Button>
             </div>
           ))}
         </div>
       )}
       <Button size="sm" variant="outline" className="gap-1 bg-transparent" onClick={() => addCondition(setConditions)}>
-        <Plus className="h-3.5 w-3.5" />条件を追加
+        <Plus className="h-3.5 w-3.5" />条件項目を追加
       </Button>
     </div>
   )
@@ -1131,7 +1026,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
                             <ConfirmationBadge state={state} latestConfirm={confirmStatus.latestConfirm} />
                           </TableCell>
                           <TableCell className="align-top text-sm text-foreground">
-                            {hasConditions(r.conditions) ? "あり" : null}
+                            {hasConditionSlots(r.conditions) ? "あり" : null}
                           </TableCell>
                           <TableCell className="align-top text-sm text-muted-foreground">
                             {pairs.length > 0 ? (
@@ -1381,7 +1276,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
               </p>
             </div>
             <div className="space-y-2">
-              <Label>成立条件</Label>
+              <Label>成立条件の項目</Label>
               {renderConditionsEditor(newConditions, setNewConditions)}
             </div>
           </div>

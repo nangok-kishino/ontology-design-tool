@@ -3,6 +3,7 @@ import { getContainer } from "@/lib/cosmos"
 import { getPrincipalName } from "@/lib/auth"
 import { checkProjectAccess } from "@/lib/project-access"
 import { relationAllowsPair } from "@/lib/triplet-resolve"
+import { normalizeTripletConditions } from "@/lib/relation-conditions"
 import type { ClassTriplet, OntologyClass, OntologyInstance, OntologyRelation } from "@/lib/types"
 
 // どちらかの端がクラスであるトリプレット。インスタンス同士（/api/triplets）とは
@@ -144,6 +145,7 @@ export async function POST(request: NextRequest) {
       subjectName: subject.name,
       predicateName: relation.name,
       objectName: object.name,
+      conditions: normalizeTripletConditions(body.conditions),
       createdBy: actor,
       updatedBy: actor,
       createdAt: now,
