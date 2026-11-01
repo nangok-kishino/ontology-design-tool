@@ -4,36 +4,42 @@ import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { cn } from "@/lib/utils"
 import {
-  Boxes, FolderOpen, BookOpen, LogOut, Lock, Settings, Waypoints,
+  Boxes, FolderOpen, BookOpen, LogOut, Lock, Settings, Sparkles, Tag, Waypoints,
 } from "lucide-react"
 import { useProject } from "@/app/project-context"
 import { ProjectSettingsDialog } from "@/components/project-settings-dialog"
 
-export type ScreenId = "review" | "classes" | "relations" | "instances" | "triplets" | "triplet-review" | "graph" | "schema" | "synonyms" | "ontology-info"
+export type ScreenId = "llm-analysis" | "labels" | "rel-types" | "label-synonyms" | "schema-view" | "nodes" | "relationships" | "export" | "ontology-info"
 
 type NavItem = { id: ScreenId; label: string; ai?: boolean }
 type NavGroup = { label: string; icon: React.ElementType; items: NavItem[] }
 
 const navGroups: NavGroup[] = [
+  // ラベル付きプロパティグラフの画面。データモデルの経緯は docs/graph-model.md を参照。
   {
-    label: "オントロジー設計",
-    icon: Boxes,
+    label: "AI活用",
+    icon: Sparkles,
     items: [
-      { id: "review", label: "オントロジー抽出", ai: true },
-      { id: "classes", label: "クラス管理" },
-      { id: "relations", label: "リレーション管理" },
-      { id: "synonyms", label: "同義語辞書" },
-      { id: "schema", label: "スキーマビュー" },
+      { id: "llm-analysis", label: "LLMによる解析", ai: true },
     ],
   },
   {
-    label: "ナレッジグラフ作成",
+    label: "スキーマ設計",
+    icon: Tag,
+    items: [
+      { id: "labels", label: "ラベル" },
+      { id: "rel-types", label: "リレーションシップタイプ" },
+      { id: "label-synonyms", label: "ラベル同義語" },
+      { id: "schema-view", label: "スキーマ確認" },
+    ],
+  },
+  {
+    label: "グラフデータ作成",
     icon: Waypoints,
     items: [
-      { id: "triplet-review", label: "ナレッジグラフ抽出", ai: true },
-      { id: "instances", label: "インスタンス管理" },
-      { id: "triplets", label: "トリプレット管理" },
-      { id: "graph", label: "グラフビュー" },
+      { id: "nodes", label: "ノード" },
+      { id: "relationships", label: "リレーションシップ" },
+      { id: "export", label: "エクスポート" },
     ],
   },
 ]
@@ -110,7 +116,7 @@ export function Sidebar({
           </div>
         ) : (
           <button
-            onClick={() => onNavigate("classes")}
+            onClick={() => onNavigate("llm-analysis")}
             className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left transition-colors hover:bg-white/5"
           >
             <FolderOpen className="h-3.5 w-3.5 shrink-0 text-zinc-500" />

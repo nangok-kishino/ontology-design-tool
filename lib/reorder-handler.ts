@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { getContainer } from "@/lib/cosmos"
 import { checkProjectAccess } from "@/lib/project-access"
 import { groupsOf } from "@/lib/organize"
-import type { OntologyClass, OntologyRelation } from "@/lib/types"
+import type { GroupTarget, OntologyClass, OntologyRelation } from "@/lib/types"
 
 // クラス／リレーションの「整理」更新（所属グループ・並び順）を受ける共通ハンドラ。
 //
@@ -24,7 +24,10 @@ type ReorderUpdate = {
   groupId?: string | null
 }
 
-export function createReorderHandler(containerId: "classes" | "relations", label: string) {
+// groupTarget は、どのグループ一覧（Project.classGroups / relationGroups）で
+// groupId を照合するか。省略時はコンテナ名から決める。
+export function createReorderHandler(containerId: string, label: string, groupTarget?: GroupTarget) {
+  const target: GroupTarget = groupTarget ?? (containerId === "classes" ? "class" : "relation")
   return async function POST(request: NextRequest) {
     try {
       const body = await request.json()
@@ -41,9 +44,7 @@ export function createReorderHandler(containerId: "classes" | "relations", label
       const access = await checkProjectAccess(request, projectId)
       if ("error" in access) return access.error
       // クラス用とリレーション用のグループは別物なので、対応する一覧だけで照合する
-      const knownGroups = new Set(
-        groupsOf(access.project, containerId === "classes" ? "class" : "relation").map((g) => g.id),
-      )
+      const knownGroups = new Set(groupsOf(access.project, target).map((g) => g.id))
 
       const container = await getContainer(containerId)
       const results = await Promise.all(

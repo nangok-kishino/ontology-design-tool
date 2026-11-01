@@ -4,11 +4,18 @@ import * as React from "react"
 
 import { cn } from "@/lib/utils"
 
-function Table({ className, ...props }: React.ComponentProps<"table">) {
+// containerClassName: 表を囲むスクロール枠に足すクラス。
+//   見出し行を sticky で固定したいときは、この枠に高さと overflow-auto を渡す
+//   （sticky は直近のスクロール枠を基準にするため、外側で縦スクロールさせると効かない）。
+function Table({
+  className,
+  containerClassName,
+  ...props
+}: React.ComponentProps<"table"> & { containerClassName?: string }) {
   return (
     <div
       data-slot="table-container"
-      className="relative w-full overflow-x-auto"
+      className={cn("relative w-full overflow-x-auto", containerClassName)}
     >
       <table
         data-slot="table"

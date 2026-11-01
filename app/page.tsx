@@ -2,52 +2,39 @@
 
 import { useState } from "react"
 import { Sidebar, type ScreenId } from "@/components/sidebar"
-import { ClassesScreen } from "@/components/classes-screen"
-import { RelationsScreen } from "@/components/relations-screen"
-import { ReviewScreen } from "@/components/review-screen"
-import { InstancesScreen } from "@/components/instances-screen"
-import { TripletsScreen } from "@/components/triplets-screen"
-import { TripletReviewScreen } from "@/components/triplet-review-screen"
-import { GraphScreen } from "@/components/graph-screen"
-import { SchemaScreen } from "@/components/schema-screen"
-import { SynonymsScreen } from "@/components/synonyms-screen"
+import { LabelsScreen } from "@/components/labels-screen"
+import { RelationshipTypesScreen } from "@/components/relationship-types-screen"
+import { NodesScreen } from "@/components/nodes-screen"
+import { RelationshipsScreen } from "@/components/relationships-screen"
+import { LabelSynonymsScreen } from "@/components/label-synonyms-screen"
+import { SchemaViewScreen } from "@/components/schema-view-screen"
+import { ExportScreen } from "@/components/export-screen"
+import { LlmAnalysisScreen } from "@/components/llm-analysis-screen"
 import { ProjectWelcomeScreen } from "@/components/project-welcome-screen"
 import { OntologyInfoScreen } from "@/components/ontology-info-screen"
 import { ProjectProvider } from "@/app/project-context"
 import { useProject } from "@/app/project-context"
 
+// 画面ごとに、一度開いたら表示を切り替えても状態を保つ（隠すだけで外さない）。
+// まだ開いていない画面は作らない。
+type MountedScreen = Exclude<ScreenId, "ontology-info">
+
 function AppContent() {
   const { currentProject, loading } = useProject()
-  // プロジェクトを開いた直後はクラス管理（オントロジー設計が主、という手順どおりに）
-  const [screen, setScreen] = useState<ScreenId>("classes")
+  // プロジェクトを開いた直後は LLM による解析（文書からスキーマとグラフデータの候補を出すところから始める）
+  const [screen, setScreen] = useState<ScreenId>("llm-analysis")
   const [initialSelectId, setInitialSelectId] = useState<string | undefined>(undefined)
-  const [hasVisitedClasses, setHasVisitedClasses] = useState(true)
-  const [hasVisitedRelations, setHasVisitedRelations] = useState(false)
-  const [hasVisitedInstances, setHasVisitedInstances] = useState(false)
-  const [hasVisitedReview, setHasVisitedReview] = useState(false)
-  const [hasVisitedTriplets, setHasVisitedTriplets] = useState(false)
-  const [hasVisitedTripletReview, setHasVisitedTripletReview] = useState(false)
-  const [hasVisitedGraph, setHasVisitedGraph] = useState(false)
-  const [hasVisitedSchema, setHasVisitedSchema] = useState(false)
-  const [hasVisitedSynonyms, setHasVisitedSynonyms] = useState(false)
-  // 1回の文書取込み（/api/ingest）を「オントロジー抽出」「トリプレット抽出」両画面で共有するための
-  // 通知カウンタ。どちらかの画面で取込みが成功したらインクリメントし、他方が再取得・再反映する。
-  const [ingestVersion, setIngestVersion] = useState(0)
-  const bumpIngest = () => setIngestVersion((v) => v + 1)
+  const [visited, setVisited] = useState<Set<MountedScreen>>(new Set(["llm-analysis"]))
 
   const navigate = (s: ScreenId, id?: string) => {
     setInitialSelectId(id)
     setScreen(s)
-    if (s === "classes") setHasVisitedClasses(true)
-    if (s === "relations") setHasVisitedRelations(true)
-    if (s === "instances") setHasVisitedInstances(true)
-    if (s === "review") setHasVisitedReview(true)
-    if (s === "triplets") setHasVisitedTriplets(true)
-    if (s === "triplet-review") setHasVisitedTripletReview(true)
-    if (s === "graph") setHasVisitedGraph(true)
-    if (s === "schema") setHasVisitedSchema(true)
-    if (s === "synonyms") setHasVisitedSynonyms(true)
+    if (s !== "ontology-info") setVisited((prev) => (prev.has(s) ? prev : new Set(prev).add(s)))
   }
+
+  // 開いたことのある画面だけを置き、今の画面だけを見せる
+  const slot = (id: MountedScreen, node: React.ReactNode) =>
+    visited.has(id) && <div className={screen === id ? "h-full" : "hidden"}>{node}</div>
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
@@ -59,51 +46,14 @@ function AppContent() {
           <ProjectWelcomeScreen />
         ) : (
           <>
-            {hasVisitedClasses && (
-              <div className={screen === "classes" ? "h-full" : "hidden"}>
-                <ClassesScreen initialSelectedId={initialSelectId} active={screen === "classes"} />
-              </div>
-            )}
-            {hasVisitedRelations && (
-              <div className={screen === "relations" ? "h-full" : "hidden"}>
-                <RelationsScreen initialSelectedId={initialSelectId} active={screen === "relations"} />
-              </div>
-            )}
-            {hasVisitedInstances && (
-              <div className={screen === "instances" ? "h-full" : "hidden"}>
-                <InstancesScreen initialSelectedClassId={initialSelectId} active={screen === "instances"} />
-              </div>
-            )}
-            {hasVisitedReview && (
-              <div className={screen === "review" ? "h-full" : "hidden"}>
-                <ReviewScreen active={screen === "review"} ingestVersion={ingestVersion} onIngested={bumpIngest} />
-              </div>
-            )}
-            {hasVisitedTriplets && (
-              <div className={screen === "triplets" ? "h-full" : "hidden"}>
-                <TripletsScreen active={screen === "triplets"} />
-              </div>
-            )}
-            {hasVisitedTripletReview && (
-              <div className={screen === "triplet-review" ? "h-full" : "hidden"}>
-                <TripletReviewScreen active={screen === "triplet-review"} ingestVersion={ingestVersion} onIngested={bumpIngest} />
-              </div>
-            )}
-            {hasVisitedGraph && (
-              <div className={screen === "graph" ? "h-full" : "hidden"}>
-                <GraphScreen active={screen === "graph"} />
-              </div>
-            )}
-            {hasVisitedSchema && (
-              <div className={screen === "schema" ? "h-full" : "hidden"}>
-                <SchemaScreen active={screen === "schema"} />
-              </div>
-            )}
-            {hasVisitedSynonyms && (
-              <div className={screen === "synonyms" ? "h-full" : "hidden"}>
-                <SynonymsScreen active={screen === "synonyms"} />
-              </div>
-            )}
+            {slot("llm-analysis", <LlmAnalysisScreen active={screen === "llm-analysis"} />)}
+            {slot("labels", <LabelsScreen initialSelectedId={initialSelectId} active={screen === "labels"} />)}
+            {slot("rel-types", <RelationshipTypesScreen initialSelectedId={initialSelectId} active={screen === "rel-types"} />)}
+            {slot("label-synonyms", <LabelSynonymsScreen active={screen === "label-synonyms"} />)}
+            {slot("schema-view", <SchemaViewScreen active={screen === "schema-view"} />)}
+            {slot("nodes", <NodesScreen initialSelectedLabelId={initialSelectId} active={screen === "nodes"} />)}
+            {slot("relationships", <RelationshipsScreen active={screen === "relationships"} />)}
+            {slot("export", <ExportScreen active={screen === "export"} />)}
           </>
         )}
       </main>
