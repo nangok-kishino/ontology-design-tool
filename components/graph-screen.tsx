@@ -9,7 +9,7 @@ import { TopBar } from "@/components/top-bar"
 import { TripletGraph } from "@/components/triplet-graph"
 import { useProject } from "@/app/project-context"
 import { buildHueMap } from "@/lib/graph-colors"
-import { sortByOrder } from "@/lib/organize"
+import { rootOf, sortByOrder } from "@/lib/organize"
 import type { Triplet, OntologyInstance, OntologyClass, OntologyAttribute, OntologyRelation, RelationCondition } from "@/lib/types"
 
 export function GraphScreen({ active }: { active?: boolean }) {
@@ -30,6 +30,12 @@ export function GraphScreen({ active }: { active?: boolean }) {
   // 同じ色、同じリレーションのエッジは同じ色になる（スキーマビューとも揃う）。
   const hueByClassId = useMemo(() => buildHueMap(sortByOrder(classes).map((c) => c.id)), [classes])
   const hueByRelationId = useMemo(() => buildHueMap(sortByOrder(relations).map((r) => r.id), 6), [relations])
+  // 列はクラスの括り（ルートクラス）で決める。支柱・ビーム・板のように
+  // 同じ親の下にあるクラスは同じ列に入る。
+  const rootClassIdById = useMemo(() => {
+    const byId = new Map(classes.map((c) => [c.id, c]))
+    return new Map(classes.map((c) => [c.id, rootOf(c, byId).id]))
+  }, [classes])
   const instById = useMemo(() => new Map(instances.map((i) => [i.id, i])), [instances])
 
   const fetchAll = useCallback(async () => {
@@ -118,6 +124,7 @@ export function GraphScreen({ active }: { active?: boolean }) {
             conditionsByRelationId={conditionsByRelationId}
             hueByClassId={hueByClassId}
             hueByRelationId={hueByRelationId}
+            rootClassIdById={rootClassIdById}
             relationNameById={relationNameById}
           />
         )}

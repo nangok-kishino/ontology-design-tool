@@ -1,24 +1,31 @@
 // グラフビューの配置計算（クラス単位の階層レイアウト）。
 //
-// 列はクラスで決める。同じクラスのインスタンスは必ず同じ列に入る。
-// 列の順番は、クラスどうしの関係をたどって決める：どのクラスからも
-// 指されていないクラスが左端、そこから指された先が次の列……と右へ流れる。
-// 同じ深さのクラスは同じ列に収まるので、部品のように兄弟関係のクラスは
-// まとめて1列に並ぶ。
+// 列は「クラスの括り」で決める。括りはルートクラス（親をたどった先の一番上）で、
+// 支柱・ビーム・板…のように同じ親（部品図面）を持つクラスは同じ括り＝同じ列に入る。
+// 同じクラスのインスタンスが別々の列に散ることはない。
 //
-//   製品シリーズ │ 商品 │ 支柱・ビーム・板… │ 網・バー… │ 棚受…
-//   テーマ       │      │                    │           │
+// 1つの列には1つの括りだけが入る。列の順番は、括りどうしの関係をたどって
+// 決める：どの括りからも指されていないものが左、そこから指された先が右。
+// 深さが同じ括りどうしは、クラス一覧の並び順で左右に分かれる。
+// 括りの中での関係（部品どうしの構成など）は列を分けない。
 //
-// 1列が高くなりすぎるときだけ、クラスの切れ目で列を分ける
-// （クラスの途中では折らない＝同じクラスは必ず1列に収まる）。
+//   テーマ │ 商品 │ 製品シリーズ │ 部品図面（支柱・ビーム・板・金具…）
 //
-// 循環があっても止まるように、列が決まらなかったクラスは
+// 循環があっても止まるように、列が決まらなかった括りは
 // 「指してきた相手の次の列」に置く（相手も未定なら左端）。
 
 export type LayoutEdge = { source: string; target: string }
 
-// 配置にはカードの実寸が要る（幅で列の間隔、高さで行の間隔が決まる）
-export type SizedNode = { id: string; w: number; h: number; classId?: string | null }
+// 配置にはカードの実寸が要る（幅で列の間隔、高さで行の間隔が決まる）。
+//   classId : 列の中で並べる単位（同じクラスは隣り合う）
+//   groupId : 列を決める単位（ふつうはルートクラス。省略時は classId）
+export type SizedNode = {
+  id: string
+  w: number
+  h: number
+  classId?: string | null
+  groupId?: string | null
+}
 
 export type PlacedNode = { x: number; y: number; layer: number }
 
@@ -29,8 +36,6 @@ export type LayeredOptions = {
   vGap?: number
   // クラスが変わるところに足す余白
   classGap?: number
-  // 1列に積む高さの目安（これを超えたらクラスの切れ目で列を分ける）
-  maxPerColumn?: number
 }
 
 const NO_CLASS = "__none__"
@@ -68,20 +73,20 @@ export function layeredLayout(
   const hGap = options.hGap ?? 110
   const vGap = options.vGap ?? 14
   const classGap = options.classGap ?? 22
-  const maxPerColumn = options.maxPerColumn ?? 18
 
   const ids = nodes.map((n) => n.id)
   const size = new Map(nodes.map((n) => [n.id, { w: n.w, h: n.h }]))
   const classOf = new Map(nodes.map((n) => [n.id, n.classId || NO_CLASS]))
+  const groupOf = new Map(nodes.map((n) => [n.id, n.groupId || n.classId || NO_CLASS]))
 
-  // クラスどうしの関係に畳んでから列を決める
-  const classIds: string[] = []
+  // 括りどうしの関係に畳んでから列を決める
+  const groupIds: string[] = []
   for (const id of ids) {
-    const c = classOf.get(id)!
-    if (!classIds.includes(c)) classIds.push(c)
+    const g = groupOf.get(id)!
+    if (!groupIds.includes(g)) groupIds.push(g)
   }
-  const classOuts = new Map<string, Set<string>>(classIds.map((c) => [c, new Set()]))
-  const classIns = new Map<string, Set<string>>(classIds.map((c) => [c, new Set()]))
+  const groupOuts = new Map<string, Set<string>>(groupIds.map((g) => [g, new Set()]))
+  const groupIns = new Map<string, Set<string>>(groupIds.map((g) => [g, new Set()]))
   const outs = new Map<string, string[]>(ids.map((id) => [id, []]))
   const ins = new Map<string, string[]>(ids.map((id) => [id, []]))
   for (const e of edges) {
@@ -89,19 +94,35 @@ export function layeredLayout(
     if (!outs.has(e.source) || !ins.has(e.target)) continue
     outs.get(e.source)!.push(e.target)
     ins.get(e.target)!.push(e.source)
-    const cs = classOf.get(e.source)!
-    const ct = classOf.get(e.target)!
-    if (cs === ct) continue
-    classOuts.get(cs)!.add(ct)
-    classIns.get(ct)!.add(cs)
+    const gs = groupOf.get(e.source)!
+    const gt = groupOf.get(e.target)!
+    if (gs === gt) continue // 括りの中の関係では列を分けない
+    groupOuts.get(gs)!.add(gt)
+    groupIns.get(gt)!.add(gs)
   }
 
-  const classLayer = assignLayers(classIds, classOuts, classIns)
-  const maxLayer = Math.max(0, ...classLayer.values())
-  const layerOf = (id: string) => classLayer.get(classOf.get(id)!) ?? 0
+  // 1つの列には1つの括りだけを入れる（別の括りが同じ列に混ざらないように）。
+  // 列の順番は、関係の深さが先、同じ深さならクラス一覧の並び順。
+  const groupLayer = assignLayers(groupIds, groupOuts, groupIns)
+  const groupRank = new Map(groupIds.map((g, i) => [g, i]))
+  const columnOf = new Map(
+    [...groupIds]
+      .sort(
+        (a, b) =>
+          (groupLayer.get(a) ?? 0) - (groupLayer.get(b) ?? 0) ||
+          (groupRank.get(a) ?? 0) - (groupRank.get(b) ?? 0),
+      )
+      .map((g, i) => [g, i]),
+  )
+  const maxLayer = groupIds.length - 1
+  const layerOf = (id: string) => columnOf.get(groupOf.get(id)!) ?? 0
 
-  // 列ごとに、クラスの塊に分けて並べる
-  const classRank = new Map(classIds.map((c, i) => [c, i]))
+  // 列ごとに、クラスの塊に分けて並べる（nodes の順番をクラスの並び順として使う）
+  const classRank = new Map<string, number>()
+  for (const id of ids) {
+    const c = classOf.get(id)!
+    if (!classRank.has(c)) classRank.set(c, classRank.size)
+  }
   const layers: string[][] = Array.from({ length: maxLayer + 1 }, () => [])
   for (const id of ids) layers[layerOf(id)].push(id)
   for (const row of layers) {
@@ -128,39 +149,10 @@ export function layeredLayout(
     for (let l = maxLayer - 1; l >= 0; l--) reorder(layers[l], layers[l + 1], outs)
   }
 
-  // 高くなりすぎる列は、クラスの切れ目で分ける（クラスの途中では折らない）
-  const chunks: string[][][] = layers.map((row) => {
-    const blocks: string[][] = []
-    for (const id of row) {
-      const last = blocks[blocks.length - 1]
-      if (last && classOf.get(last[0]) === classOf.get(id)) last.push(id)
-      else blocks.push([id])
-    }
-    const cols: string[][] = []
-    let current: string[] = []
-    for (const block of blocks) {
-      if (current.length > 0 && current.length + block.length > maxPerColumn) {
-        cols.push(current)
-        current = []
-      }
-      current = current.concat(block)
-    }
-    if (current.length > 0 || cols.length === 0) cols.push(current)
-    return cols
-  })
-
   // 列の中心（その列でいちばん広いカードに合わせる）
   const widest = layers.map((row) => Math.max(0, ...row.map((id) => size.get(id)?.w ?? 100)))
-  const subGap = hGap * 0.45
-  const slotX: number[][] = []
-  let cursorX = 0
-  for (let l = 0; l <= maxLayer; l++) {
-    const w = widest[l]
-    const xs: number[] = []
-    for (let k = 0; k < chunks[l].length; k++) xs.push(cursorX + w / 2 + k * (w + subGap))
-    slotX.push(xs)
-    cursorX = (xs[xs.length - 1] ?? cursorX) + w / 2 + hGap
-  }
+  const colCenter: number[] = [widest[0] / 2]
+  for (let l = 1; l <= maxLayer; l++) colCenter[l] = colCenter[l - 1] + widest[l - 1] / 2 + hGap + widest[l] / 2
 
   // 縦位置：順番どおりに積み、つながっている相手の中心へ寄せ直す
   const y = new Map<string, number>()
@@ -176,7 +168,7 @@ export function layeredLayout(
       prevClass = cls
     }
   }
-  for (const layerChunks of chunks) layerChunks.forEach(stack)
+  layers.forEach(stack)
 
   // 並び順と最低間隔を保ったまま、できるだけ相手の正面へ
   const pullToward = (col: string[], neighbors: Map<string, string[]>) => {
@@ -195,17 +187,39 @@ export function layeredLayout(
       prevBottom = top + h
       prevClass = cls
     })
+    // 先頭に引っ張られて列全体が下へずれていかないよう、希望位置の中心に合わせ直す
+    const drift = col.reduce((sum, id, i) => sum + ((y.get(id) ?? 0) - want[i]), 0) / (col.length || 1)
+    for (const id of col) y.set(id, (y.get(id) ?? 0) - drift)
   }
   for (let pass = 0; pass < 4; pass++) {
-    for (let l = maxLayer - 1; l >= 0; l--) if (chunks[l].length === 1) pullToward(layers[l], outs)
-    for (let l = 1; l <= maxLayer; l++) if (chunks[l].length === 1) pullToward(layers[l], ins)
+    for (let l = maxLayer - 1; l >= 0; l--) pullToward(layers[l], outs)
+    for (let l = 1; l <= maxLayer; l++) pullToward(layers[l], ins)
   }
+
+  // 寄せた結果できた大きな空きは詰める。相手の正面に置こうとするあまり
+  // 列の途中が大きく空くと、全体を映したときに縮みすぎて読めなくなる。
+  const compact = (col: string[]) => {
+    let prevBottom: number | null = null
+    let prevClass: string | null = null
+    for (const id of col) {
+      const h = size.get(id)?.h ?? 36
+      const cls = classOf.get(id)!
+      const gap = prevClass !== null && cls !== prevClass ? vGap + classGap : vGap
+      const top = (y.get(id) ?? 0) - h / 2
+      if (prevBottom !== null && top > prevBottom + gap * 3) y.set(id, prevBottom + gap * 3 + h / 2)
+      prevBottom = (y.get(id) ?? 0) - h / 2 + h
+      prevClass = cls
+    }
+  }
+  layers.forEach(compact)
+
+  // 全体を上端0に寄せる
+  const tops = ids.map((id) => (y.get(id) ?? 0) - (size.get(id)?.h ?? 36) / 2)
+  const offset = tops.length > 0 ? Math.min(...tops) : 0
 
   const placed = new Map<string, PlacedNode>()
   for (let l = 0; l <= maxLayer; l++) {
-    chunks[l].forEach((col, k) => {
-      for (const id of col) placed.set(id, { x: slotX[l][k], y: y.get(id) ?? 0, layer: l })
-    })
+    for (const id of layers[l]) placed.set(id, { x: colCenter[l], y: (y.get(id) ?? 0) - offset, layer: l })
   }
   return placed
 }

@@ -4,8 +4,9 @@
 //   react-force-graph-2d を top-level import するため、SSR を避ける目的で
 //   triplet-graph.tsx から next/dynamic({ ssr:false }) 経由でのみ読み込む。
 //
-//   配置は力学任せにしない。列はクラスで決めて左から右へ流す
-//   （lib/graph-layout.ts）。同じクラスのインスタンスは必ず同じ列に入る。
+//   配置は力学任せにしない。列はクラスの括り（ルートクラス）で決めて
+//   左から右へ流す（lib/graph-layout.ts）。同じ親を持つクラス――支柱・ビーム・
+//   板のように部品図面の下にあるもの――は同じ列に入る。
 //
 //   ノード = インスタンス。カードはクラス名と名前の2段。
 //   色は「どのクラスか」を示すためだけに使い、塗りは暗いまま縁と見出しに効かせる。
@@ -24,6 +25,8 @@ type GraphNode = {
   // カードに収まるよう必要なら末尾を詰めた表示用の文字列
   label: string
   classId: string | null
+  // 列を決める括り（ルートクラス）
+  groupId: string
   className: string
   classLabel: string
   hue: number
@@ -102,6 +105,7 @@ export default function TripletGraphCanvas({
   conditionsByRelationId,
   hueByClassId,
   hueByRelationId,
+  rootClassIdById,
   width,
   height,
   onSelectNode,
@@ -115,6 +119,8 @@ export default function TripletGraphCanvas({
   // 同じクラスのインスタンス・同じリレーションのエッジは必ず同じ色になる。
   hueByClassId?: Map<string, number>
   hueByRelationId?: Map<string, number>
+  // クラスid → そのルートクラスid（列の括りに使う）
+  rootClassIdById?: Map<string, string>
   relationNameById?: Map<string, string>
   width: number
   height: number
@@ -175,6 +181,7 @@ export default function TripletGraphCanvas({
         name: full,
         label,
         classId: cid,
+        groupId: (cid ? rootClassIdById?.get(cid) : undefined) ?? cid ?? "",
         className,
         classLabel,
         hue: (cid ? hueByClassId?.get(cid) : undefined) ?? NO_CLASS_HUE,
@@ -203,9 +210,15 @@ export default function TripletGraphCanvas({
       adjacency.get(t.objectInstanceId)!.add(t.subjectInstanceId)
     }
 
-    const nodes = [...nodeMap.values()]
+    // クラス一覧の並び順で渡す（列の中はその順にクラスが並ぶ）
+    const classRank = new Map([...(hueByClassId?.keys() ?? [])].map((id, i) => [id, i]))
+    const nodes = [...nodeMap.values()].sort(
+      (a, b) =>
+        (classRank.get(a.classId ?? "") ?? Number.MAX_SAFE_INTEGER) -
+          (classRank.get(b.classId ?? "") ?? Number.MAX_SAFE_INTEGER) || a.name.localeCompare(b.name),
+    )
     const placement = layeredLayout(
-      nodes.map((n) => ({ id: n.id, w: n.w, h: n.h, classId: n.classId })),
+      nodes.map((n) => ({ id: n.id, w: n.w, h: n.h, classId: n.classId, groupId: n.groupId })),
       links.map((l) => ({ source: linkEndId(l.source), target: linkEndId(l.target) })),
     )
     for (const n of nodes) {
@@ -219,7 +232,7 @@ export default function TripletGraphCanvas({
     }
 
     return { data: { nodes, links }, adjacency }
-  }, [triplets, instById, classNameById, hueByClassId, hueByRelationId, measure, fitText])
+  }, [triplets, instById, classNameById, hueByClassId, hueByRelationId, rootClassIdById, measure, fitText])
 
   // 全ノードが収まる拡大率を自前で算出し、上限(MAX_ZOOM)でクランプしてフィット。
   const fitToView = useCallback(
@@ -364,19 +377,27 @@ export default function TripletGraphCanvas({
   )
 
   // つながりの曲線。左の列のカードの右端から出て、右の列のカードの左端へ入る。
+  // 同じ列の中の関係（部品どうしの構成など）は、列の右側にふくらませて戻す。
   const edgePath = (link: GraphLink): EdgePath | null => {
     const s = linkEndNode(link.source)
     const t = linkEndNode(link.target)
     if (!s || !t || s.x == null || s.y == null || t.x == null || t.y == null) return null
-    const forward = t.layer !== s.layer
-    const from = t.layer >= s.layer ? s : t
-    const to = t.layer >= s.layer ? t : s
+    if (s.layer === t.layer) {
+      const px = s.x + s.w / 2
+      const py = s.y
+      const cx = t.x + t.w / 2
+      const cy = t.y
+      const bow = 30 + Math.abs(cy - py) * 0.18
+      return { forward: false, px, py, cx, cy, c1x: px + bow, c2x: cx + bow }
+    }
+    const from = t.layer > s.layer ? s : t
+    const to = t.layer > s.layer ? t : s
     const px = (from.x ?? 0) + from.w / 2
     const py = from.y ?? 0
     const cx = (to.x ?? 0) - to.w / 2
     const cy = to.y ?? 0
     const reach = Math.max(24, Math.abs(cx - px) * 0.5)
-    return { forward, px, py, cx, cy, c1x: px + reach, c2x: cx - reach }
+    return { forward: true, px, py, cx, cy, c1x: px + reach, c2x: cx - reach }
   }
 
   const paintLink = useCallback(

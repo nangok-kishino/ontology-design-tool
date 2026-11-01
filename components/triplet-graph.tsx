@@ -26,6 +26,7 @@ export function TripletGraph({
   conditionsByRelationId,
   hueByClassId,
   hueByRelationId,
+  rootClassIdById,
   relationNameById,
   onSelectNode,
 }: {
@@ -37,6 +38,8 @@ export function TripletGraph({
   // クラス／リレーションごとの色（一覧の並び順で配ってある）
   hueByClassId?: Map<string, number>
   hueByRelationId?: Map<string, number>
+  // クラスid → ルートクラスid（列の括りに使う）
+  rootClassIdById?: Map<string, string>
   relationNameById?: Map<string, string>
   onSelectNode?: (instanceId: string) => void
 }) {
@@ -72,6 +75,7 @@ export function TripletGraph({
           conditionsByRelationId={conditionsByRelationId}
           hueByClassId={hueByClassId}
           hueByRelationId={hueByRelationId}
+          rootClassIdById={rootClassIdById}
           relationNameById={relationNameById}
           width={size.w}
           height={size.h}
