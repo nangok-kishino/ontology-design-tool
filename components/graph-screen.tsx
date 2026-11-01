@@ -1,7 +1,8 @@
 "use client"
 
-// グラフビュー（ナレッジグラフ作成）。本登録トリプレットをサイバー風の力学グラフで表示する。
-//   データは triplets / instances / classes を取得して {nodes, links} に変換（描画は triplet-graph）。
+// グラフビュー（ナレッジグラフ作成）。本登録トリプレットをグラフで表示する。
+//   インスタンス同士のトリプレットだけでなく、端にクラスを含むトリプレットも出す。
+//   どちらも lib/graph-edges.ts で1つの形に均してから描画（triplet-graph）へ渡す。
 
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { Loader2 } from "lucide-react"
@@ -10,11 +11,14 @@ import { TripletGraph } from "@/components/triplet-graph"
 import { useProject } from "@/app/project-context"
 import { buildHueMap } from "@/lib/graph-colors"
 import { rootOf, sortByOrder } from "@/lib/organize"
-import type { Triplet, OntologyInstance, OntologyClass, OntologyAttribute, OntologyRelation, RelationCondition } from "@/lib/types"
+import { buildGraphEdges } from "@/lib/graph-edges"
+import type { Triplet, ClassTriplet, OntologyInstance, OntologyClass, OntologyAttribute, OntologyRelation, RelationCondition } from "@/lib/types"
 
 export function GraphScreen({ active }: { active?: boolean }) {
   const { currentProject, loading: projectLoading } = useProject()
   const [triplets, setTriplets] = useState<Triplet[]>([])
+  // 端にクラスを含むトリプレット（別コンテナ）。同じ図に重ねて出す。
+  const [classTriplets, setClassTriplets] = useState<ClassTriplet[]>([])
   const [instances, setInstances] = useState<OntologyInstance[]>([])
   const [classes, setClasses] = useState<OntologyClass[]>([])
   // トリプレット（エッジ）の属性値はキーが属性id。ツールチップに属性名で表示するための id→名前 対応。
@@ -25,7 +29,11 @@ export function GraphScreen({ active }: { active?: boolean }) {
   const [loading, setLoading] = useState(true)
 
   const classNameById = useMemo(() => new Map(classes.map((c) => [c.id, c.name])), [classes])
-  const relationNameById = useMemo(() => new Map(relations.map((r) => [r.id, r.name])), [relations])
+  // 絞り込みパネルの並びはリレーション管理の並び順に合わせる
+  const relationOrder = useMemo(
+    () => sortByOrder(relations).map((r) => ({ id: r.id, name: r.name })),
+    [relations],
+  )
   // 色はクラス／リレーションの一覧の並び順で配る。同じクラスのインスタンスは
   // 同じ色、同じリレーションのエッジは同じ色になる（スキーマビューとも揃う）。
   const hueByClassId = useMemo(() => buildHueMap(sortByOrder(classes).map((c) => c.id)), [classes])
@@ -42,14 +50,16 @@ export function GraphScreen({ active }: { active?: boolean }) {
     if (!currentProject) return
     setLoading(true)
     try {
-      const [t, i, c, rels] = await Promise.all([
+      const [t, ct, i, c, rels] = await Promise.all([
         fetch(`/api/triplets?projectId=${currentProject.id}`).then((res) => res.json()),
+        fetch(`/api/class-triplets?projectId=${currentProject.id}`).then((res) => res.json()),
         fetch(`/api/instances?projectId=${currentProject.id}`).then((res) => res.json()),
         fetch(`/api/classes?projectId=${currentProject.id}`).then((res) => res.json()),
         fetch(`/api/relations?projectId=${currentProject.id}`).then((res) => res.json()),
       ])
       const tlist: Triplet[] = Array.isArray(t) ? t : []
       setTriplets(tlist)
+      setClassTriplets(Array.isArray(ct) ? ct : [])
       setInstances(Array.isArray(i) ? i : [])
       setClasses(Array.isArray(c) ? c : [])
       setRelations(Array.isArray(rels) ? (rels as OntologyRelation[]) : [])
@@ -82,7 +92,7 @@ export function GraphScreen({ active }: { active?: boolean }) {
   // プロジェクト切替時のみデータを捨てる。取得は下の表示時 effect に任せる。
   useEffect(() => {
     if (projectLoading) return
-    setTriplets([]); setInstances([]); setClasses([]); setRelations([])
+    setTriplets([]); setClassTriplets([]); setInstances([]); setClasses([]); setRelations([])
     setLoading(!!currentProject)
   }, [currentProject?.id, projectLoading])
 
@@ -90,23 +100,27 @@ export function GraphScreen({ active }: { active?: boolean }) {
     if (active && currentProject) fetchAll()
   }, [active, currentProject?.id, fetchAll])
 
-  const nodeCount = useMemo(() => {
-    const ids = new Set<string>()
-    triplets.forEach((t) => { ids.add(t.subjectInstanceId); ids.add(t.objectInstanceId) })
-    return ids.size
-  }, [triplets])
+  // 画面に今出ている数（絞り込みパネルの結果）。上部の表示に使う。
+  const [visibleCounts, setVisibleCounts] = useState({ nodes: 0, edges: 0 })
+  const handleVisibleChange = useCallback((c: { nodes: number; edges: number }) => setVisibleCounts(c), [])
 
+  // 描画に渡す線（インスタンス同士とクラスを含む分を1つに均したもの）
+  const edges = useMemo(
+    () => buildGraphEdges(triplets, classTriplets, instById, classNameById),
+    [triplets, classTriplets, instById, classNameById],
+  )
   return (
     <div className="flex h-full flex-col">
-      <TopBar group="全体" title="グラフビュー">
-        {!loading && currentProject && triplets.length > 0 && (
+      <TopBar group="ナレッジグラフ作成" title="グラフビュー">
+        {!loading && currentProject && edges.length > 0 && (
           <span className="text-xs text-muted-foreground">
-            ノード {nodeCount}・エッジ {triplets.length}
+            ノード {visibleCounts.nodes}・エッジ {visibleCounts.edges}
+            {visibleCounts.edges < edges.length && `（全${edges.length}）`}
           </span>
         )}
       </TopBar>
       <div className="flex-1 overflow-hidden">
-        {loading && triplets.length === 0 ? (
+        {loading && edges.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-4 bg-[#0a0b14]">
             <Loader2 className="h-16 w-16 animate-spin text-indigo-300" />
             <p className="text-sm text-indigo-100/80">読込中...</p>
@@ -117,15 +131,15 @@ export function GraphScreen({ active }: { active?: boolean }) {
           </div>
         ) : (
           <TripletGraph
-            triplets={triplets}
-            instById={instById}
+            edges={edges}
             classNameById={classNameById}
             attrNameById={attrNameById}
             conditionsByRelationId={conditionsByRelationId}
             hueByClassId={hueByClassId}
             hueByRelationId={hueByRelationId}
             rootClassIdById={rootClassIdById}
-            relationNameById={relationNameById}
+            relationOrder={relationOrder}
+            onVisibleChange={handleVisibleChange}
           />
         )}
       </div>

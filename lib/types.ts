@@ -276,6 +276,8 @@ export type ClassTriplet = {
   subjectName: string
   predicateName: string
   objectName: string
+  // 一覧での並び順。インスタンストリプレットの order と同じ扱い（lib/organize.ts）。
+  order?: number
   createdBy?: string
   updatedBy?: string
   createdAt: string

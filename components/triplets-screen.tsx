@@ -40,12 +40,59 @@ import { buildCypher } from "@/lib/graph-export"
 import type { Triplet, ClassTriplet, OntologyInstance, OntologyRelation, OntologyClass, OntologyAttribute } from "@/lib/types"
 import { ArrowRight, Plus, Trash2, Loader2, Download, FileText, Tags, CheckCircle2, X, ChevronDown, ChevronRight } from "lucide-react"
 import { deriveConfirmationStatus, type ConfirmationState } from "@/lib/confirmation"
+import type { ConfirmationEvent } from "@/lib/types"
 import { ConfirmationBadge } from "@/components/confirmation-badge"
 import { ConfirmDialog } from "@/components/confirm-dialog"
 import { ConfirmationSummary } from "@/components/confirmation-summary"
 
-// グループ見出しの行id。トリプレットのidと混ざらないように印を付ける。
+// 見出しの行id。トリプレットのidと混ざらないように印を付ける。
+const SECTION_ROW_PREFIX = "sec:"
 const GROUP_ROW_PREFIX = "group:"
+
+// 一覧の節。主語・目的語がクラス(c)かインスタンス(i)かの4通り。
+// どの節も同じ列・同じ見た目で出し、中身の違いは見出しの説明で伝える。
+type Pattern = "ii" | "ic" | "ci" | "cc"
+const PATTERNS: { key: Pattern; label: string; note: string }[] = [
+  {
+    key: "ii",
+    label: "インスタンス → インスタンス",
+    note: "個別のものどうしの関係です。文書から抽出したトリプレットもここに入ります。",
+  },
+  {
+    key: "ic",
+    label: "インスタンス → クラス",
+    note: "その個別のものが、相手クラスのいずれかと関係します（相手がまだ特定できていない言明）。",
+  },
+  {
+    key: "ci",
+    label: "クラス → インスタンス",
+    note: "そのクラスのインスタンスすべてが、特定の相手と関係します。子クラスにも継承されます。",
+  },
+  {
+    key: "cc",
+    label: "クラス → クラス",
+    note: "そのクラスのものは、相手クラスのいずれかと関係します。子クラスにも継承されます。",
+  },
+]
+
+// 一覧の1行。インスタンス同士のトリプレットと、クラスを含むトリプレットを
+// 同じ形に均して扱う（表示も並べ替えも4つの節で揃えるため）。
+type AnyRow = {
+  id: string
+  pattern: Pattern
+  predicateRelationId: string
+  order?: number
+  createdAt?: string
+  subjectKind: EndKind
+  subjectLabel: string
+  subjectTitle: string
+  predicateLabel: string
+  objectKind: EndKind
+  objectLabel: string
+  objectTitle: string
+  sourceDocName?: string
+  confirmations?: ConfirmationEvent[]
+}
 
 const TRIPLET_FIELD_LABEL: Record<string, string> = {
   subjectInstanceId: "主語",
@@ -98,7 +145,6 @@ export function TripletsScreen({ active }: { active?: boolean }) {
   const [classes, setClasses] = useState<OntologyClass[]>([])
   // クラストリプレット（主語がクラス）。インスタンスのトリプレットとは別に持つ。
   const [classTriplets, setClassTriplets] = useState<ClassTriplet[]>([])
-  const [classSectionOpen, setClassSectionOpen] = useState(true)
   const [deletingClassTripletId, setDeletingClassTripletId] = useState<string | null>(null)
   const [confirmClassTripletId, setConfirmClassTripletId] = useState<string | null>(null)
   const [confirmingClassTriplet, setConfirmingClassTriplet] = useState(false)
@@ -205,14 +251,59 @@ export function TripletsScreen({ active }: { active?: boolean }) {
   }, [currentProject?.id, attrsByRelation])
 
   const selected = triplets.find((t) => t.id === selectedId) ?? null
+  // クラスを含むトリプレットも同じ一覧から選べる（右ペインは読み取り専用で出す）
+  const selectedClassTriplet = classTriplets.find((c) => c.id === selectedId) ?? null
 
-  // 表示中トリプレット（確認状態フィルタ）。並びは order（未設定は末尾）。
-  const displayedTriplets = useMemo(() => {
+  // ── 一覧の組み立て ──
+  // 主語・目的語がクラスかインスタンスかの4通りで節に分ける。見た目は4つとも同じにする。
+  const rows: AnyRow[] = useMemo(() => {
+    const fromTriplet = (t: Triplet): AnyRow => ({
+      id: t.id,
+      pattern: "ii",
+      predicateRelationId: t.predicateRelationId,
+      order: t.order,
+      createdAt: t.createdAt,
+      subjectKind: "instance",
+      subjectLabel: t.subjectName,
+      subjectTitle: `クラス：${className(t.subjectClassId)}`,
+      predicateLabel: t.predicateName,
+      objectKind: "instance",
+      objectLabel: t.objectName,
+      objectTitle: `クラス：${className(t.objectClassId)}`,
+      sourceDocName: t.sourceDocName,
+      confirmations: t.confirmations,
+    })
+    const fromClassTriplet = (ct: ClassTriplet): AnyRow => ({
+      id: ct.id,
+      pattern: `${ct.subjectKind === "class" ? "c" : "i"}${ct.objectKind === "class" ? "c" : "i"}` as Pattern,
+      predicateRelationId: ct.predicateRelationId,
+      order: ct.order,
+      createdAt: ct.createdAt,
+      subjectKind: ct.subjectKind,
+      subjectLabel:
+        (ct.subjectKind === "class" ? classNameById.get(ct.subjectId) : instById.get(ct.subjectId)?.name) ??
+        ct.subjectName,
+      subjectTitle: ct.subjectKind === "class" ? "クラス" : "インスタンス",
+      predicateLabel: relById.get(ct.predicateRelationId)?.name ?? ct.predicateName,
+      objectKind: ct.objectKind,
+      objectLabel:
+        (ct.objectKind === "class" ? classNameById.get(ct.objectId) : instById.get(ct.objectId)?.name) ??
+        ct.objectName,
+      objectTitle: ct.objectKind === "class" ? "クラス" : "インスタンス",
+      confirmations: ct.confirmations,
+    })
+    return [...triplets.map(fromTriplet), ...classTriplets.map(fromClassTriplet)]
+  }, [triplets, classTriplets, classNameById, instById, relById])
+
+  // 表示中の行（確認状態フィルタ）。並びは order（未設定は末尾）。
+  const displayedRows = useMemo(() => {
     const base = filterState === "all"
-      ? triplets
-      : triplets.filter((t) => deriveConfirmationStatus(t.confirmations).state === filterState)
+      ? rows
+      : rows.filter((r) => deriveConfirmationStatus(r.confirmations).state === filterState)
     return sortByOrder(base)
-  }, [triplets, filterState])
+  }, [rows, filterState])
+
+  const rowById = useMemo(() => new Map(rows.map((r) => [r.id, r])), [rows])
 
   // 並べ替えは全件表示のときだけ。絞り込み中は隠れた行と入れ替わって挙動が読めなくなる。
   const canReorder = filterState === "all"
@@ -226,114 +317,124 @@ export function TripletsScreen({ active }: { active?: boolean }) {
     })
 
   type ListRow =
+    | { kind: "section"; key: string; pattern: Pattern; label: string; note: string; count: number }
     | { kind: "group"; key: string; groupKey: string; label: string; count: number }
-    | { kind: "triplet"; key: string; t: Triplet }
+    | { kind: "row"; key: string; row: AnyRow }
 
-  // 述語リレーションごとに仕分けして並べる。見出しの順はリレーション管理の並び順に合わせ、
-  // 定義が見つからない述語（消されたリレーション）は最後にまとめる。
+  // 4つの節を必ず出す（0件の節も「ここには無い」と分かるように見出しだけ出す）。
+  // 節の中は、まとめ方に応じて述語のリレーションごとにさらに分ける。
   const listRows: ListRow[] = useMemo(() => {
-    if (!groupByRelation) {
-      return displayedTriplets.map((t) => ({ kind: "triplet" as const, key: t.id, t }))
-    }
-    const buckets = new Map<string, Triplet[]>()
-    for (const t of displayedTriplets) {
-      const list = buckets.get(t.predicateRelationId)
-      if (list) list.push(t)
-      else buckets.set(t.predicateRelationId, [t])
-    }
-    const known = sortByOrder(relations).map((r) => r.id)
-    const rest = [...buckets.keys()].filter((id) => !known.includes(id)).sort()
-    return [...known, ...rest].flatMap((relationId) => {
-      const items = buckets.get(relationId) ?? []
-      if (items.length === 0) return []
-      return [
-        {
-          kind: "group" as const,
-          key: `${GROUP_ROW_PREFIX}${relationId}`,
-          groupKey: relationId,
-          label: relById.get(relationId)?.name ?? items[0].predicateName ?? "（定義なし）",
-          count: items.length,
-        },
-        ...(collapsedGroupKeys.has(relationId)
-          ? []
-          : items.map((t) => ({ kind: "triplet" as const, key: t.id, t }))),
-      ]
+    return PATTERNS.flatMap(({ key, label, note }) => {
+      const items = displayedRows.filter((r) => r.pattern === key)
+      const head: ListRow = { kind: "section", key: `${SECTION_ROW_PREFIX}${key}`, pattern: key, label, note, count: items.length }
+      if (collapsedGroupKeys.has(key) || items.length === 0) return [head]
+      if (!groupByRelation) {
+        return [head, ...items.map((row) => ({ kind: "row" as const, key: row.id, row }))]
+      }
+      const buckets = new Map<string, AnyRow[]>()
+      for (const r of items) {
+        const list = buckets.get(r.predicateRelationId)
+        if (list) list.push(r)
+        else buckets.set(r.predicateRelationId, [r])
+      }
+      const known = sortByOrder(relations).map((r) => r.id)
+      const rest = [...buckets.keys()].filter((id) => !known.includes(id)).sort()
+      const body = [...known, ...rest].flatMap((relationId) => {
+        const list = buckets.get(relationId) ?? []
+        if (list.length === 0) return [] as ListRow[]
+        const groupKey = `${key}/${relationId}`
+        return [
+          {
+            kind: "group" as const,
+            key: `${GROUP_ROW_PREFIX}${groupKey}`,
+            groupKey,
+            label: relById.get(relationId)?.name ?? list[0].predicateLabel ?? "（定義なし）",
+            count: list.length,
+          },
+          ...(collapsedGroupKeys.has(groupKey)
+            ? []
+            : list.map((row) => ({ kind: "row" as const, key: row.id, row }))),
+        ]
+      })
+      return [head, ...body]
     })
-  }, [displayedTriplets, groupByRelation, relations, relById, collapsedGroupKeys])
+  }, [displayedRows, groupByRelation, relations, relById, collapsedGroupKeys])
 
   // 並び順の書き込み。前後に隙間があればその1件だけ、尽きていたら並び全体を振り直す。
   // order は整理の都合なので、確認履歴にも更新日時にも手を付けない（サーバ側も同じ方針）。
-  const applyOrder = async (ordered: Triplet[], index: number) => {
+  const applyOrder = async (pattern: Pattern, ordered: AnyRow[], index: number) => {
     if (!currentProject) return
-    const unnumbered = ordered.some((t) => t.order === undefined)
+    const unnumbered = ordered.some((r) => r.order === undefined)
     const between = unnumbered ? null : orderBetween(ordered[index - 1], ordered[index + 1])
-    const updates = between === null
-      ? renumber(ordered)
-      : [{ id: ordered[index].id, order: between }]
+    const updates = between === null ? renumber(ordered) : [{ id: ordered[index].id, order: between }]
     const byId = new Map(updates.map((u) => [u.id, u.order]))
-    const before = triplets
+    const toInstances = pattern === "ii"
+    const beforeT = triplets
+    const beforeC = classTriplets
     setMovingOrder(true)
-    setTriplets((prev) => prev.map((t) => (byId.has(t.id) ? { ...t, order: byId.get(t.id) } : t)))
+    if (toInstances) setTriplets((prev) => prev.map((t) => (byId.has(t.id) ? { ...t, order: byId.get(t.id) } : t)))
+    else setClassTriplets((prev) => prev.map((c) => (byId.has(c.id) ? { ...c, order: byId.get(c.id) } : c)))
     try {
-      const res = await fetch("/api/triplets/reorder", {
+      const res = await fetch(toInstances ? "/api/triplets/reorder" : "/api/class-triplets/reorder", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ projectId: currentProject.id, updates }),
       })
-      if (!res.ok) setTriplets(before)
+      if (!res.ok) { setTriplets(beforeT); setClassTriplets(beforeC) }
     } catch {
-      setTriplets(before)
+      setTriplets(beforeT); setClassTriplets(beforeC)
     } finally {
       setMovingOrder(false)
     }
   }
 
-  // 落とし先の行が属する並び（グループ表示なら同じ述語の中だけ）
-  const siblingsOf = (t: Triplet) =>
-    groupByRelation
-      ? displayedTriplets.filter((x) => x.predicateRelationId === t.predicateRelationId)
-      : displayedTriplets
+  // 落とし先の行が属する並び（まとめているときは同じ述語の中だけ）
+  const siblingsOf = (r: AnyRow) =>
+    displayedRows.filter(
+      (x) => x.pattern === r.pattern && (!groupByRelation || x.predicateRelationId === r.predicateRelationId),
+    )
 
-  // 述語が違う行には落とせない。述語を変えるのは並べ替えではなく編集なので、
-  // ドラッグで変わってしまわないようにする。
-  const predicateOfRow = (rowId: string) =>
-    rowId.startsWith(GROUP_ROW_PREFIX)
-      ? rowId.slice(GROUP_ROW_PREFIX.length)
-      : triplets.find((t) => t.id === rowId)?.predicateRelationId ?? null
+  // 節をまたぐ移動と、述語の違う行への移動は認めない。
+  // どちらも並べ替えではなく「作り直し」にあたるので、ドラッグで変わってしまわないようにする。
+  const lotOfRow = (rowId: string): string | null => {
+    if (rowId.startsWith(SECTION_ROW_PREFIX)) {
+      const pattern = rowId.slice(SECTION_ROW_PREFIX.length)
+      return groupByRelation ? null : pattern
+    }
+    if (rowId.startsWith(GROUP_ROW_PREFIX)) return groupByRelation ? rowId.slice(GROUP_ROW_PREFIX.length) : null
+    const r = rowById.get(rowId)
+    if (!r) return null
+    return groupByRelation ? `${r.pattern}/${r.predicateRelationId}` : r.pattern
+  }
 
   const canDropRow = (activeId: string, overId: string) => {
-    if (!groupByRelation) return true
-    const a = predicateOfRow(activeId)
-    return a !== null && a === predicateOfRow(overId)
+    const a = lotOfRow(activeId)
+    return a !== null && a === lotOfRow(overId)
   }
 
   // 一覧表で行を落としたとき。見出しならその末尾、行ならその位置へ入れる。
   const handleRowDrop = (activeId: string, overId: string) => {
-    const moved = triplets.find((t) => t.id === activeId)
+    const moved = rowById.get(activeId)
     if (!moved || !canDropRow(activeId, overId)) return
     const list = siblingsOf(moved)
-    if (overId.startsWith(GROUP_ROW_PREFIX)) {
-      const { ordered, index } = placeAt(list, moved)
-      applyOrder(ordered, index)
-      return
-    }
-    const target = triplets.find((t) => t.id === overId)
-    if (!target) return
-    const { ordered, index } = placeAt(list, moved, target.id)
-    applyOrder(ordered, index)
+    const target = rowById.get(overId)
+    const { ordered, index } = placeAt(list, moved, target?.id)
+    applyOrder(moved.pattern, ordered, index)
   }
 
-  const confirmSelectedStates = Array.from(selectedIds).map((id) => {
-    const t = triplets.find((tt) => tt.id === id)
-    return deriveConfirmationStatus(t?.confirmations).state
-  })
+  // クラスを含むトリプレットは別のコンテナなので、行ごとに送り先を変える
+  const confirmEndpoint = (id: string) =>
+    rowById.get(id)?.pattern === "ii" ? `/api/triplets/${id}/confirmations` : `/api/class-triplets/${id}/confirmations`
+
+  const confirmSelectedStates = Array.from(selectedIds).map((id) =>
+    deriveConfirmationStatus(rowById.get(id)?.confirmations).state,
+  )
   const canBulkConfirm = confirmSelectedStates.some((s) => s === "unconfirmed" || s === "confirmed_edited")
   const canBulkUnconfirm = confirmSelectedStates.some((s) => s === "confirmed" || s === "confirmed_edited")
 
   const handleBulkConfirm = async (confirmerName: string) => {
     const targets = Array.from(selectedIds).filter((id) => {
-      const t = triplets.find((tt) => tt.id === id)
-      const s = deriveConfirmationStatus(t?.confirmations).state
+      const s = deriveConfirmationStatus(rowById.get(id)?.confirmations).state
       return s === "unconfirmed" || s === "confirmed_edited"
     })
     if (targets.length === 0) return
@@ -341,7 +442,7 @@ export function TripletsScreen({ active }: { active?: boolean }) {
     try {
       await Promise.all(
         targets.map((id) =>
-          fetch(`/api/triplets/${id}/confirmations`, {
+          fetch(confirmEndpoint(id), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ confirmerName }),
@@ -358,15 +459,14 @@ export function TripletsScreen({ active }: { active?: boolean }) {
 
   const handleBulkUnconfirm = async () => {
     const targets = Array.from(selectedIds).filter((id) => {
-      const t = triplets.find((tt) => tt.id === id)
-      const s = deriveConfirmationStatus(t?.confirmations).state
+      const s = deriveConfirmationStatus(rowById.get(id)?.confirmations).state
       return s === "confirmed" || s === "confirmed_edited"
     })
     if (targets.length === 0) return
     setBulkUnconfirming(true)
     try {
       await Promise.all(
-        targets.map((id) => fetch(`/api/triplets/${id}/confirmations`, { method: "DELETE" }))
+        targets.map((id) => fetch(confirmEndpoint(id), { method: "DELETE" }))
       )
       await fetchAll()
       setSelectedIds(new Set())
@@ -398,11 +498,12 @@ export function TripletsScreen({ active }: { active?: boolean }) {
     }
   }, [selectedId])
 
-  // 未選択時は先頭を自動選択
+  // 未選択時は先頭を自動選択（インスタンス同士が無ければクラスを含む分から）
   useEffect(() => {
-    if (loading || selectedId || triplets.length === 0) return
-    setSelectedId(triplets[0].id)
-  }, [loading, selectedId, triplets.length])
+    if (loading || selectedId) return
+    const first = triplets[0]?.id ?? classTriplets[0]?.id
+    if (first) setSelectedId(first)
+  }, [loading, selectedId, triplets.length, classTriplets.length])
 
   // 3要素すべて選択済みか（保存/追加の活性判定）。クラスペアの整合はサーバが検証し、
   // 不整合ならエラーを返す（前設計の整合表示は廃止）。
@@ -592,16 +693,22 @@ export function TripletsScreen({ active }: { active?: boolean }) {
     return cls ? `${inst.name}　〈${cls}〉` : inst.name
   }
 
-  // S → P → O をノード/エッジのBadgeで表示（クラス名はマウスオーバー）
-  const TripleView = ({ t, size = "sm" }: { t: Triplet; size?: "sm" | "base" }) => {
+  // 一覧の S → P → O。どの節でも同じ形で出し、端がクラスのときだけ種類を添える。
+  const RowTriple = ({ row, size = "sm" }: { row: AnyRow; size?: "sm" | "base" }) => {
     const cls = size === "base" ? "h-auto px-2.5 py-1 text-sm font-normal" : "h-auto px-2 py-0.5 text-xs font-normal"
+    const end = (kind: EndKind, label: string, title: string) => (
+      <>
+        <Badge variant="secondary" title={title} className={cls}>{label}</Badge>
+        {kind === "class" && <span className="text-[10px] text-muted-foreground">（クラス）</span>}
+      </>
+    )
     return (
       <div className="flex flex-wrap items-center gap-1.5">
-        <Badge variant="secondary" title={`クラス：${className(t.subjectClassId)}`} className={cls}>{t.subjectName}</Badge>
+        {end(row.subjectKind, row.subjectLabel, row.subjectTitle)}
         <ArrowRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-        <Badge variant="secondary" title="リレーション（エッジ）" className={cls}>{t.predicateName}</Badge>
+        <Badge variant="secondary" title="リレーション（エッジ）" className={cls}>{row.predicateLabel}</Badge>
         <ArrowRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-        <Badge variant="secondary" title={`クラス：${className(t.objectClassId)}`} className={cls}>{t.objectName}</Badge>
+        {end(row.objectKind, row.objectLabel, row.objectTitle)}
       </div>
     )
   }
@@ -944,110 +1051,21 @@ export function TripletsScreen({ active }: { active?: boolean }) {
             </div>
           )}
           <div className="flex-1 overflow-auto px-6 pb-6">
-            {/* クラストリプレット（主語がクラス）。作成・削除はここで、編集は作り直し。 */}
-            {currentProject && (
-              <div className="mb-4 rounded-lg border border-border">
-                <button
-                  type="button"
-                  onClick={() => setClassSectionOpen((v) => !v)}
-                  className="flex w-full items-center gap-2 px-3 py-2 text-left"
-                >
-                  {classSectionOpen ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />}
-                  <span className="text-sm font-semibold text-foreground">クラスを含むトリプレット</span>
-                  <span className="text-xs text-muted-foreground">{classTriplets.length}件</span>
-                </button>
-                {classSectionOpen && (
-                  <div className="border-t border-border">
-                    <p className="px-3 py-2 text-xs text-muted-foreground">
-                      どちらかの端がクラスのトリプレットです。主語がクラスのものは、そのクラスの
-                      インスタンスすべてに当てはまり、子クラスにも継承されます。
-                    </p>
-                    {classTriplets.length === 0 ? (
-                      <p className="px-3 pb-3 text-sm text-muted-foreground">まだありません。</p>
-                    ) : (
-                      <Table>
-                        <TableHeader>
-                          <TableRow className="bg-muted/50 hover:bg-muted/50">
-                            <TableHead className="font-semibold text-foreground">トリプレット</TableHead>
-                            <TableHead className="w-40 font-semibold text-foreground">確認</TableHead>
-                            <TableHead className="w-12" />
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {classTriplets.map((ct) => {
-                            const status = deriveConfirmationStatus(ct.confirmations)
-                            return (
-                              <TableRow key={ct.id}>
-                                <TableCell>
-                                  <div className="flex flex-wrap items-center gap-1.5">
-                                    <Badge variant="secondary" title={ct.subjectKind === "class" ? "クラス" : "インスタンス"} className="h-auto px-2 py-0.5 text-xs font-normal">
-                                      {ct.subjectKind === "class"
-                                        ? classNameById.get(ct.subjectId) ?? ct.subjectName
-                                        : instById.get(ct.subjectId)?.name ?? ct.subjectName}
-                                    </Badge>
-                                    <span className="text-[10px] text-muted-foreground">
-                                      {ct.subjectKind === "class" ? "（クラス）" : "（インスタンス）"}
-                                    </span>
-                                    <ArrowRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                                    <Badge variant="secondary" title="リレーション" className="h-auto px-2 py-0.5 text-xs font-normal">
-                                      {relById.get(ct.predicateRelationId)?.name ?? ct.predicateName}
-                                    </Badge>
-                                    <ArrowRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                                    <Badge variant="secondary" title={ct.objectKind === "class" ? "クラス" : "インスタンス"} className="h-auto px-2 py-0.5 text-xs font-normal">
-                                      {ct.objectName}
-                                    </Badge>
-                                    <span className="text-[10px] text-muted-foreground">
-                                      {ct.objectKind === "class" ? "（クラス）" : "（インスタンス）"}
-                                    </span>
-                                  </div>
-                                </TableCell>
-                                <TableCell>
-                                  <div className="flex items-center gap-1.5">
-                                    <ConfirmationBadge state={status.state} latestConfirm={status.latestConfirm} />
-                                    {status.state === "unconfirmed" && (
-                                      <Button size="sm" variant="ghost" className="h-6 px-1.5 text-xs"
-                                        onClick={() => setConfirmClassTripletId(ct.id)}>
-                                        確認する
-                                      </Button>
-                                    )}
-                                  </div>
-                                </TableCell>
-                                <TableCell>
-                                  <Button size="icon" variant="ghost"
-                                    className="h-7 w-7 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                                    aria-label={`${ct.subjectName}のトリプレットを削除`}
-                                    disabled={deletingClassTripletId === ct.id}
-                                    onClick={() => handleDeleteClassTriplet(ct.id)}>
-                                    {deletingClassTripletId === ct.id
-                                      ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                      : <Trash2 className="h-3.5 w-3.5" />}
-                                  </Button>
-                                </TableCell>
-                              </TableRow>
-                            )
-                          })}
-                        </TableBody>
-                      </Table>
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
-            {loading && triplets.length === 0 ? (
+            {loading && rows.length === 0 ? (
               <div className="flex h-32 items-center justify-center text-muted-foreground"><Loader2 className="h-5 w-5 animate-spin" /></div>
             ) : !currentProject ? (
               <p className="p-4 text-center text-sm text-muted-foreground">プロジェクトを選択してください</p>
-            ) : triplets.length === 0 ? (
+            ) : rows.length === 0 ? (
               <p className="p-4 text-center text-sm text-muted-foreground">トリプレットが登録されていません</p>
             ) : (
               <ListDndContext
                 onDrop={handleRowDrop}
                 canDrop={canDropRow}
                 labelOf={(id) => {
-                  const t = triplets.find((x) => x.id === id)
+                  const r = rowById.get(id)
                   return (
                     <span className="font-medium text-foreground">
-                      {t ? `${t.subjectName} → ${t.predicateName} → ${t.objectName}` : id}
+                      {r ? `${r.subjectLabel} → ${r.predicateLabel} → ${r.objectLabel}` : id}
                     </span>
                   )
                 }}
@@ -1061,11 +1079,11 @@ export function TripletsScreen({ active }: { active?: boolean }) {
                         <input
                           type="checkbox"
                           aria-label="表示中のトリプレットをすべて選択"
-                          checked={displayedTriplets.length > 0 && displayedTriplets.every((t) => selectedIds.has(t.id))}
+                          checked={displayedRows.length > 0 && displayedRows.every((r) => selectedIds.has(r.id))}
                           onChange={(e) => {
                             const next = new Set(selectedIds)
-                            if (e.target.checked) displayedTriplets.forEach((t) => next.add(t.id))
-                            else displayedTriplets.forEach((t) => next.delete(t.id))
+                            if (e.target.checked) displayedRows.forEach((r) => next.add(r.id))
+                            else displayedRows.forEach((r) => next.delete(r.id))
                             setSelectedIds(next)
                           }}
                         />
@@ -1076,58 +1094,87 @@ export function TripletsScreen({ active }: { active?: boolean }) {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {listRows.map((row) => {
-                      if (row.kind === "group") {
-                        const collapsed = collapsedGroupKeys.has(row.groupKey)
+                    {listRows.map((item) => {
+                      if (item.kind === "section") {
+                        const collapsed = collapsedGroupKeys.has(item.pattern)
                         return (
-                          <DropRow key={row.key} id={row.key} enabled={canReorder} className="bg-muted/40 hover:bg-muted/40">
-                            <TableCell colSpan={5} className="py-1.5">
+                          <DropRow key={item.key} id={item.key} enabled={canReorder} className="bg-muted/70 hover:bg-muted/70">
+                            <TableCell colSpan={5} className="py-2">
                               <button
                                 type="button"
-                                aria-label={`${row.label}を${collapsed ? "開く" : "閉じる"}`}
-                                onClick={() => toggleGroupKey(row.groupKey)}
-                                className="flex items-center gap-2 text-xs font-semibold text-foreground"
+                                aria-label={`${item.label}を${collapsed ? "開く" : "閉じる"}`}
+                                onClick={() => toggleGroupKey(item.pattern)}
+                                className="flex w-full items-start gap-2 text-left"
                               >
-                                {collapsed
-                                  ? <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
-                                  : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />}
-                                {row.label}
-                                <span className="font-normal text-muted-foreground">{row.count}件</span>
+                                <span className="mt-0.5 shrink-0">
+                                  {collapsed
+                                    ? <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                                    : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+                                </span>
+                                <span className="min-w-0">
+                                  <span className="flex items-center gap-2">
+                                    <span className="text-sm font-semibold text-foreground">{item.label}</span>
+                                    <span className="text-xs text-muted-foreground">{item.count}件</span>
+                                  </span>
+                                  {!collapsed && (
+                                    <span className="mt-0.5 block text-xs font-normal text-muted-foreground">{item.note}</span>
+                                  )}
+                                </span>
                               </button>
                             </TableCell>
                           </DropRow>
                         )
                       }
-                      const t = row.t
-                      const confirmStatus = deriveConfirmationStatus(t.confirmations)
-                      const state = confirmStatus.state
-                      const isChecked = selectedIds.has(t.id)
+                      if (item.kind === "group") {
+                        const collapsed = collapsedGroupKeys.has(item.groupKey)
+                        return (
+                          <DropRow key={item.key} id={item.key} enabled={canReorder} className="bg-muted/30 hover:bg-muted/30">
+                            <TableCell colSpan={5} className="py-1.5 pl-8">
+                              <button
+                                type="button"
+                                aria-label={`${item.label}を${collapsed ? "開く" : "閉じる"}`}
+                                onClick={() => toggleGroupKey(item.groupKey)}
+                                className="flex items-center gap-2 text-xs font-semibold text-foreground"
+                              >
+                                {collapsed
+                                  ? <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+                                  : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />}
+                                {item.label}
+                                <span className="font-normal text-muted-foreground">{item.count}件</span>
+                              </button>
+                            </TableCell>
+                          </DropRow>
+                        )
+                      }
+                      const r = item.row
+                      const confirmStatus = deriveConfirmationStatus(r.confirmations)
+                      const label = `${r.subjectLabel}→${r.predicateLabel}→${r.objectLabel}`
                       return (
                         <DragRow
-                          key={row.key}
-                          id={t.id}
-                          label={`${t.subjectName}→${t.predicateName}→${t.objectName}`}
+                          key={item.key}
+                          id={r.id}
+                          label={label}
                           enabled={canReorder}
                           className={cn(
                             "cursor-pointer transition-colors",
-                            selectedId === t.id
+                            selectedId === r.id
                               ? "bg-indigo-100 hover:bg-indigo-100 dark:bg-indigo-950/50 dark:hover:bg-indigo-950/50"
                               : "hover:bg-muted/50",
                           )}
-                          onClick={() => setSelectedId(t.id)}>
+                          onClick={() => setSelectedId(r.id)}>
                           <TableCell className="align-middle" onClick={(e) => e.stopPropagation()}>
                             <input
                               type="checkbox"
-                              aria-label={`${t.subjectName}→${t.predicateName}→${t.objectName}を選択`}
-                              checked={isChecked}
-                              onChange={() => toggleSelectConfirm(t.id)}
+                              aria-label={`${label}を選択`}
+                              checked={selectedIds.has(r.id)}
+                              onChange={() => toggleSelectConfirm(r.id)}
                             />
                           </TableCell>
-                          <TableCell className="align-middle"><TripleView t={t} /></TableCell>
+                          <TableCell className="align-middle"><RowTriple row={r} /></TableCell>
                           <TableCell className="align-middle">
-                            <ConfirmationBadge state={state} latestConfirm={confirmStatus.latestConfirm} />
+                            <ConfirmationBadge state={confirmStatus.state} latestConfirm={confirmStatus.latestConfirm} />
                           </TableCell>
-                          <TableCell className="align-middle text-sm text-muted-foreground">{t.sourceDocName || "—"}</TableCell>
+                          <TableCell className="align-middle text-sm text-muted-foreground">{r.sourceDocName || "—"}</TableCell>
                         </DragRow>
                       )
                     })}
@@ -1200,6 +1247,62 @@ export function TripletsScreen({ active }: { active?: boolean }) {
                 </Button>
                 <Button size="sm" variant="success" onClick={handleSave} disabled={!isComplete(editDraft) || saving || !editDirty || hasMissingRequired(attrsByRelation[editDraft.predicateRelationId] ?? [], editAttrValues)}>
                   {saving && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}保存
+                </Button>
+              </div>
+            </>
+          ) : selectedClassTriplet ? (
+            <>
+              <div className="flex-1 space-y-6 overflow-y-auto px-4 py-4">
+                <section className="space-y-3">
+                  <SectionHeader icon={FileText} title="基本情報" />
+                  <div className="space-y-3">
+                    <div className="space-y-1 text-xs text-muted-foreground">
+                      <ConfirmationSummary events={selectedClassTriplet.confirmations} fieldLabels={TRIPLET_FIELD_LABEL} />
+                      <p>登録日 {formatDateTime(selectedClassTriplet.createdAt)}{selectedClassTriplet.createdBy ? `（${selectedClassTriplet.createdBy}）` : ""}</p>
+                      <p>更新日 {formatDateTime(selectedClassTriplet.updatedAt)}{selectedClassTriplet.updatedBy ? `（${selectedClassTriplet.updatedBy}）` : ""}</p>
+                    </div>
+                    {(() => {
+                      const row = rowById.get(selectedClassTriplet.id)
+                      return row ? <RowTriple row={row} size="base" /> : null
+                    })()}
+                    <p className="rounded-md border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                      端にクラスを含むトリプレットは、ここでは差し替えられません。変えるときは削除して作り直してください。
+                    </p>
+                    <div className="space-y-1.5">
+                      <Label className="text-sm font-medium">確認</Label>
+                      <div className="flex items-center gap-2">
+                        {(() => {
+                          const status = deriveConfirmationStatus(selectedClassTriplet.confirmations)
+                          return (
+                            <>
+                              <ConfirmationBadge state={status.state} latestConfirm={status.latestConfirm} />
+                              {status.state === "unconfirmed" && (
+                                <Button size="sm" variant="outline" className="h-7 gap-1.5 bg-transparent"
+                                  onClick={() => setConfirmClassTripletId(selectedClassTriplet.id)}>
+                                  <CheckCircle2 className="h-3.5 w-3.5" />確認する
+                                </Button>
+                              )}
+                            </>
+                          )
+                        })()}
+                      </div>
+                    </div>
+                  </div>
+                </section>
+              </div>
+
+              <div className="flex items-center justify-between border-t border-border px-4 py-3">
+                <Button variant="ghost" size="sm"
+                  className="gap-1.5 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                  disabled={deletingClassTripletId === selectedClassTriplet.id}
+                  onClick={async () => {
+                    await handleDeleteClassTriplet(selectedClassTriplet.id)
+                    setSelectedId(null)
+                  }}>
+                  {deletingClassTripletId === selectedClassTriplet.id
+                    ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    : <Trash2 className="h-3.5 w-3.5" />}
+                  削除
                 </Button>
               </div>
             </>

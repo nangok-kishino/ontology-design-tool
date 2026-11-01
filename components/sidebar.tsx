@@ -4,7 +4,7 @@ import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { cn } from "@/lib/utils"
 import {
-  Boxes, Database, FolderOpen, BookOpen, LogOut, Lock, Settings, Waypoints,
+  Boxes, FolderOpen, BookOpen, LogOut, Lock, Settings, Waypoints,
 } from "lucide-react"
 import { useProject } from "@/app/project-context"
 import { ProjectSettingsDialog } from "@/components/project-settings-dialog"
@@ -27,15 +27,11 @@ const navGroups: NavGroup[] = [
     ],
   },
   {
-    label: "インスタンス作成",
-    icon: Database,
-    items: [{ id: "instances", label: "インスタンス管理" }],
-  },
-  {
     label: "ナレッジグラフ作成",
     icon: Waypoints,
     items: [
-      { id: "triplet-review", label: "トリプレット抽出", ai: true },
+      { id: "triplet-review", label: "ナレッジグラフ抽出", ai: true },
+      { id: "instances", label: "インスタンス管理" },
       { id: "triplets", label: "トリプレット管理" },
       { id: "graph", label: "グラフビュー" },
     ],

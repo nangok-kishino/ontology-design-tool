@@ -8,19 +8,23 @@
 //   左から右へ流す（lib/graph-layout.ts）。同じ親を持つクラス――支柱・ビーム・
 //   板のように部品図面の下にあるもの――は同じ列に入る。
 //
-//   ノード = インスタンス。カードはクラス名と名前の2段。
+//   ノード = インスタンス、またはクラスそのもの。カードは上段が種別（クラス名／
+//   「クラス」）、下段が名前。クラスのカードは縁を点線にして一目で分かるようにする。
 //   色は「どのクラスか」を示すためだけに使い、塗りは暗いまま縁と見出しに効かせる。
 //   エッジの色はリレーション定義ごと。
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import ForceGraph2D from "react-force-graph-2d"
-import type { Triplet, OntologyInstance, RelationCondition } from "@/lib/types"
+import type { RelationCondition } from "@/lib/types"
+import { endKey, type GraphEdge } from "@/lib/graph-edges"
 import { formatRelationCondition } from "@/lib/relation-conditions"
 import { NO_CLASS_HUE, cardAccent, cardBorder, cardFill, line, esc } from "@/lib/graph-colors"
 import { layeredLayout } from "@/lib/graph-layout"
 
 type GraphNode = {
   id: string
+  // クラスそのものか、インスタンスか
+  kind: "class" | "instance"
   name: string
   // カードに収まるよう必要なら末尾を詰めた表示用の文字列
   label: string
@@ -98,8 +102,7 @@ function bezierAt(p: EdgePath, t: number) {
 }
 
 export default function TripletGraphCanvas({
-  triplets,
-  instById,
+  edges,
   classNameById,
   attrNameById,
   conditionsByRelationId,
@@ -110,8 +113,8 @@ export default function TripletGraphCanvas({
   height,
   onSelectNode,
 }: {
-  triplets: Triplet[]
-  instById: Map<string, OntologyInstance>
+  // インスタンス同士・クラスを含む、どちらのトリプレットも同じ形で受け取る
+  edges: GraphEdge[]
   classNameById: Map<string, string>
   attrNameById?: Map<string, string>
   conditionsByRelationId?: Map<string, RelationCondition[]>
@@ -121,7 +124,6 @@ export default function TripletGraphCanvas({
   hueByRelationId?: Map<string, number>
   // クラスid → そのルートクラスid（列の括りに使う）
   rootClassIdById?: Map<string, string>
-  relationNameById?: Map<string, string>
   width: number
   height: number
   onSelectNode?: (instanceId: string) => void
@@ -162,60 +164,66 @@ export default function TripletGraphCanvas({
     [measure],
   )
 
-  // triplets → {nodes, links} + 隣接情報。配置もここで決めて固定する。
+  // edges → {nodes, links} + 隣接情報。配置もここで決めて固定する。
   const { data, adjacency } = useMemo(() => {
     const nodeMap = new Map<string, GraphNode>()
     const adjacency = new Map<string, Set<string>>()
     const inner = CARD_MAX_W - CARD_PAD_X * 2
 
-    const touch = (id: string, name: string, classId: string | null) => {
-      if (nodeMap.has(id)) return
-      const inst = instById.get(id)
-      const cid = inst?.classId ?? classId
-      const className = (cid ? classNameById.get(cid) : undefined) ?? "未分類"
-      const full = inst?.name ?? name
-      const label = fitText(full, NAME_FONT, inner)
-      const classLabel = fitText(className, CLASS_FONT, inner)
+    const touch = (end: GraphEdge["source"]) => {
+      const id = endKey(end)
+      if (nodeMap.has(id)) return id
+      const cid = end.classId
+      // 上段はインスタンスなら所属クラス名、クラスそのものなら「クラス」
+      const kindLabel = end.kind === "class" ? "クラス" : ((cid ? classNameById.get(cid) : undefined) ?? "未分類")
+      const label = fitText(end.name, NAME_FONT, inner)
+      const classLabel = fitText(kindLabel, CLASS_FONT, inner)
       nodeMap.set(id, {
         id,
-        name: full,
+        kind: end.kind,
+        name: end.name,
         label,
         classId: cid,
         groupId: (cid ? rootClassIdById?.get(cid) : undefined) ?? cid ?? "",
-        className,
+        className: kindLabel,
         classLabel,
         hue: (cid ? hueByClassId?.get(cid) : undefined) ?? NO_CLASS_HUE,
         w: Math.max(CARD_MIN_W, Math.max(measure(label, NAME_FONT), measure(classLabel, CLASS_FONT)) + CARD_PAD_X * 2),
         h: CARD_H,
         layer: 0,
       })
+      return id
     }
 
     const links: GraphLink[] = []
-    for (const t of triplets) {
-      touch(t.subjectInstanceId, t.subjectName, t.subjectClassId)
-      touch(t.objectInstanceId, t.objectName, t.objectClassId)
+    for (const e of edges) {
+      const sid = touch(e.source)
+      const tid = touch(e.target)
+      if (sid === tid) continue
       links.push({
-        id: t.id,
-        source: t.subjectInstanceId,
-        target: t.objectInstanceId,
-        label: t.predicateName,
-        predicateRelationId: t.predicateRelationId,
-        attributes: t.attributes ?? {},
-        hue: hueByRelationId?.get(t.predicateRelationId) ?? 210,
+        id: e.id,
+        source: sid,
+        target: tid,
+        label: e.predicateName,
+        predicateRelationId: e.predicateRelationId,
+        attributes: e.attributes,
+        hue: hueByRelationId?.get(e.predicateRelationId) ?? 210,
       })
-      if (!adjacency.has(t.subjectInstanceId)) adjacency.set(t.subjectInstanceId, new Set())
-      if (!adjacency.has(t.objectInstanceId)) adjacency.set(t.objectInstanceId, new Set())
-      adjacency.get(t.subjectInstanceId)!.add(t.objectInstanceId)
-      adjacency.get(t.objectInstanceId)!.add(t.subjectInstanceId)
+      if (!adjacency.has(sid)) adjacency.set(sid, new Set())
+      if (!adjacency.has(tid)) adjacency.set(tid, new Set())
+      adjacency.get(sid)!.add(tid)
+      adjacency.get(tid)!.add(sid)
     }
 
-    // クラス一覧の並び順で渡す（列の中はその順にクラスが並ぶ）
+    // クラス一覧の並び順で渡す（列の中はその順にクラスが並ぶ）。
+    // 同じクラスの中では、クラスそのもののカードを先頭に置く。
     const classRank = new Map([...(hueByClassId?.keys() ?? [])].map((id, i) => [id, i]))
     const nodes = [...nodeMap.values()].sort(
       (a, b) =>
         (classRank.get(a.classId ?? "") ?? Number.MAX_SAFE_INTEGER) -
-          (classRank.get(b.classId ?? "") ?? Number.MAX_SAFE_INTEGER) || a.name.localeCompare(b.name),
+          (classRank.get(b.classId ?? "") ?? Number.MAX_SAFE_INTEGER) ||
+        (a.kind === b.kind ? 0 : a.kind === "class" ? -1 : 1) ||
+        a.name.localeCompare(b.name),
     )
     const placement = layeredLayout(
       nodes.map((n) => ({ id: n.id, w: n.w, h: n.h, classId: n.classId, groupId: n.groupId })),
@@ -232,7 +240,7 @@ export default function TripletGraphCanvas({
     }
 
     return { data: { nodes, links }, adjacency }
-  }, [triplets, instById, classNameById, hueByClassId, hueByRelationId, rootClassIdById, measure, fitText])
+  }, [edges, classNameById, hueByClassId, hueByRelationId, rootClassIdById, measure, fitText])
 
   // 全ノードが収まる拡大率を自前で算出し、上限(MAX_ZOOM)でクランプしてフィット。
   const fitToView = useCallback(
@@ -351,7 +359,10 @@ export default function TripletGraphCanvas({
       ctx.fill()
       ctx.lineWidth = focused ? 1.6 : 1
       ctx.strokeStyle = cardBorder(node.hue, focused)
+      // クラスそのもののカードは縁を破線に（個々のものではなく「種類」を表すため）
+      ctx.setLineDash(node.kind === "class" ? [4, 3] : [])
       ctx.stroke()
+      ctx.setLineDash([])
 
       ctx.textAlign = "left"
       ctx.textBaseline = "middle"
@@ -482,7 +493,7 @@ export default function TripletGraphCanvas({
         fg.centerAt(node.x, node.y, 500)
         window.setTimeout(() => { programmaticRef.current = false }, 620)
       }
-      onSelectNode?.(node.id)
+      onSelectNode?.(node.id.slice(node.id.indexOf(":") + 1))
     },
     [onSelectNode],
   )
@@ -520,7 +531,9 @@ export default function TripletGraphCanvas({
       nodeVal={((n: GraphNode) => n.w * n.h) as any}
       nodeCanvasObject={paintNode as any}
       nodePointerAreaPaint={paintNodePointerArea as any}
-      nodeLabel={((n: GraphNode) => `<div class="gv-tt-name">${esc(n.name)}</div><div class="gv-tt-sub">${esc(n.className)}</div>`) as any}
+      nodeLabel={((n: GraphNode) =>
+        `<div class="gv-tt-name">${esc(n.name)}</div>` +
+        `<div class="gv-tt-sub">${esc(n.kind === "class" ? "クラス" : n.className)}</div>`) as any}
       linkLabel={((l: GraphLink) => {
         const head =
           `<div class="gv-tt-name">${esc(l.label)}</div>` +
