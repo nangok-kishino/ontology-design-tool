@@ -27,6 +27,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { TopBar } from "@/components/top-bar"
+import { DragRow, DropRow, ListDndContext } from "@/components/list-dnd"
 import { SectionHeader } from "@/components/section-header"
 import { AttrValueList, hasMissingRequired } from "@/components/attr-fields"
 import { cn } from "@/lib/utils"
@@ -34,6 +35,7 @@ import { classMap, isSelfOrDescendant } from "@/lib/relation-inherit"
 import { useProject } from "@/app/project-context"
 import { isRegistered } from "@/lib/instance-status"
 import { groupBy, runWithConcurrency } from "@/lib/concurrency"
+import { orderBetween, placeAt, renumber, sortByOrder } from "@/lib/organize"
 import { buildCypher } from "@/lib/graph-export"
 import type { Triplet, ClassTriplet, OntologyInstance, OntologyRelation, OntologyClass, OntologyAttribute } from "@/lib/types"
 import { ArrowRight, Plus, Trash2, Loader2, Download, FileText, Tags, CheckCircle2, X, ChevronDown, ChevronRight } from "lucide-react"
@@ -41,6 +43,9 @@ import { deriveConfirmationStatus, type ConfirmationState } from "@/lib/confirma
 import { ConfirmationBadge } from "@/components/confirmation-badge"
 import { ConfirmDialog } from "@/components/confirm-dialog"
 import { ConfirmationSummary } from "@/components/confirmation-summary"
+
+// グループ見出しの行id。トリプレットのidと混ざらないように印を付ける。
+const GROUP_ROW_PREFIX = "group:"
 
 const TRIPLET_FIELD_LABEL: Record<string, string> = {
   subjectInstanceId: "主語",
@@ -117,6 +122,11 @@ export function TripletsScreen({ active }: { active?: boolean }) {
 
   // Neo4jエクスポート
   const [showExport, setShowExport] = useState(false)
+
+  // 一覧の見せ方：述語のリレーションごとにまとめるか、1本の並びで出すか
+  const [groupByRelation, setGroupByRelation] = useState(true)
+  const [collapsedGroupKeys, setCollapsedGroupKeys] = useState<Set<string>>(new Set())
+  const [movingOrder, setMovingOrder] = useState(false)
 
   // 確認機構
   const [filterState, setFilterState] = useState<"all" | ConfirmationState>("all")
@@ -196,10 +206,122 @@ export function TripletsScreen({ active }: { active?: boolean }) {
 
   const selected = triplets.find((t) => t.id === selectedId) ?? null
 
-  // 表示中トリプレット（確認状態フィルタ）
-  const displayedTriplets = filterState === "all"
-    ? triplets
-    : triplets.filter((t) => deriveConfirmationStatus(t.confirmations).state === filterState)
+  // 表示中トリプレット（確認状態フィルタ）。並びは order（未設定は末尾）。
+  const displayedTriplets = useMemo(() => {
+    const base = filterState === "all"
+      ? triplets
+      : triplets.filter((t) => deriveConfirmationStatus(t.confirmations).state === filterState)
+    return sortByOrder(base)
+  }, [triplets, filterState])
+
+  // 並べ替えは全件表示のときだけ。絞り込み中は隠れた行と入れ替わって挙動が読めなくなる。
+  const canReorder = filterState === "all"
+
+  const toggleGroupKey = (key: string) =>
+    setCollapsedGroupKeys((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+
+  type ListRow =
+    | { kind: "group"; key: string; groupKey: string; label: string; count: number }
+    | { kind: "triplet"; key: string; t: Triplet }
+
+  // 述語リレーションごとに仕分けして並べる。見出しの順はリレーション管理の並び順に合わせ、
+  // 定義が見つからない述語（消されたリレーション）は最後にまとめる。
+  const listRows: ListRow[] = useMemo(() => {
+    if (!groupByRelation) {
+      return displayedTriplets.map((t) => ({ kind: "triplet" as const, key: t.id, t }))
+    }
+    const buckets = new Map<string, Triplet[]>()
+    for (const t of displayedTriplets) {
+      const list = buckets.get(t.predicateRelationId)
+      if (list) list.push(t)
+      else buckets.set(t.predicateRelationId, [t])
+    }
+    const known = sortByOrder(relations).map((r) => r.id)
+    const rest = [...buckets.keys()].filter((id) => !known.includes(id)).sort()
+    return [...known, ...rest].flatMap((relationId) => {
+      const items = buckets.get(relationId) ?? []
+      if (items.length === 0) return []
+      return [
+        {
+          kind: "group" as const,
+          key: `${GROUP_ROW_PREFIX}${relationId}`,
+          groupKey: relationId,
+          label: relById.get(relationId)?.name ?? items[0].predicateName ?? "（定義なし）",
+          count: items.length,
+        },
+        ...(collapsedGroupKeys.has(relationId)
+          ? []
+          : items.map((t) => ({ kind: "triplet" as const, key: t.id, t }))),
+      ]
+    })
+  }, [displayedTriplets, groupByRelation, relations, relById, collapsedGroupKeys])
+
+  // 並び順の書き込み。前後に隙間があればその1件だけ、尽きていたら並び全体を振り直す。
+  // order は整理の都合なので、確認履歴にも更新日時にも手を付けない（サーバ側も同じ方針）。
+  const applyOrder = async (ordered: Triplet[], index: number) => {
+    if (!currentProject) return
+    const unnumbered = ordered.some((t) => t.order === undefined)
+    const between = unnumbered ? null : orderBetween(ordered[index - 1], ordered[index + 1])
+    const updates = between === null
+      ? renumber(ordered)
+      : [{ id: ordered[index].id, order: between }]
+    const byId = new Map(updates.map((u) => [u.id, u.order]))
+    const before = triplets
+    setMovingOrder(true)
+    setTriplets((prev) => prev.map((t) => (byId.has(t.id) ? { ...t, order: byId.get(t.id) } : t)))
+    try {
+      const res = await fetch("/api/triplets/reorder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId: currentProject.id, updates }),
+      })
+      if (!res.ok) setTriplets(before)
+    } catch {
+      setTriplets(before)
+    } finally {
+      setMovingOrder(false)
+    }
+  }
+
+  // 落とし先の行が属する並び（グループ表示なら同じ述語の中だけ）
+  const siblingsOf = (t: Triplet) =>
+    groupByRelation
+      ? displayedTriplets.filter((x) => x.predicateRelationId === t.predicateRelationId)
+      : displayedTriplets
+
+  // 述語が違う行には落とせない。述語を変えるのは並べ替えではなく編集なので、
+  // ドラッグで変わってしまわないようにする。
+  const predicateOfRow = (rowId: string) =>
+    rowId.startsWith(GROUP_ROW_PREFIX)
+      ? rowId.slice(GROUP_ROW_PREFIX.length)
+      : triplets.find((t) => t.id === rowId)?.predicateRelationId ?? null
+
+  const canDropRow = (activeId: string, overId: string) => {
+    if (!groupByRelation) return true
+    const a = predicateOfRow(activeId)
+    return a !== null && a === predicateOfRow(overId)
+  }
+
+  // 一覧表で行を落としたとき。見出しならその末尾、行ならその位置へ入れる。
+  const handleRowDrop = (activeId: string, overId: string) => {
+    const moved = triplets.find((t) => t.id === activeId)
+    if (!moved || !canDropRow(activeId, overId)) return
+    const list = siblingsOf(moved)
+    if (overId.startsWith(GROUP_ROW_PREFIX)) {
+      const { ordered, index } = placeAt(list, moved)
+      applyOrder(ordered, index)
+      return
+    }
+    const target = triplets.find((t) => t.id === overId)
+    if (!target) return
+    const { ordered, index } = placeAt(list, moved, target.id)
+    applyOrder(ordered, index)
+  }
 
   const confirmSelectedStates = Array.from(selectedIds).map((id) => {
     const t = triplets.find((tt) => tt.id === id)
@@ -775,6 +897,35 @@ export function TripletsScreen({ active }: { active?: boolean }) {
                 {opt.label}
               </button>
             ))}
+            <span className="ml-2 border-l border-border pl-3 text-muted-foreground">まとめ方：</span>
+            <button
+              type="button"
+              className={cn(
+                "rounded-full border px-2.5 py-0.5 transition-colors",
+                groupByRelation
+                  ? "border-indigo-400 bg-indigo-100 text-indigo-800 dark:border-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-200"
+                  : "border-border text-muted-foreground hover:bg-muted",
+              )}
+              onClick={() => setGroupByRelation(true)}
+            >
+              リレーションごと
+            </button>
+            <button
+              type="button"
+              className={cn(
+                "rounded-full border px-2.5 py-0.5 transition-colors",
+                !groupByRelation
+                  ? "border-indigo-400 bg-indigo-100 text-indigo-800 dark:border-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-200"
+                  : "border-border text-muted-foreground hover:bg-muted",
+              )}
+              onClick={() => setGroupByRelation(false)}
+            >
+              まとめない
+            </button>
+            {movingOrder && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+            {!canReorder && (
+              <span className="text-muted-foreground">（絞り込み中は並べ替えできません）</span>
+            )}
           </div>
           {selectedIds.size > 0 && (canBulkConfirm || canBulkUnconfirm) && (
             <div className="flex items-center gap-2 px-6 pb-3 text-xs">
@@ -889,10 +1040,23 @@ export function TripletsScreen({ active }: { active?: boolean }) {
             ) : triplets.length === 0 ? (
               <p className="p-4 text-center text-sm text-muted-foreground">トリプレットが登録されていません</p>
             ) : (
+              <ListDndContext
+                onDrop={handleRowDrop}
+                canDrop={canDropRow}
+                labelOf={(id) => {
+                  const t = triplets.find((x) => x.id === id)
+                  return (
+                    <span className="font-medium text-foreground">
+                      {t ? `${t.subjectName} → ${t.predicateName} → ${t.objectName}` : id}
+                    </span>
+                  )
+                }}
+              >
               <div className="overflow-x-auto rounded-lg border border-border">
                 <Table>
                   <TableHeader>
                     <TableRow className="bg-muted/50 hover:bg-muted/50">
+                      <TableHead className="w-8" />
                       <TableHead className="w-10">
                         <input
                           type="checkbox"
@@ -912,12 +1076,38 @@ export function TripletsScreen({ active }: { active?: boolean }) {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {displayedTriplets.map((t) => {
+                    {listRows.map((row) => {
+                      if (row.kind === "group") {
+                        const collapsed = collapsedGroupKeys.has(row.groupKey)
+                        return (
+                          <DropRow key={row.key} id={row.key} enabled={canReorder} className="bg-muted/40 hover:bg-muted/40">
+                            <TableCell colSpan={5} className="py-1.5">
+                              <button
+                                type="button"
+                                aria-label={`${row.label}を${collapsed ? "開く" : "閉じる"}`}
+                                onClick={() => toggleGroupKey(row.groupKey)}
+                                className="flex items-center gap-2 text-xs font-semibold text-foreground"
+                              >
+                                {collapsed
+                                  ? <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+                                  : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />}
+                                {row.label}
+                                <span className="font-normal text-muted-foreground">{row.count}件</span>
+                              </button>
+                            </TableCell>
+                          </DropRow>
+                        )
+                      }
+                      const t = row.t
                       const confirmStatus = deriveConfirmationStatus(t.confirmations)
                       const state = confirmStatus.state
                       const isChecked = selectedIds.has(t.id)
                       return (
-                        <TableRow key={t.id}
+                        <DragRow
+                          key={row.key}
+                          id={t.id}
+                          label={`${t.subjectName}→${t.predicateName}→${t.objectName}`}
+                          enabled={canReorder}
                           className={cn(
                             "cursor-pointer transition-colors",
                             selectedId === t.id
@@ -938,12 +1128,13 @@ export function TripletsScreen({ active }: { active?: boolean }) {
                             <ConfirmationBadge state={state} latestConfirm={confirmStatus.latestConfirm} />
                           </TableCell>
                           <TableCell className="align-middle text-sm text-muted-foreground">{t.sourceDocName || "—"}</TableCell>
-                        </TableRow>
+                        </DragRow>
                       )
                     })}
                   </TableBody>
                 </Table>
               </div>
+              </ListDndContext>
             )}
           </div>
         </div>

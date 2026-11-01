@@ -4,25 +4,17 @@ import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { cn } from "@/lib/utils"
 import {
-  LayoutGrid, Boxes, Database, FolderOpen, BookOpen, LogOut, Lock, Settings, Waypoints,
+  Boxes, Database, FolderOpen, BookOpen, LogOut, Lock, Settings, Waypoints,
 } from "lucide-react"
 import { useProject } from "@/app/project-context"
 import { ProjectSettingsDialog } from "@/components/project-settings-dialog"
 
-export type ScreenId = "dashboard" | "review" | "classes" | "relations" | "instances" | "triplets" | "triplet-review" | "graph" | "schema" | "synonyms" | "ontology-info"
+export type ScreenId = "review" | "classes" | "relations" | "instances" | "triplets" | "triplet-review" | "graph" | "schema" | "synonyms" | "ontology-info"
 
 type NavItem = { id: ScreenId; label: string; ai?: boolean }
 type NavGroup = { label: string; icon: React.ElementType; items: NavItem[] }
 
 const navGroups: NavGroup[] = [
-  {
-    label: "全体",
-    icon: LayoutGrid,
-    items: [
-      { id: "dashboard", label: "ダッシュボード" },
-      { id: "graph", label: "グラフビュー" },
-    ],
-  },
   {
     label: "オントロジー設計",
     icon: Boxes,
@@ -45,6 +37,7 @@ const navGroups: NavGroup[] = [
     items: [
       { id: "triplet-review", label: "トリプレット抽出", ai: true },
       { id: "triplets", label: "トリプレット管理" },
+      { id: "graph", label: "グラフビュー" },
     ],
   },
 ]
@@ -121,7 +114,7 @@ export function Sidebar({
           </div>
         ) : (
           <button
-            onClick={() => onNavigate("dashboard")}
+            onClick={() => onNavigate("classes")}
             className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left transition-colors hover:bg-white/5"
           >
             <FolderOpen className="h-3.5 w-3.5 shrink-0 text-zinc-500" />

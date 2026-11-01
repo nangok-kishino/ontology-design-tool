@@ -36,7 +36,7 @@ import { GroupManagerDialog, useGroups } from "@/components/group-manager"
 import { GroupBoard, ViewToggle, type BoardViewMode, type ReorderUpdate } from "@/components/group-board"
 import { DragRow, DropRow, ListDndContext } from "@/components/list-dnd"
 import { cn } from "@/lib/utils"
-import { UNGROUPED, placeAt, reorderUpdates, sortByOrder, sortGroups } from "@/lib/organize"
+import { UNGROUPED, nextOrder, placeAt, reorderUpdates, sortByOrder, sortGroups } from "@/lib/organize"
 import type { OntologyRelation, OntologyClass, OntologyAttribute, OntologyGroup, AttributeRequired, ClassPair, RelationCondition, RelationConditionOperator } from "@/lib/types"
 import {
   buildRelationsYaml,
@@ -120,6 +120,8 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
   const [newDesc, setNewDesc] = useState("")
   const [newPairs, setNewPairs] = useState<ClassPair[]>([{ sourceClassId: "", targetClassId: "" }])
   const [newConditions, setNewConditions] = useState<RelationCondition[]>([])
+  // 登録時の所属グループ（"" ＝未分類）。後から詳細ペインでも変えられる。
+  const [newGroupId, setNewGroupId] = useState<string>("")
   const [adding, setAdding] = useState(false)
 
   // 編集モード
@@ -279,6 +281,9 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
           description: newDesc.trim(),
           classPairs: newPairs,
           conditions: normalizeConditions(newConditions),
+          // 選んだグループの末尾に置く
+          groupId: newGroupId || null,
+          order: nextOrder(relations.filter((r) => (r.groupId ?? "") === newGroupId)),
         }),
       })
       if (!res.ok) return
@@ -287,7 +292,7 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
       setRelations((prev) => [...prev, created])
       setSelectedId(created.id)
       setShowAdd(false)
-      setNewName(""); setNewNameEn(""); setNewDesc(""); setNewPairs([{ sourceClassId: "", targetClassId: "" }]); setNewConditions([])
+      setNewName(""); setNewNameEn(""); setNewDesc(""); setNewPairs([{ sourceClassId: "", targetClassId: "" }]); setNewConditions([]); setNewGroupId("")
     } finally {
       setAdding(false)
     }
@@ -1357,6 +1362,23 @@ export function RelationsScreen({ initialSelectedId, active }: { initialSelected
               <Label>説明</Label>
               <Textarea rows={3} value={newDesc} onChange={(e) => setNewDesc(e.target.value)}
                 placeholder="リレーションの意味・用途を記述" />
+            </div>
+            <div className="space-y-2">
+              <Label>グループ</Label>
+              <Select value={newGroupId || "__none__"} onValueChange={(v) => setNewGroupId(v && v !== "__none__" ? v : "")}>
+                <SelectTrigger>
+                  <SelectValue>{groups.find((g) => g.id === newGroupId)?.name ?? "未分類"}</SelectValue>
+                </SelectTrigger>
+                <SelectContent className="max-h-72">
+                  <SelectItem value="__none__">未分類</SelectItem>
+                  {sortGroups(groups).map((g) => (
+                    <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                一覧を見やすくするための整理用の区分です。オントロジーの意味やエクスポートには影響しません。
+              </p>
             </div>
             <div className="space-y-2">
               <Label>成立条件</Label>

@@ -4,6 +4,7 @@ import { getPrincipalName } from "@/lib/auth"
 import { checkProjectAccess } from "@/lib/project-access"
 import { loadClassParents } from "@/lib/class-parents"
 import { normalizeClassPairs } from "@/lib/relation-inherit"
+import { groupsOf } from "@/lib/organize"
 import type { OntologyRelation } from "@/lib/types"
 
 const CONTAINER = "relations"
@@ -47,9 +48,14 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
+    // 登録時に選んだ整理用グループ。このプロジェクトのリレーション用グループに
+    // 無いものを渡されたら未分類として扱う。
+    let groupId: string | null = null
     if (body.projectId) {
       const access = await checkProjectAccess(request, body.projectId)
       if ("error" in access) return access.error
+      const known = new Set(groupsOf(access.project, "relation").map((g) => g.id))
+      groupId = body.groupId && known.has(body.groupId) ? body.groupId : null
     }
     const classes = body.projectId ? await loadClassParents(body.projectId) : []
     const now = new Date().toISOString()
@@ -64,6 +70,8 @@ export async function POST(request: NextRequest) {
       classPairs: normalizeClassPairs(body.classPairs ?? [], classes),
       parentRelationId: body.parentRelationId ?? null,
       conditions: Array.isArray(body.conditions) ? body.conditions : [],
+      groupId,
+      order: typeof body.order === "number" ? body.order : undefined,
       createdBy: actor,
       updatedBy: actor,
       createdAt: now,

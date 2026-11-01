@@ -301,6 +301,10 @@ export type Triplet = {
   // 属性の id（プロジェクト共通属性＋リレーション固有属性）。値は表示文字列。
   attributes?: Record<string, string>
   sourceCandidateId?: string // 由来の TripletCandidate（手動追加なら未設定）
+  // 一覧での並び順。未設定は末尾（読み取り側で createdAt を副キーに安定ソート）。
+  // クラス／リレーションと同じく 1000 刻みで振り、ドラッグ時は前後の中間値を
+  // 1件だけ書き込む。整理の都合なのでエクスポートにも確認にも影響しない。
+  order?: number
   approvedBy: string
   approvedAt: string
   neo4jSynced?: boolean

@@ -2,7 +2,6 @@
 
 import { useState } from "react"
 import { Sidebar, type ScreenId } from "@/components/sidebar"
-import { DashboardScreen } from "@/components/dashboard-screen"
 import { ClassesScreen } from "@/components/classes-screen"
 import { RelationsScreen } from "@/components/relations-screen"
 import { ReviewScreen } from "@/components/review-screen"
@@ -19,9 +18,10 @@ import { useProject } from "@/app/project-context"
 
 function AppContent() {
   const { currentProject, loading } = useProject()
-  const [screen, setScreen] = useState<ScreenId>("dashboard")
+  // プロジェクトを開いた直後はクラス管理（オントロジー設計が主、という手順どおりに）
+  const [screen, setScreen] = useState<ScreenId>("classes")
   const [initialSelectId, setInitialSelectId] = useState<string | undefined>(undefined)
-  const [hasVisitedClasses, setHasVisitedClasses] = useState(false)
+  const [hasVisitedClasses, setHasVisitedClasses] = useState(true)
   const [hasVisitedRelations, setHasVisitedRelations] = useState(false)
   const [hasVisitedInstances, setHasVisitedInstances] = useState(false)
   const [hasVisitedReview, setHasVisitedReview] = useState(false)
@@ -59,9 +59,6 @@ function AppContent() {
           <ProjectWelcomeScreen />
         ) : (
           <>
-            <div className={screen === "dashboard" ? "h-full" : "hidden"}>
-              <DashboardScreen onNavigate={navigate} active={screen === "dashboard"} />
-            </div>
             {hasVisitedClasses && (
               <div className={screen === "classes" ? "h-full" : "hidden"}>
                 <ClassesScreen initialSelectedId={initialSelectId} active={screen === "classes"} />
