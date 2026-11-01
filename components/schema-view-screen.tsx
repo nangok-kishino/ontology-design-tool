@@ -18,6 +18,7 @@ import { LabelChip } from "@/components/label-chip"
 import { cn } from "@/lib/utils"
 import { normalizeName } from "@/lib/normalize"
 import { useProject } from "@/app/project-context"
+import { useListOrder } from "@/components/use-list-order"
 import type { Label, RelationshipType } from "@/lib/graph-types"
 
 // 中心のラベルから見た1タイプ分（同じタイプの相手ラベルはまとめて1行にする）
@@ -90,13 +91,16 @@ export function SchemaViewScreen({ active }: { active?: boolean }) {
     if (top) setSelectedId(top.id)
   }, [labels, degree, selectedId, labelById])
 
-  const listed = useMemo(() => {
+  // 左の一覧はラベル管理と同じ並び（ラベルグループの順、その中は手で並べた順）にする
+  const { grouped: labelGroups } = useListOrder(labels, projectId, "class", active)
+  const listedGroups = useMemo(() => {
     const q = normalizeName(query)
-    return [...labels]
-      .filter((l) => !l.system)
-      .filter((l) => !q || normalizeName(l.name).includes(q) || normalizeName(l.nameEn ?? "").includes(q))
-      .sort((a, b) => a.name.localeCompare(b.name, "ja"))
-  }, [labels, query])
+    const hit = (l: Label) => !l.system &&
+      (!q || normalizeName(l.name).includes(q) || normalizeName(l.nameEn ?? "").includes(q))
+    return labelGroups
+      .map((g) => ({ ...g, items: g.items.filter(hit) }))
+      .filter((g) => g.items.length > 0)
+  }, [labelGroups, query])
 
   // 中心のラベルが終点になるもの（左に並べる）と始点になるもの（右に並べる）に分ける。
   // 始点・終点とも自分自身のものは右に入れる（相手のチップが自分になる）。
@@ -227,23 +231,33 @@ export function SchemaViewScreen({ active }: { active?: boolean }) {
             <span>タイプ数</span>
           </div>
           <div className="flex-1 overflow-y-auto px-2 pb-4">
-            {listed.map((l) => {
-              const d = degree.get(l.id) ?? 0
-              return (
-                <button key={l.id} type="button"
-                  className={cn(
-                    "flex w-full items-center justify-between rounded-md px-2.5 py-1.5 text-left text-sm transition-colors",
-                    selectedId === l.id
-                      ? "bg-indigo-100 text-indigo-900 dark:bg-indigo-950/60 dark:text-indigo-100"
-                      : "hover:bg-muted",
-                    d === 0 && selectedId !== l.id && "text-muted-foreground",
-                  )}
-                  onClick={() => setSelectedId(l.id)}>
-                  <span className="truncate">{l.name}</span>
-                  <span className="ml-2 shrink-0 text-xs text-muted-foreground">{d}</span>
-                </button>
-              )
-            })}
+            {listedGroups.map((g) => (
+              <div key={g.key} className="mb-2">
+                <div className="flex items-center gap-1.5 px-2.5 pb-1 pt-2 text-xs">
+                  <span className="h-2 w-2 shrink-0 rounded-full border border-border"
+                    style={g.color ? { backgroundColor: g.color } : undefined} />
+                  <span className="text-muted-foreground">ラベルグループ：</span>
+                  <span className="truncate font-semibold text-foreground">{g.name}</span>
+                </div>
+                {g.items.map((l) => {
+                  const d = degree.get(l.id) ?? 0
+                  return (
+                    <button key={l.id} type="button"
+                      className={cn(
+                        "flex w-full items-center justify-between rounded-md px-2.5 py-1.5 text-left text-sm transition-colors",
+                        selectedId === l.id
+                          ? "bg-indigo-100 text-indigo-900 dark:bg-indigo-950/60 dark:text-indigo-100"
+                          : "hover:bg-muted",
+                        d === 0 && selectedId !== l.id && "text-muted-foreground",
+                      )}
+                      onClick={() => setSelectedId(l.id)}>
+                      <span className="truncate">{l.name}</span>
+                      <span className="ml-2 shrink-0 text-xs text-muted-foreground">{d}</span>
+                    </button>
+                  )
+                })}
+              </div>
+            ))}
           </div>
         </div>
 

@@ -17,6 +17,7 @@ import { LabelChip, LabelChips } from "@/components/label-chip"
 import { cn } from "@/lib/utils"
 import { normalizeName } from "@/lib/normalize"
 import { useProject } from "@/app/project-context"
+import { useListOrder } from "@/components/use-list-order"
 import type { GraphNode, Label, LabelPair, RelationshipType } from "@/lib/graph-types"
 import {
   LLM_ANALYSIS_MODEL_LABEL,
@@ -464,7 +465,9 @@ export function LlmAnalysisScreen({ active }: { active?: boolean }) {
     const [kind, id] = v.split(":")
     return kind === "label" ? { kind: "label", id } : { kind: "candidate", id }
   }
-  const sortedLabels = useMemo(() => labels.filter((l) => !l.system).sort((a, b) => a.name.localeCompare(b.name, "ja")), [labels])
+  // ラベルの選択肢はラベル管理と同じ並び
+  const { ordered: orderedLabels } = useListOrder(labels, projectId, "class", active)
+  const sortedLabels = useMemo(() => orderedLabels.filter((l) => !l.system), [orderedLabels])
   const pendingLabelCands = (current?.labels ?? []).filter((c) => c.status === "pending")
 
   const LabelRefSelect = ({ c, side }: { c: RelTypeCandidate; side: "source" | "target" }) => {

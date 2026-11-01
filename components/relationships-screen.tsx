@@ -39,6 +39,7 @@ import {
   AlertTriangle, ArrowRight, CheckCircle2, FileText, Filter, Loader2, Plus, Search, Tags, Trash2, X,
 } from "lucide-react"
 import { useProject } from "@/app/project-context"
+import { useListOrder } from "@/components/use-list-order"
 
 const ALL = "__all__"
 
@@ -305,18 +306,21 @@ export function RelationshipsScreen({ active }: { active?: boolean }) {
     )
   }
 
+  // タイプはリレーションシップタイプ管理と同じ並び（タイプグループの順、その中は手で並べた順）
+  const { ordered: orderedTypes } = useListOrder(relTypes, projectId, "relation", active)
+
   // ─── 追加 ───
   const liveNodes = useMemo(() => nodes.filter((n) => n.status !== "merged"), [nodes])
   const newStart = newStartId ? nodeById.get(newStartId) ?? null : null
 
   // 始点のラベルで使えるタイプだけに絞る（スキーマに沿う指定のとき）
   const typeChoices = useMemo(() => {
-    const sorted = [...relTypes].sort((a, b) => a.name.localeCompare(b.name, "ja"))
+    const sorted = orderedTypes
     if (!restrictToSchema || !newStart) return sorted
     return sorted.filter((t) =>
       (t.labelPairs ?? []).some((p) => (newStart.labelIds ?? []).includes(p.sourceLabelId)),
     )
-  }, [relTypes, restrictToSchema, newStart])
+  }, [orderedTypes, restrictToSchema, newStart])
 
   // 選んだタイプ・始点で許される終点ラベルを持つノードだけに絞る
   const endChoices = useMemo(() => {
@@ -548,7 +552,7 @@ export function RelationshipsScreen({ active }: { active?: boolean }) {
                 </SelectTrigger>
                 <SelectContent className="max-h-72">
                   <SelectItem value={ALL}>すべてのタイプ</SelectItem>
-                  {[...relTypes].sort((a, b) => a.name.localeCompare(b.name, "ja")).map((t) => (
+                  {orderedTypes.map((t) => (
                     <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
                   ))}
                 </SelectContent>

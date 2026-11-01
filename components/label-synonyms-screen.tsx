@@ -18,6 +18,7 @@ import { SynonymInput } from "@/components/synonym-input"
 import { cn } from "@/lib/utils"
 import { normalizeName } from "@/lib/normalize"
 import { useProject } from "@/app/project-context"
+import { useListOrder } from "@/components/use-list-order"
 import type { Label } from "@/lib/graph-types"
 
 type Filter = "all" | "with" | "without"
@@ -60,12 +61,13 @@ export function LabelSynonymsScreen({ active }: { active?: boolean }) {
   const draftOf = (l: Label) => drafts[l.id] ?? l.synonyms ?? []
   const isDirty = (l: Label) => draftOf(l).join("\n") !== (l.synonyms ?? []).join("\n")
 
+  // ラベル管理と同じ並び
+  const { ordered: orderedLabels } = useListOrder(labels, projectId, "class", active)
   const rows = useMemo(() => {
     const q = normalizeName(query)
-    return [...labels]
+    return orderedLabels
       // 予約ラベルは文書中で指されるものではないので出さない
       .filter((l) => !l.system)
-      .sort((a, b) => a.name.localeCompare(b.name, "ja"))
       .filter((l) => {
         const n = (l.synonyms ?? []).length
         if (filter === "with" && n === 0) return false
@@ -73,7 +75,7 @@ export function LabelSynonymsScreen({ active }: { active?: boolean }) {
         if (!q) return true
         return [l.name, l.nameEn ?? "", ...(l.synonyms ?? [])].some((t) => normalizeName(t).includes(q))
       })
-  }, [labels, filter, query])
+  }, [orderedLabels, filter, query])
 
   const synonymCount = labels.reduce((sum, l) => sum + (l.synonyms ?? []).length, 0)
 

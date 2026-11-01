@@ -37,6 +37,7 @@ import {
   Trash2, Undo2, X,
 } from "lucide-react"
 import { useProject } from "@/app/project-context"
+import { useListOrder } from "@/components/use-list-order"
 
 const ALL = "__all__"
 const UNLABELED = "__none__"
@@ -120,10 +121,8 @@ export function NodesScreen({ initialSelectedLabelId, active }: {
   const uncheckedCount = useMemo(() => nodes.filter((n) => !nameChecked(n)).length, [nodes])
   const labelById = useMemo(() => new Map(labels.map((l) => [l.id, l])), [labels])
   const labelName = useCallback((id: string) => labelById.get(id)?.name ?? "（削除済み）", [labelById])
-  const sortedLabels = useMemo(
-    () => [...labels].sort((a, b) => a.name.localeCompare(b.name, "ja")),
-    [labels],
-  )
+  // ラベルはラベル管理と同じ並び（ラベルグループの順、その中は手で並べた順）
+  const { ordered: sortedLabels, grouped: labelGroups } = useListOrder(labels, projectId, "class", active)
 
   // ─── 取得 ───
   const fetchAll = useCallback(async () => {
@@ -556,7 +555,15 @@ export function NodesScreen({ initialSelectedLabelId, active }: {
               </button>
             ))}
             <div className="my-2 border-t border-border" />
-            {sortedLabels.map((l) => (
+            {labelGroups.map((g) => (
+              <div key={g.key} className="mb-2">
+                <div className="flex items-center gap-1.5 px-2.5 pb-1 pt-1 text-xs">
+                  <span className="h-2 w-2 shrink-0 rounded-full border border-border"
+                    style={g.color ? { backgroundColor: g.color } : undefined} />
+                  <span className="text-muted-foreground">ラベルグループ：</span>
+                  <span className="truncate font-semibold text-foreground">{g.name}</span>
+                </div>
+            {g.items.map((l) => (
               <button key={l.id} type="button"
                 className={cn(
                   "flex w-full items-center justify-between rounded-md px-2.5 py-1.5 text-left text-sm transition-colors",
@@ -571,6 +578,8 @@ export function NodesScreen({ initialSelectedLabelId, active }: {
                   {labelCounts.counts[l.id] ?? 0}
                 </span>
               </button>
+            ))}
+              </div>
             ))}
           </div>
         </div>

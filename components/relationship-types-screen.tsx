@@ -35,6 +35,7 @@ import {
   Loader2, Plus, Tags, Trash2, X,
 } from "lucide-react"
 import { useProject } from "@/app/project-context"
+import { useListOrder } from "@/components/use-list-order"
 
 const GROUP_ROW_PREFIX = "group:"
 
@@ -129,7 +130,8 @@ export function RelationshipTypesScreen({
   const labelById = useMemo(() => new Map(labels.map((l) => [l.id, l])), [labels])
   const labelName = useCallback((id: string) => labelById.get(id)?.name ?? "（削除済み）", [labelById])
   const labelMissing = useCallback((id: string) => !!id && !labelById.has(id), [labelById])
-  const sortedLabels = useMemo(() => [...labels].sort((a, b) => a.name.localeCompare(b.name, "ja")), [labels])
+  // ラベルの選択肢はラベル管理と同じ並び
+  const { ordered: sortedLabels } = useListOrder(labels, projectId, "class", active)
 
   // ─── 取得 ───
   const fetchAll = useCallback(async () => {
