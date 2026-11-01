@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { Sidebar, type ScreenId } from "@/components/sidebar"
 import { LabelsScreen } from "@/components/labels-screen"
 import { RelationshipTypesScreen } from "@/components/relationship-types-screen"
@@ -27,6 +27,14 @@ function AppContent() {
   const [initialSelectId, setInitialSelectId] = useState<string | undefined>(undefined)
   const [visited, setVisited] = useState<Set<MountedScreen>>(new Set(["llm-analysis"]))
 
+  // プロジェクトを選んだら（選び直したときも）、最初の画面は LLM による解析
+  const projectId = currentProject?.id
+  useEffect(() => {
+    if (!projectId) return
+    setScreen((prev) => (prev === "ontology-info" || prev === "knowledge-scope" ? prev : "llm-analysis"))
+    setInitialSelectId(undefined)
+  }, [projectId])
+
   const navigate = (s: ScreenId, id?: string) => {
     setInitialSelectId(id)
     setScreen(s)
@@ -44,7 +52,8 @@ function AppContent() {
         {/* 説明の画面は、開いている間だけ出す。下の各画面は外さずに隠すだけ（解析中などの状態を失わないため） */}
         {screen === "ontology-info" && <OntologyInfoScreen />}
         {screen === "knowledge-scope" && <KnowledgeScopeScreen />}
-        {!loading && !currentProject ? (
+        {/* プロジェクト一覧を読み込んでいる間は何も出さない（選ぶ前に各画面が見えてしまわないように） */}
+        {loading ? null : !currentProject ? (
           screen !== "ontology-info" && screen !== "knowledge-scope" && <ProjectWelcomeScreen />
         ) : (
           <>

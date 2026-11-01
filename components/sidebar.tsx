@@ -51,7 +51,7 @@ export function Sidebar({
   active: ScreenId
   onNavigate: (id: ScreenId) => void
 }) {
-  const { currentProject, clearCurrentProject } = useProject()
+  const { currentProject, clearCurrentProject, loading } = useProject()
   const router = useRouter()
   const [email, setEmail] = useState<string | null>(null)
   const [showProjectSettings, setShowProjectSettings] = useState(false)
@@ -114,6 +114,9 @@ export function Sidebar({
               <Settings className="h-3.5 w-3.5" />
             </button>
           </div>
+        ) : loading ? (
+          // プロジェクト一覧の読み込み中は「未選択」を出さない
+          <div className="h-9" />
         ) : (
           <button
             onClick={() => onNavigate("llm-analysis")}
