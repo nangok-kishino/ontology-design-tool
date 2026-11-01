@@ -13,8 +13,8 @@ import {
   type Extraction, type ExtractionSummary,
 } from "@/lib/llm-analysis-types"
 
-// 長い文書は LLM を何回か呼ぶので、時間がかかる
-export const maxDuration = 800
+// 長い文書は LLM を何回か呼ぶので、時間がかかる。Vercel の Hobby プランの上限（300秒）に合わせる
+export const maxDuration = 300
 
 export async function GET(request: NextRequest) {
   try {

@@ -4,12 +4,12 @@ import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { cn } from "@/lib/utils"
 import {
-  Boxes, FolderOpen, BookOpen, LogOut, Lock, Settings, Sparkles, Tag, Waypoints,
+  Boxes, FolderOpen, BookOpen, Scale, LogOut, Lock, Settings, Sparkles, Tag, Waypoints,
 } from "lucide-react"
 import { useProject } from "@/app/project-context"
 import { ProjectSettingsDialog } from "@/components/project-settings-dialog"
 
-export type ScreenId = "llm-analysis" | "labels" | "rel-types" | "label-synonyms" | "schema-view" | "nodes" | "relationships" | "export" | "ontology-info"
+export type ScreenId = "llm-analysis" | "labels" | "rel-types" | "label-synonyms" | "schema-view" | "nodes" | "relationships" | "export" | "knowledge-scope" | "ontology-info"
 
 type NavItem = { id: ScreenId; label: string; ai?: boolean }
 type NavGroup = { label: string; icon: React.ElementType; items: NavItem[] }
@@ -172,9 +172,26 @@ export function Sidebar({
         </>
       )}
 
-      {/* オントロジーについて（常時表示・下部固定） */}
+      {/* 知見の切り分け基準・オントロジーについて（常時表示・下部固定） */}
       <div className={cn("mx-3 border-t border-white/[0.06]", !currentProject && "mt-auto")} />
-      <div className="px-3 py-3">
+      <div className="space-y-0.5 px-3 py-3">
+        <button
+          onClick={() => onNavigate("knowledge-scope")}
+          className={cn(
+            "flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-sm transition-colors",
+            active === "knowledge-scope"
+              ? "bg-white/10 font-medium text-white"
+              : "text-zinc-300 hover:bg-white/5 hover:text-white",
+          )}
+        >
+          <Scale
+            className={cn(
+              "h-4 w-4 shrink-0",
+              active === "knowledge-scope" ? "text-indigo-400" : "text-zinc-400",
+            )}
+          />
+          <span>知見の切り分け基準</span>
+        </button>
         <button
           onClick={() => onNavigate("ontology-info")}
           className={cn(

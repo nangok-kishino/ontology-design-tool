@@ -7,7 +7,7 @@ import { extractGraph } from "@/lib/llm-analysis"
 import { extractionContainer, loadGraphContext, withoutText } from "@/lib/llm-analysis-server"
 import type { Extraction } from "@/lib/llm-analysis-types"
 
-export const maxDuration = 800
+export const maxDuration = 300
 
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {

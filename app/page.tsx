@@ -12,12 +12,13 @@ import { ExportScreen } from "@/components/export-screen"
 import { LlmAnalysisScreen } from "@/components/llm-analysis-screen"
 import { ProjectWelcomeScreen } from "@/components/project-welcome-screen"
 import { OntologyInfoScreen } from "@/components/ontology-info-screen"
+import { KnowledgeScopeScreen } from "@/components/knowledge-scope-screen"
 import { ProjectProvider } from "@/app/project-context"
 import { useProject } from "@/app/project-context"
 
 // 画面ごとに、一度開いたら表示を切り替えても状態を保つ（隠すだけで外さない）。
-// まだ開いていない画面は作らない。
-type MountedScreen = Exclude<ScreenId, "ontology-info">
+// まだ開いていない画面は作らない。プロジェクトに関係しない説明の画面（下部の2つ）は都度表示する。
+type MountedScreen = Exclude<ScreenId, "ontology-info" | "knowledge-scope">
 
 function AppContent() {
   const { currentProject, loading } = useProject()
@@ -29,7 +30,7 @@ function AppContent() {
   const navigate = (s: ScreenId, id?: string) => {
     setInitialSelectId(id)
     setScreen(s)
-    if (s !== "ontology-info") setVisited((prev) => (prev.has(s) ? prev : new Set(prev).add(s)))
+    if (s !== "ontology-info" && s !== "knowledge-scope") setVisited((prev) => (prev.has(s) ? prev : new Set(prev).add(s)))
   }
 
   // 開いたことのある画面だけを置き、今の画面だけを見せる
@@ -40,10 +41,11 @@ function AppContent() {
     <div className="flex h-screen overflow-hidden bg-background">
       <Sidebar active={screen} onNavigate={(s) => navigate(s)} />
       <main className="flex-1 overflow-hidden">
-        {screen === "ontology-info" ? (
-          <OntologyInfoScreen />
-        ) : !loading && !currentProject ? (
-          <ProjectWelcomeScreen />
+        {/* 説明の画面は、開いている間だけ出す。下の各画面は外さずに隠すだけ（解析中などの状態を失わないため） */}
+        {screen === "ontology-info" && <OntologyInfoScreen />}
+        {screen === "knowledge-scope" && <KnowledgeScopeScreen />}
+        {!loading && !currentProject ? (
+          screen !== "ontology-info" && screen !== "knowledge-scope" && <ProjectWelcomeScreen />
         ) : (
           <>
             {slot("llm-analysis", <LlmAnalysisScreen active={screen === "llm-analysis"} />)}
