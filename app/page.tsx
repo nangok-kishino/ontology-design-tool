@@ -64,8 +64,10 @@ function AppContent() {
             {slot("label-synonyms", <LabelSynonymsScreen active={screen === "label-synonyms"} />)}
             {slot("schema-view", <SchemaViewScreen active={screen === "schema-view"} />)}
             {slot("nodes", <NodesScreen initialSelectedLabelId={initialSelectId} active={screen === "nodes"} />)}
-            {slot("relationships", <RelationshipsScreen active={screen === "relationships"} />)}
-            {slot("graph-view", <GraphDataViewScreen active={screen === "graph-view"} />)}
+            {slot("relationships", <RelationshipsScreen active={screen === "relationships"}
+              focusId={screen === "relationships" ? initialSelectId : undefined} />)}
+            {slot("graph-view", <GraphDataViewScreen active={screen === "graph-view"}
+              onOpenRelationship={(id) => navigate("relationships", id)} />)}
             {slot("export", <ExportScreen active={screen === "export"} />)}
           </>
         )}

@@ -12,10 +12,16 @@
 // 一部しか繋がっていないものを束ねると、どの始点がどの終点に繋がるのかが図から読めなくなるため。
 // さらに確認状態・スキーマ整合が同じものだけを束ね、線の見た目（点線・黄色）が1本1本の実際と食い違わないようにする。
 //
+// 図の中央のタイプを押すと、リレーションシップ管理でそのリレーションシップを開く（直すのはあちら）。
+// 束ねていて複数あるときは、どれを開くかを選んでもらう。
+// ここからリレーションシップを追加することもできる（追加ダイアログはリレーションシップ管理と共用）。
+//
 // 定義したがまだ使っていないラベル・タイプ（エクスポートには影響しない参考情報）もここで見せる。
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
-import { AlertTriangle, Info, Loader2, Search } from "lucide-react"
+import { AlertTriangle, Info, Loader2, Plus, Search } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import { RelationshipAddDialog } from "@/components/relationship-add-dialog"
 import { TopBar } from "@/components/top-bar"
 import { Input } from "@/components/ui/input"
 import { LabelChip, LabelChips } from "@/components/label-chip"
@@ -99,7 +105,11 @@ function buildBundles(rels: Relationship[], lookOf: (r: Relationship) => Look): 
   return picked.sort((a, b) => a.first - b.first)
 }
 
-export function GraphDataViewScreen({ active }: { active?: boolean }) {
+export function GraphDataViewScreen({ active, onOpenRelationship }: {
+  active?: boolean
+  // リレーションシップ管理でそのリレーションシップを開く
+  onOpenRelationship: (id: string) => void
+}) {
   const { currentProject, loading: projectLoading } = useProject()
   const projectId = currentProject?.id
 
@@ -109,6 +119,9 @@ export function GraphDataViewScreen({ active }: { active?: boolean }) {
   const [typeQuery, setTypeQuery] = useState("")
   const [nodeQuery, setNodeQuery] = useState("")
   const [openKeys, setOpenKeys] = useState<Set<string>>(new Set())
+  const [showAdd, setShowAdd] = useState(false)
+  // 束のタイプを押したときに出す、開くリレーションシップを選ぶ一覧（束の key）
+  const [menuKey, setMenuKey] = useState<string | null>(null)
 
   const fetchAll = useCallback(async () => {
     if (!projectId) return
@@ -218,6 +231,19 @@ export function GraphDataViewScreen({ active }: { active?: boolean }) {
     )
   }, [typeRels, nodeQuery, matchesSchema])
 
+  const relByEnds = useMemo(
+    () => new Map(typeRels.map((r) => [`${r.startNodeId}|${r.endNodeId}`, r])),
+    [typeRels],
+  )
+  const relsOf = (bd: Bundle) => bd.startIds.flatMap((s) =>
+    bd.endIds.flatMap((e) => relByEnds.get(`${s}|${e}`) ?? []))
+
+  const handleTypeClick = (bd: Bundle) => {
+    const rels = relsOf(bd)
+    if (rels.length === 1) onOpenRelationship(rels[0].id)
+    else setMenuKey(bd.key)
+  }
+
   const mismatchCount = useMemo(() => typeRels.filter((r) => !matchesSchema(r)).length, [typeRels, matchesSchema])
   const endCount = useMemo(() => new Set(typeRels.map((r) => r.endNodeId)).size, [typeRels])
   const startCount = useMemo(() => new Set(typeRels.map((r) => r.startNodeId)).size, [typeRels])
@@ -301,6 +327,12 @@ export function GraphDataViewScreen({ active }: { active?: boolean }) {
           <span className="text-xs text-muted-foreground">
             タイプ {relTypes.length}・リレーションシップ {relationships.length}
           </span>
+        )}
+        {currentProject && (
+          <Button size="sm" variant="outline" className="h-8 gap-1.5 bg-transparent"
+            onClick={() => setShowAdd(true)}>
+            <Plus className="h-3.5 w-3.5" />リレーションシップを追加
+          </Button>
         )}
       </TopBar>
 
@@ -487,14 +519,32 @@ export function GraphDataViewScreen({ active }: { active?: boolean }) {
                           ))}
                         </div>
                         {/* 中央：タイプ */}
-                        <div className="flex justify-center">
-                          <span ref={setAnchor(`type:${bd.key}`)}
+                        <div className="relative flex justify-center">
+                          <button type="button" ref={setAnchor(`type:${bd.key}`)}
+                            title="リレーションシップ管理で開く"
                             className={cn(
-                              "relative z-10 shrink-0 rounded-md border bg-background px-2 py-0.5 text-xs text-foreground",
+                              "relative z-10 shrink-0 rounded-md border bg-background px-2 py-0.5 text-xs text-foreground transition-colors hover:bg-muted",
                               bd.warn ? "border-amber-400 dark:border-amber-600" : "border-border",
-                            )}>
+                            )}
+                            onClick={() => handleTypeClick(bd)}>
                             {selectedType.name}
-                          </span>
+                          </button>
+                          {menuKey === bd.key && (
+                            <>
+                              {/* 外側を押したら閉じる */}
+                              <div className="fixed inset-0 z-20" onClick={() => setMenuKey(null)} />
+                              <div className="absolute left-1/2 top-full z-30 mt-1 w-max max-w-96 -translate-x-1/2 rounded-lg border border-border bg-popover py-1 shadow-md">
+                                <p className="px-3 pb-1 pt-0.5 text-xs text-muted-foreground">リレーションシップ管理で開く</p>
+                                {relsOf(bd).map((r) => (
+                                  <button key={r.id} type="button"
+                                    className="block w-full truncate px-3 py-1.5 text-left text-sm text-foreground transition-colors hover:bg-muted"
+                                    onClick={() => { setMenuKey(null); onOpenRelationship(r.id) }}>
+                                    {nodeName(r.startNodeId)} → {nodeName(r.endNodeId)}
+                                  </button>
+                                ))}
+                              </div>
+                            </>
+                          )}
                         </div>
                         {/* 終点ノード */}
                         <div className="flex flex-col items-start gap-1.5">
@@ -513,6 +563,12 @@ export function GraphDataViewScreen({ active }: { active?: boolean }) {
           )}
         </div>
       </div>
+
+      <RelationshipAddDialog open={showAdd} onOpenChange={setShowAdd}
+        projectId={projectId} relationships={relationships} nodes={nodes}
+        orderedTypes={orderedTypes} labelName={labelName}
+        initialTypeId={selectedType?.id}
+        onCreated={(created) => setData((prev) => ({ ...prev, relationships: [...prev.relationships, created] }))} />
     </div>
   )
 }
