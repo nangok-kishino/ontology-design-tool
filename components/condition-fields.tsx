@@ -44,10 +44,13 @@ export function ConditionValueList({
   slots,
   values,
   onChange,
+  hideHint,
 }: {
   slots: RelationConditionSlot[]
   values: TripletConditions
   onChange: (next: TripletConditions) => void
+  // 条件セットのように同じ欄を並べるときは、説明を呼び出し側で1回だけ出す
+  hideHint?: boolean
 }) {
   const setValue = (id: string, patch: Partial<ConditionValue>) => {
     const current = values[id] ?? DEFAULT_CONDITION_VALUE
@@ -87,10 +90,12 @@ export function ConditionValueList({
 
   return (
     <div className="space-y-2">
-      <p className="text-[11px] text-muted-foreground">
-        使う条件に印を付けて値を入れてください。印を付けた条件を
-        <strong className="font-medium text-foreground">すべて満たす場合</strong>に成立します。
-      </p>
+      {!hideHint && (
+        <p className="text-[11px] text-muted-foreground">
+          使う条件に印を付けて値を入れてください。印を付けた条件を
+          <strong className="font-medium text-foreground">すべて満たす場合</strong>に成立します。
+        </p>
+      )}
       <div className="space-y-2">
         {slots.map((slot) => {
           const v = values[slot.id]

@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from "next/server"
 import { getContainer } from "@/lib/cosmos"
 import { getPrincipalName } from "@/lib/auth"
 import { checkProjectAccess } from "@/lib/project-access"
-import { CONTAINERS, type GraphNode, type Relationship, type RelationshipType } from "@/lib/graph-types"
+import {
+  CONTAINERS, normalizeConditionSets, type GraphNode, type Relationship, type RelationshipType,
+} from "@/lib/graph-types"
 
 const CONTAINER = CONTAINERS.relationships
 
@@ -100,7 +102,8 @@ export async function POST(request: NextRequest) {
       endNodeName: end.name,
       endNodeLabelIds: end.labelIds ?? [],
       properties: body.properties ?? undefined,
-      conditions: body.conditions ?? undefined,
+      // 旧形式（conditions に1セット）で渡されたときも、条件セットとして受け取る
+      conditionSets: normalizeConditionSets(body.conditionSets ?? (body.conditions ? [body.conditions] : [])),
       sourceDocName: body.sourceDocName,
       evidence: body.evidence,
       sourceCandidateId: body.sourceCandidateId,

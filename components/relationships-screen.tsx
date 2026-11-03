@@ -32,7 +32,7 @@ import { cn } from "@/lib/utils"
 import { ORDER_STEP, orderBetween, placeAt, sortByOrder } from "@/lib/organize"
 import { normalizeName } from "@/lib/normalize"
 import { deriveConfirmationStatus, type ConfirmationState } from "@/lib/confirmation"
-import { relTypeAllows } from "@/lib/graph-types"
+import { conditionSetsOf, relTypeAllows } from "@/lib/graph-types"
 import type {
   GraphNode, Label, PropertyDef, Relationship, RelationshipConditions, RelationshipType,
 } from "@/lib/graph-types"
@@ -105,7 +105,8 @@ export function RelationshipsScreen({ active, focusId }: {
 
   // 詳細
   const [editValues, setEditValues] = useState<Record<string, string>>({})
-  const [editConditions, setEditConditions] = useState<RelationshipConditions>({})
+  // 成立条件（条件セットの並び。セットの中は「かつ」、セット同士は「または」）
+  const [editConditionSets, setEditConditionSets] = useState<RelationshipConditions[]>([])
   const [editEvidence, setEditEvidence] = useState("")
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -161,7 +162,7 @@ export function RelationshipsScreen({ active, focusId }: {
   useEffect(() => {
     if (!selected) return
     setEditValues(selected.properties ?? {})
-    setEditConditions(selected.conditions ?? {})
+    setEditConditionSets(conditionSetsOf(selected))
     setEditEvidence(selected.evidence ?? "")
     setSaveError(null)
   }, [selected?.id])
@@ -325,7 +326,7 @@ export function RelationshipsScreen({ active, focusId }: {
   const dirty =
     !!selected &&
     (JSON.stringify(editValues) !== JSON.stringify(selected.properties ?? {}) ||
-      JSON.stringify(editConditions) !== JSON.stringify(selected.conditions ?? {}) ||
+      JSON.stringify(editConditionSets) !== JSON.stringify(conditionSetsOf(selected)) ||
       editEvidence !== (selected.evidence ?? ""))
 
   const handleSave = async () => {
@@ -339,7 +340,7 @@ export function RelationshipsScreen({ active, focusId }: {
       const res = await fetch(`/api/relationships/${selected.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ properties: values, conditions: editConditions, evidence: editEvidence }),
+        body: JSON.stringify({ properties: values, conditionSets: editConditionSets, evidence: editEvidence }),
       })
       if (!res.ok) {
         const err = await res.json().catch(() => ({}))
@@ -657,7 +658,11 @@ export function RelationshipsScreen({ active, focusId }: {
                               <span className="mt-1 block font-medium text-foreground">{r.endNodeName}</span>
                             </TableCell>
                             <TableCell className="align-top text-sm text-foreground">
-                              {Object.keys(r.conditions ?? {}).length > 0 ? "あり" : null}
+                              {(() => {
+                                // セットが複数あるときは、いくつあるかも出す
+                                const n = conditionSetsOf(r).length
+                                return n === 0 ? null : n === 1 ? "あり" : `あり（${n}セット）`
+                              })()}
                             </TableCell>
                             <TableCell className="align-top">
                               <ConfirmationBadge state={status.state} latestConfirm={status.latestConfirm} />
@@ -724,11 +729,37 @@ export function RelationshipsScreen({ active, focusId }: {
                     「{selected.relTypeName}」に条件項目が定義されていません（常に成立）
                   </p>
                 ) : (
-                  <ConditionValueList
-                    slots={selectedType?.conditions ?? []}
-                    values={editConditions}
-                    onChange={setEditConditions}
-                  />
+                  <div className="space-y-2">
+                    <p className="text-[11px] text-muted-foreground">
+                      セットの中で印を付けた条件を<strong className="font-medium text-foreground">すべて満たし</strong>、
+                      かつ<strong className="font-medium text-foreground">どれか1つのセット</strong>を満たせば成立します。
+                      条件セットが無ければ常に成立します。
+                    </p>
+                    {editConditionSets.map((set, i) => (
+                      <div key={i} className="space-y-2">
+                        {i > 0 && <p className="text-center text-xs font-medium text-muted-foreground">または</p>}
+                        <div className="space-y-2 rounded-lg border border-border p-2.5">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-semibold text-foreground">条件セット{i + 1}</span>
+                            <button type="button"
+                              className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-destructive"
+                              onClick={() => setEditConditionSets((prev) => prev.filter((_, j) => j !== i))}>
+                              <Trash2 className="h-3 w-3" />セットを削除
+                            </button>
+                          </div>
+                          <ConditionValueList hideHint
+                            slots={selectedType?.conditions ?? []}
+                            values={set}
+                            onChange={(next) => setEditConditionSets((prev) => prev.map((x, j) => (j === i ? next : x)))}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                    <Button size="sm" variant="outline" className="h-7 gap-1.5 bg-transparent"
+                      onClick={() => setEditConditionSets((prev) => [...prev, {}])}>
+                      <Plus className="h-3.5 w-3.5" />条件セットを追加
+                    </Button>
+                  </div>
                 )}
               </section>
 
@@ -757,7 +788,7 @@ export function RelationshipsScreen({ active, focusId }: {
                 <Trash2 className="h-3.5 w-3.5" />削除
               </Button>
               <Button size="sm" className="gap-1.5" onClick={handleSave}
-                disabled={!dirty || saving || hasIncompleteConditions(selectedType?.conditions, editConditions)}>
+                disabled={!dirty || saving || editConditionSets.some((set) => hasIncompleteConditions(selectedType?.conditions, set))}>
                 {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}保存
               </Button>
             </div>

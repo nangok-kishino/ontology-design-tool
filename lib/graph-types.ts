@@ -10,14 +10,35 @@ import type {
   OrganizableFields,
   RelationConditionSlot,
 } from "./types"
+import { normalizeTripletConditions } from "./relation-conditions"
 
 export type { ConfirmationEvent, ConditionValue, OrganizableFields }
 
 // 成立条件の「項目」。リレーションシップタイプが宣言し、値は個々のリレーションシップが持つ。
 export type ConditionSlot = RelationConditionSlot
 
-// リレーションシップ1件が持つ条件の値。キーは ConditionSlot.id。
+// 条件セット1つ分の値。キーは ConditionSlot.id。入っている条件をすべて満たしたとき（かつ）に成立する。
 export type RelationshipConditions = Record<string, ConditionValue>
+
+// リレーションシップの成立条件（条件セットの並び）。
+//   セットの中は「かつ」、セット同士は「または」（どれか1つのセットを満たせば成立）。
+//   セットが無ければ条件なし（常に成立）。
+//   以前は条件セットを1つだけ conditions に持っていた。読むときは conditionSetsOf で両方を見て、
+//   書くときは conditionSets に書き、conditions は消す。
+export function conditionSetsOf(
+  r: Pick<Relationship, "conditionSets" | "conditions">,
+): RelationshipConditions[] {
+  if (r.conditionSets) return r.conditionSets
+  return r.conditions && Object.keys(r.conditions).length > 0 ? [r.conditions] : []
+}
+
+// 保存前の正規化。値が埋まっていない条件を落とし、条件が1つも無いセットは捨てる。
+export function normalizeConditionSets(sets: unknown): RelationshipConditions[] {
+  if (!Array.isArray(sets)) return []
+  return sets
+    .map((set) => normalizeTripletConditions(set as RelationshipConditions))
+    .filter((set) => Object.keys(set).length > 0)
+}
 
 // ─────────────────────────────────────────────
 // ラベル（旧クラス）
@@ -154,7 +175,9 @@ export type Relationship = {
   endNodeLabelIds: string[]
   // このリレーションシップ固有のプロパティ値。キーはプロパティ名。
   properties?: Record<string, string>
-  // 成立に要る条件の値。キーは ConditionSlot.id。入っていない項目は「使わない」。
+  // 成立条件（条件セットの並び。セットの中は「かつ」、セット同士は「または」）。読むときは conditionSetsOf を使う
+  conditionSets?: RelationshipConditions[]
+  // 【旧】条件セットが1つだけだった頃の形。読むだけで、保存するときに conditionSets へ移して消す
   conditions?: RelationshipConditions
   sourceDocName?: string
   evidence?: string

@@ -3,7 +3,9 @@ import { getContainer } from "@/lib/cosmos"
 import { getPrincipalName } from "@/lib/auth"
 import { checkProjectAccess } from "@/lib/project-access"
 import { appendEditEvent, appendUnconfirmEvent, deriveConfirmationStatus } from "@/lib/confirmation"
-import { CONTAINERS, type GraphNode, type Relationship } from "@/lib/graph-types"
+import {
+  CONTAINERS, conditionSetsOf, normalizeConditionSets, type GraphNode, type Relationship,
+} from "@/lib/graph-types"
 
 const CONTAINER = CONTAINERS.relationships
 
@@ -15,7 +17,7 @@ function diffFields(before: Relationship, after: Relationship): string[] {
   if (JSON.stringify(before.properties ?? {}) !== JSON.stringify(after.properties ?? {})) {
     changed.push("properties")
   }
-  if (JSON.stringify(before.conditions ?? {}) !== JSON.stringify(after.conditions ?? {})) {
+  if (JSON.stringify(conditionSetsOf(before)) !== JSON.stringify(conditionSetsOf(after))) {
     changed.push("conditions")
   }
   if ((before.evidence ?? "") !== (after.evidence ?? "")) changed.push("evidence")
@@ -108,7 +110,11 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
       ...existing,
       ...ends,
       properties: body.properties !== undefined ? body.properties : existing.properties,
-      conditions: body.conditions !== undefined ? body.conditions : existing.conditions,
+      // 成立条件は条件セットで受け取り、旧形式の conditions は消す（conditionSetsOf が両方を読むため）
+      conditionSets: body.conditionSets !== undefined
+        ? normalizeConditionSets(body.conditionSets)
+        : conditionSetsOf(existing),
+      conditions: undefined,
       evidence: body.evidence !== undefined ? body.evidence : existing.evidence,
       updatedBy: actor,
       updatedAt: new Date().toISOString(),

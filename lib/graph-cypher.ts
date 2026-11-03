@@ -9,7 +9,7 @@
 // すべて MERGE で出すので、何度流し込んでも id 一致で重複しない。
 
 import { formatTripletConditions } from "./relation-conditions"
-import { relTypeAllows } from "./graph-types"
+import { conditionSetsOf, relTypeAllows } from "./graph-types"
 import type { GraphNode, Label, PropertyDef, Relationship, RelationshipType } from "./graph-types"
 
 function escLabel(s: string): string {
@@ -264,9 +264,14 @@ export function buildCypher(data: GraphData): string {
       if (value === null || value === undefined || value === "") continue
       sets.push(`r.${escLabel(key)} = ${escStr(String(value))}`)
     }
-    // 成立条件は人が読める1行にまとめる（構造のままでは Neo4j のプロパティに載らない）
-    const conditions = formatTripletConditions(typeById.get(r.relTypeId)?.conditions, r.conditions)
-    if (conditions.length > 0) sets.push(`r.conditions = ${escStr(conditions.join(" かつ "))}`)
+    // 成立条件は、条件セット1つを人が読める1行（条件を「かつ」で結んだもの）にし、その配列で出す。
+    // 配列の要素同士は「または」。Graph＋RAG で LLM がそのまま読むので、構造化より読みやすさを優先する
+    // （入れ子の構造は Neo4j のプロパティに載らない。文字列の配列なら載る）。
+    const slots = typeById.get(r.relTypeId)?.conditions
+    const conditionTexts = conditionSetsOf(r)
+      .map((set) => formatTripletConditions(slots, set).join(" かつ "))
+      .filter((text) => text !== "")
+    if (conditionTexts.length > 0) sets.push(`r.conditions = [${conditionTexts.map(escStr).join(", ")}]`)
     if (r.sourceDocName) sets.push(`r.sourceDoc = ${escStr(r.sourceDocName)}`)
     if (r.evidence) sets.push(`r.evidence = ${escStr(r.evidence)}`)
     if (r.approvedBy) sets.push(`r.approvedBy = ${escStr(r.approvedBy)}`)
