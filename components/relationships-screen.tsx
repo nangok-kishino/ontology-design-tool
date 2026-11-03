@@ -71,12 +71,15 @@ function NodePicker({
   value,
   onChange,
   placeholder,
+  doneIds,
 }: {
   nodes: GraphNode[]
   labelName: (id: string) => string
   value: string
   onChange: (id: string) => void
   placeholder: string
+  // 既に同じタイプ・始点で繋いであるノード（連続登録で終点だけ変えるときの目印）
+  doneIds?: Set<string>
 }) {
   const [query, setQuery] = useState("")
   const selected = nodes.find((n) => n.id === value) ?? null
@@ -115,7 +118,10 @@ function NodePicker({
             className="flex w-full flex-col items-start gap-1 px-2.5 py-1.5 text-left transition-colors hover:bg-muted"
             onClick={() => onChange(n.id)}>
             <LabelChips names={(n.labelIds ?? []).map(labelName)} />
-            <span className="text-sm text-foreground">{n.name}</span>
+            <span className="flex w-full items-center gap-2 text-sm text-foreground">
+              <span className="min-w-0 flex-1 truncate">{n.name}</span>
+              {doneIds?.has(n.id) && <span className="shrink-0 text-xs text-muted-foreground">登録済み</span>}
+            </span>
           </button>
         ))}
       </div>
@@ -152,6 +158,8 @@ export function RelationshipsScreen({ active }: { active?: boolean }) {
   const [restrictToSchema, setRestrictToSchema] = useState(true)
   const [adding, setAdding] = useState(false)
   const [addError, setAddError] = useState<string | null>(null)
+  // 連続追加で、このダイアログを開いてから登録したもの（作業の控え）
+  const [addedLabels, setAddedLabels] = useState<string[]>([])
 
   // 詳細
   const [editValues, setEditValues] = useState<Record<string, string>>({})
@@ -335,12 +343,21 @@ export function RelationshipsScreen({ active }: { active?: boolean }) {
     return liveNodes.filter((n) => (n.labelIds ?? []).some((id) => allowed.has(id)))
   }, [liveNodes, newTypeId, typeById, restrictToSchema, newStart])
 
+  // 選んだタイプ・始点で既に繋いである終点。同じ組み合わせはサーバーでも 409 で止まるが、押す前に分かるようにする
+  const linkedEndIds = useMemo(() => new Set(
+    relationships
+      .filter((r) => r.relTypeId === newTypeId && r.startNodeId === newStartId)
+      .map((r) => r.endNodeId),
+  ), [relationships, newTypeId, newStartId])
+  const duplicate = !!newEndId && linkedEndIds.has(newEndId)
+
   const openAddDialog = () => {
     setNewStartId(""); setNewTypeId(""); setNewEndId("")
-    setRestrictToSchema(true); setAddError(null); setShowAdd(true)
+    setRestrictToSchema(true); setAddError(null); setAddedLabels([]); setShowAdd(true)
   }
 
-  const handleAdd = async () => {
+  // keepOpen: ダイアログを閉じず、入力をそのまま残して次を受け付ける（終点だけ変えて続けて登録する使い方）
+  const handleAdd = async (keepOpen: boolean) => {
     if (!projectId || !newStartId || !newTypeId || !newEndId) return
     setAdding(true); setAddError(null)
     try {
@@ -360,8 +377,12 @@ export function RelationshipsScreen({ active }: { active?: boolean }) {
       }
       const created: Relationship = await res.json()
       setRelationships((prev) => [...prev, created])
-      setShowAdd(false)
-      setSelectedId(created.id)
+      if (keepOpen) {
+        setAddedLabels((prev) => [...prev, `${created.startNodeName} → ${created.relTypeName} → ${created.endNodeName}`])
+      } else {
+        setShowAdd(false)
+        setSelectedId(created.id)
+      }
     } finally {
       setAdding(false)
     }
@@ -871,7 +892,8 @@ export function RelationshipsScreen({ active }: { active?: boolean }) {
               ) : (
                 <>
                   <NodePicker nodes={endChoices} labelName={labelName} value={newEndId}
-                    onChange={setNewEndId} placeholder="終点にするノードを探す" />
+                    onChange={(id) => { setNewEndId(id); setAddError(null) }} placeholder="終点にするノードを探す"
+                    doneIds={linkedEndIds} />
                   {restrictToSchema && endChoices.length === 0 && (
                     <p className="text-xs text-amber-600 dark:text-amber-500">
                       このタイプのラベルペアの終点ラベルを持つノードがありません。
@@ -880,14 +902,28 @@ export function RelationshipsScreen({ active }: { active?: boolean }) {
                 </>
               )}
             </div>
+            {duplicate && (
+              <p className="text-xs text-amber-600 dark:text-amber-500">この組み合わせは登録済みです。終点ノード(B)を選び直してください。</p>
+            )}
             {addError && <p className="text-xs text-destructive">{addError}</p>}
+            {addedLabels.length > 0 && (
+              <p className="text-xs text-muted-foreground">
+                追加済み（{addedLabels.length}件）：{addedLabels.join("、")}
+              </p>
+            )}
             <p className="text-xs text-muted-foreground">
+              ［追加して続ける］は入力をそのまま残します。終点ノード(B)だけ選び直せば、次のリレーションシップを続けて登録できます。
               プロパティ値と成立条件は、追加したあと右の詳細パネルで入力します。
             </p>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowAdd(false)}>キャンセル</Button>
-            <Button onClick={handleAdd} disabled={adding || !newStartId || !newTypeId || !newEndId}>
+            <Button variant="outline" onClick={() => setShowAdd(false)}>閉じる</Button>
+            <Button variant="outline" onClick={() => handleAdd(true)}
+              disabled={adding || !newStartId || !newTypeId || !newEndId || duplicate}>
+              {adding && <Loader2 className="h-3.5 w-3.5 animate-spin" />}追加して続ける
+            </Button>
+            <Button onClick={() => handleAdd(false)}
+              disabled={adding || !newStartId || !newTypeId || !newEndId || duplicate}>
               {adding && <Loader2 className="h-3.5 w-3.5 animate-spin" />}追加
             </Button>
           </DialogFooter>
