@@ -34,7 +34,7 @@ export function NodePicker({
   value: string
   onChange: (id: string) => void
   placeholder: string
-  // 既に同じタイプ・始点で繋いであるノード（連続登録で終点だけ変えるときの目印）
+  // 今の入力のままこのノードを選ぶと、登録済みの組み合わせになるノード（連続登録で片方だけ変えるときの目印）
   doneIds?: Set<string>
   // 選んであるノードを探す範囲。候補（nodes）に入らないノードが選んである場合でも表示できるように
   allNodes?: GraphNode[]
@@ -157,15 +157,29 @@ export function RelationshipAddDialog({
   const newStart = newStartId ? nodeById.get(newStartId) ?? null : null
   const { startChoices, endChoices } = useEndChoices(nodes, newType, newStart, restrictToSchema)
 
-  // 選んだタイプ・始点で既に繋いである終点。同じ組み合わせはサーバーでも 409 で止まるが、押す前に分かるようにする
+  // 選んだタイプ・始点で既に繋いである終点と、選んだタイプ・終点で既に繋いである始点。
+  // 同じ組み合わせはサーバーでも 409 で止まるが、選ぶ前に分かるようにする
   const linkedEndIds = useMemo(() => new Set(
     relationships
       .filter((r) => r.relTypeId === newTypeId && r.startNodeId === newStartId)
       .map((r) => r.endNodeId),
   ), [relationships, newTypeId, newStartId])
+  const linkedStartIds = useMemo(() => new Set(
+    newEndId
+      ? relationships
+        .filter((r) => r.relTypeId === newTypeId && r.endNodeId === newEndId)
+        .map((r) => r.startNodeId)
+      : [],
+  ), [relationships, newTypeId, newEndId])
   const duplicate = !!newEndId && linkedEndIds.has(newEndId)
 
-  // keepOpen: ダイアログを閉じず、入力をそのまま残して次を受け付ける（終点だけ変えて続けて登録する使い方）
+  // 始点を選び直しても終点は残す（始点だけ変えて続けて登録するため）。
+  // ただしラベルペアで絞っているときに、新しい始点では許されない終点になったら外す
+  useEffect(() => {
+    if (restrictToSchema && newStartId && newEndId && !endChoices.some((n) => n.id === newEndId)) setNewEndId("")
+  }, [restrictToSchema, newStartId, newEndId, endChoices])
+
+  // keepOpen: ダイアログを閉じず、入力をそのまま残して次を受け付ける（始点か終点の片方だけ変えて続けて登録する使い方）
   const handleAdd = async (keepOpen: boolean) => {
     if (!projectId || !newStartId || !newTypeId || !newEndId) return
     setAdding(true); setAddError(null)
@@ -241,8 +255,8 @@ export function RelationshipAddDialog({
             ) : (
               <>
                 <NodePicker nodes={startChoices} labelName={labelName} value={newStartId}
-                  onChange={(id) => { setNewStartId(id); setNewEndId("") }}
-                  placeholder="始点にするノードを探す" />
+                  onChange={(id) => { setNewStartId(id); setAddError(null) }}
+                  placeholder="始点にするノードを探す" doneIds={linkedStartIds} />
                 {restrictToSchema && startChoices.length === 0 && (
                   <p className="text-xs text-amber-600 dark:text-amber-500">
                     このタイプのラベルペアの始点ラベルを持つノードがありません。
@@ -271,7 +285,7 @@ export function RelationshipAddDialog({
             )}
           </div>
           {duplicate && (
-            <p className="text-xs text-amber-600 dark:text-amber-500">この組み合わせは登録済みです。終点ノード(B)を選び直してください。</p>
+            <p className="text-xs text-amber-600 dark:text-amber-500">この組み合わせは登録済みです。始点ノード(A)か終点ノード(B)を選び直してください。</p>
           )}
           {addError && <p className="text-xs text-destructive">{addError}</p>}
           {addedLabels.length > 0 && (
@@ -280,7 +294,7 @@ export function RelationshipAddDialog({
             </p>
           )}
           <p className="text-xs text-muted-foreground">
-            ［追加して続ける］は入力をそのまま残します。終点ノード(B)だけ選び直せば、次のリレーションシップを続けて登録できます。
+            ［追加して続ける］は入力をそのまま残します。始点ノード(A)・終点ノード(B)のうち変えたいほうだけ選び直せば、次のリレーションシップを続けて登録できます。
             プロパティ値と成立条件は、追加したあとリレーションシップ管理の詳細パネルで入力します。
           </p>
         </div>
