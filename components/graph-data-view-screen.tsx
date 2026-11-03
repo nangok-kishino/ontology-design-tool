@@ -22,6 +22,7 @@ import { LabelChip, LabelChips } from "@/components/label-chip"
 import { CheckCard, toggleKey } from "@/components/check-card"
 import { cn } from "@/lib/utils"
 import { normalizeName } from "@/lib/normalize"
+import { sortByOrder } from "@/lib/organize"
 import { deriveConfirmationStatus } from "@/lib/confirmation"
 import { relTypeAllows } from "@/lib/graph-types"
 import { runChecks, type GraphData } from "@/lib/graph-cypher"
@@ -38,15 +39,14 @@ const UNUSED = "__unused__"
 type Bundle = { key: string; startIds: string[]; endIds: string[]; dashed: boolean; warn: boolean }
 type Look = { dashed: boolean; warn: boolean }
 
-// 束を作る。始点ごとに「繋がる終点の集まり」が同じ始点同士をまとめるか、
+// 束を作る（束の中のノード、束どうしの並びは compareNodes の順）。始点ごとに「繋がる終点の集まり」が同じ始点同士をまとめるか、
 // 終点ごとに「繋がる始点の集まり」が同じ終点同士をまとめるか、束が少なく済むほうを使う。
 // どちらも束の中は全組み合わせが繋がっているので、始点と終点の対応は失われない。
 function buildBundles(
   rels: Relationship[],
   lookOf: (r: Relationship) => Look,
-  nameOf: (id: string) => string,
+  compareNodes: (a: string, b: string) => number,
 ): Bundle[] {
-  const byName = (a: string, b: string) => nameOf(a).localeCompare(nameOf(b), "ja")
   const group = (side: "start" | "end"): Bundle[] => {
     // 見た目ごと・片側のノードごとに、反対側のノードを集める
     const sets = new Map<string, { own: string; look: Look; others: Set<string> }>()
@@ -69,8 +69,8 @@ function buildBundles(
       bundles.set(k, b)
     }
     return [...bundles.entries()].map(([k, b]) => {
-      const owns = [...b.owns].sort(byName)
-      const others = [...b.others].sort(byName)
+      const owns = [...b.owns].sort(compareNodes)
+      const others = [...b.others].sort(compareNodes)
       return {
         key: `${side}|${k}`,
         startIds: side === "start" ? owns : others,
@@ -82,7 +82,7 @@ function buildBundles(
   const byStart = group("start")
   const byEnd = group("end")
   const picked = byEnd.length < byStart.length ? byEnd : byStart
-  return picked.sort((a, b) => byName(a.startIds[0], b.startIds[0]) || byName(a.endIds[0], b.endIds[0]))
+  return picked.sort((a, b) => compareNodes(a.startIds[0], b.startIds[0]) || compareNodes(a.endIds[0], b.endIds[0]))
 }
 
 export function GraphDataViewScreen({ active }: { active?: boolean }) {
@@ -190,6 +190,13 @@ export function GraphDataViewScreen({ active }: { active?: boolean }) {
     return labelsOf(id, r?.startNodeId === id ? r.startNodeLabelIds : r?.endNodeLabelIds)
   }, [typeRels, labelsOf])
 
+  // ノードの並びはノード管理の一覧と同じ（手で並べた順）。消えたノードは最後に名前順で。
+  const nodeRank = useMemo(() => new Map(sortByOrder(nodes).map((n, i) => [n.id, i])), [nodes])
+  const compareNodes = useCallback((a: string, b: string) =>
+    (nodeRank.get(a) ?? Infinity) - (nodeRank.get(b) ?? Infinity) ||
+    nodeName(a).localeCompare(nodeName(b), "ja"),
+  [nodeRank, nodeName])
+
   const bundles = useMemo<Bundle[]>(() => {
     const q = normalizeName(nodeQuery)
     const shown = typeRels.filter((r) =>
@@ -201,9 +208,9 @@ export function GraphDataViewScreen({ active }: { active?: boolean }) {
         dashed: deriveConfirmationStatus(r.confirmations).state === "unconfirmed",
         warn: !matchesSchema(r),
       }),
-      nodeName,
+      compareNodes,
     )
-  }, [typeRels, nodeQuery, matchesSchema, nodeName])
+  }, [typeRels, nodeQuery, matchesSchema, compareNodes])
 
   const mismatchCount = useMemo(() => typeRels.filter((r) => !matchesSchema(r)).length, [typeRels, matchesSchema])
   const endCount = useMemo(() => new Set(typeRels.map((r) => r.endNodeId)).size, [typeRels])
@@ -212,7 +219,7 @@ export function GraphDataViewScreen({ active }: { active?: boolean }) {
   // 引き出し線。各ノードと中央のタイプの位置を測り、その間を曲線で結ぶ（スキーマ確認と同じ描き方）。
   const boardRef = useRef<HTMLDivElement>(null)
   const anchorRefs = useRef(new Map<string, HTMLElement>())
-  const [paths, setPaths] = useState<({ key: string; d: string; arrow: boolean } & Look)[]>([])
+  const [paths, setPaths] = useState<({ key: string; d: string } & Look)[]>([])
   const [boardSize, setBoardSize] = useState({ w: 0, h: 0 })
 
   const measure = useCallback(() => {
@@ -227,7 +234,7 @@ export function GraphDataViewScreen({ active }: { active?: boolean }) {
       const mx = (x1 + x2) / 2
       return `M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`
     }
-    const next: ({ key: string; d: string; arrow: boolean } & Look)[] = []
+    const next: ({ key: string; d: string } & Look)[] = []
     for (const bd of bundles) {
       const typeEl = anchorRefs.current.get(`type:${bd.key}`)
       if (!typeEl) continue
@@ -237,15 +244,15 @@ export function GraphDataViewScreen({ active }: { active?: boolean }) {
         const el = anchorRefs.current.get(`start:${bd.key}:${id}`)
         if (!el) continue
         const s = rel(el)
-        // 始点 → タイプ
-        next.push({ key: `s:${bd.key}:${id}`, d: curve(s.right, s.y, t.left, t.y), arrow: false, ...look })
+        // 始点 → タイプ（矢印はタイプに向く）
+        next.push({ key: `s:${bd.key}:${id}`, d: curve(s.right, s.y, t.left - 1, t.y), ...look })
       }
       for (const id of bd.endIds) {
         const el = anchorRefs.current.get(`end:${bd.key}:${id}`)
         if (!el) continue
         const e = rel(el)
         // タイプ → 終点（矢印は終点に向く）
-        next.push({ key: `e:${bd.key}:${id}`, d: curve(t.right, t.y, e.left - 1, e.y), arrow: true, ...look })
+        next.push({ key: `e:${bd.key}:${id}`, d: curve(t.right, t.y, e.left - 1, e.y), ...look })
       }
     }
     setPaths(next)
@@ -459,7 +466,7 @@ export function GraphDataViewScreen({ active }: { active?: boolean }) {
                         <path key={p.key} d={p.d} fill="none" stroke="currentColor" strokeWidth="1.25"
                           className={p.warn ? "text-amber-500" : "text-muted-foreground/60"}
                           strokeDasharray={p.dashed ? "4 3" : undefined}
-                          markerEnd={!p.arrow ? undefined : p.warn ? "url(#data-arrow-warn)" : "url(#data-arrow)"} />
+                          markerEnd={p.warn ? "url(#data-arrow-warn)" : "url(#data-arrow)"} />
                       ))}
                     </svg>
 
