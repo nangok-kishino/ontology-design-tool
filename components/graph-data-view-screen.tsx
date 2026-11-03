@@ -5,8 +5,12 @@
 //
 // 【全体図にしない理由】スキーマ確認と同じ。ノードとリレーションシップを全部1枚に描くと線が重なって
 // 何も読めなくなる。登録中に知りたいのは「このタイプで、どの始点からどの終点へ繋いだか（抜け・誤りは無いか）」
-// なので、1タイプに絞り、始点ノードごとに終点ノードを並べて引き出し線で結ぶ。
-// 1つの始点から終点だけ変えて続けて登録していく使い方と、同じ形になる。
+// なので、1タイプに絞り、始点ノード → タイプ → 終点ノードの順に並べて引き出し線で結ぶ。
+//
+// 【束ね方】始点・終点が共通なものは、1つのタイプにまとめて描く（4つの始点 → タイプ → 1つの終点、など）。
+// ただし束ねてよいのは「束の中の始点と終点が、すべての組み合わせで繋がっている」ときだけにする。
+// 一部しか繋がっていないものを束ねると、どの始点がどの終点に繋がるのかが図から読めなくなるため。
+// さらに確認状態・スキーマ整合が同じものだけを束ね、線の見た目（点線・黄色）が1本1本の実際と食い違わないようにする。
 //
 // 定義したがまだ使っていないラベル・タイプ（エクスポートには影響しない参考情報）もここで見せる。
 
@@ -30,8 +34,56 @@ const EMPTY: GraphData = { labels: [], relTypes: [], nodes: [], relationships: [
 // 左の一覧で、タイプではなく「使われていない定義」を選んだとき
 const UNUSED = "__unused__"
 
-// 始点ノード1つ分（同じ始点のリレーションシップをまとめて1行にする）
-type Row = { startId: string; startName: string; startLabelIds: string[]; rels: Relationship[] }
+// 束1つ分。starts × ends のすべての組み合わせがリレーションシップとして存在し、どれも同じ見た目になる
+type Bundle = { key: string; startIds: string[]; endIds: string[]; dashed: boolean; warn: boolean }
+type Look = { dashed: boolean; warn: boolean }
+
+// 束を作る。始点ごとに「繋がる終点の集まり」が同じ始点同士をまとめるか、
+// 終点ごとに「繋がる始点の集まり」が同じ終点同士をまとめるか、束が少なく済むほうを使う。
+// どちらも束の中は全組み合わせが繋がっているので、始点と終点の対応は失われない。
+function buildBundles(
+  rels: Relationship[],
+  lookOf: (r: Relationship) => Look,
+  nameOf: (id: string) => string,
+): Bundle[] {
+  const byName = (a: string, b: string) => nameOf(a).localeCompare(nameOf(b), "ja")
+  const group = (side: "start" | "end"): Bundle[] => {
+    // 見た目ごと・片側のノードごとに、反対側のノードを集める
+    const sets = new Map<string, { own: string; look: Look; others: Set<string> }>()
+    for (const r of rels) {
+      const look = lookOf(r)
+      const own = side === "start" ? r.startNodeId : r.endNodeId
+      const other = side === "start" ? r.endNodeId : r.startNodeId
+      const k = `${look.dashed}|${look.warn}|${own}`
+      const e = sets.get(k) ?? { own, look, others: new Set<string>() }
+      e.others.add(other)
+      sets.set(k, e)
+    }
+    // 反対側の集まり（と見た目）が同じもの同士をまとめる
+    const bundles = new Map<string, { look: Look; owns: string[]; others: string[] }>()
+    for (const e of sets.values()) {
+      const others = [...e.others].sort()
+      const k = `${e.look.dashed}|${e.look.warn}|${others.join(",")}`
+      const b = bundles.get(k) ?? { look: e.look, owns: [], others }
+      b.owns.push(e.own)
+      bundles.set(k, b)
+    }
+    return [...bundles.entries()].map(([k, b]) => {
+      const owns = [...b.owns].sort(byName)
+      const others = [...b.others].sort(byName)
+      return {
+        key: `${side}|${k}`,
+        startIds: side === "start" ? owns : others,
+        endIds: side === "start" ? others : owns,
+        ...b.look,
+      }
+    })
+  }
+  const byStart = group("start")
+  const byEnd = group("end")
+  const picked = byEnd.length < byStart.length ? byEnd : byStart
+  return picked.sort((a, b) => byName(a.startIds[0], b.startIds[0]) || byName(a.endIds[0], b.endIds[0]))
+}
 
 export function GraphDataViewScreen({ active }: { active?: boolean }) {
   const { currentProject, loading: projectLoading } = useProject()
@@ -128,34 +180,39 @@ export function GraphDataViewScreen({ active }: { active?: boolean }) {
     () => (selectedType ? relationships.filter((r) => r.relTypeId === selectedType.id) : []),
     [relationships, selectedType],
   )
-  const rows = useMemo<Row[]>(() => {
+  // ノードが消えていても、作成時のスナップショットで名前・ラベルを出す
+  const nodeName = useCallback((id: string) => {
+    const r = typeRels.find((x) => x.startNodeId === id || x.endNodeId === id)
+    return nodeById.get(id)?.name ?? (r?.startNodeId === id ? r.startNodeName : r?.endNodeName) ?? id
+  }, [nodeById, typeRels])
+  const nodeLabelIds = useCallback((id: string) => {
+    const r = typeRels.find((x) => x.startNodeId === id || x.endNodeId === id)
+    return labelsOf(id, r?.startNodeId === id ? r.startNodeLabelIds : r?.endNodeLabelIds)
+  }, [typeRels, labelsOf])
+
+  const bundles = useMemo<Bundle[]>(() => {
     const q = normalizeName(nodeQuery)
-    const m = new Map<string, Row>()
-    for (const r of typeRels) {
-      if (q && !normalizeName(r.startNodeName).includes(q) && !normalizeName(r.endNodeName).includes(q)) continue
-      const row = m.get(r.startNodeId) ?? {
-        startId: r.startNodeId,
-        startName: nodeById.get(r.startNodeId)?.name ?? r.startNodeName,
-        startLabelIds: labelsOf(r.startNodeId, r.startNodeLabelIds),
-        rels: [],
-      }
-      row.rels.push(r)
-      m.set(r.startNodeId, row)
-    }
-    const endName = (r: Relationship) => nodeById.get(r.endNodeId)?.name ?? r.endNodeName
-    return [...m.values()]
-      .map((row) => ({ ...row, rels: [...row.rels].sort((a, b) => endName(a).localeCompare(endName(b), "ja")) }))
-      .sort((a, b) => a.startName.localeCompare(b.startName, "ja"))
-  }, [typeRels, nodeQuery, nodeById, labelsOf])
+    const shown = typeRels.filter((r) =>
+      !q || normalizeName(r.startNodeName).includes(q) || normalizeName(r.endNodeName).includes(q))
+    return buildBundles(
+      shown,
+      (r) => ({
+        // 未確認のものは点線、スキーマに無い組み合わせは黄色
+        dashed: deriveConfirmationStatus(r.confirmations).state === "unconfirmed",
+        warn: !matchesSchema(r),
+      }),
+      nodeName,
+    )
+  }, [typeRels, nodeQuery, matchesSchema, nodeName])
 
   const mismatchCount = useMemo(() => typeRels.filter((r) => !matchesSchema(r)).length, [typeRels, matchesSchema])
   const endCount = useMemo(() => new Set(typeRels.map((r) => r.endNodeId)).size, [typeRels])
   const startCount = useMemo(() => new Set(typeRels.map((r) => r.startNodeId)).size, [typeRels])
 
-  // 引き出し線。始点ノードと各終点ノードの位置を測り、その間を曲線で結ぶ（スキーマ確認と同じ描き方）。
+  // 引き出し線。各ノードと中央のタイプの位置を測り、その間を曲線で結ぶ（スキーマ確認と同じ描き方）。
   const boardRef = useRef<HTMLDivElement>(null)
   const anchorRefs = useRef(new Map<string, HTMLElement>())
-  const [paths, setPaths] = useState<{ key: string; d: string; dashed: boolean; warn: boolean }[]>([])
+  const [paths, setPaths] = useState<({ key: string; d: string; arrow: boolean } & Look)[]>([])
   const [boardSize, setBoardSize] = useState({ w: 0, h: 0 })
 
   const measure = useCallback(() => {
@@ -166,29 +223,34 @@ export function GraphDataViewScreen({ active }: { active?: boolean }) {
       const r = el.getBoundingClientRect()
       return { left: r.left - b.left, right: r.right - b.left, y: r.top + r.height / 2 - b.top }
     }
-    const next: { key: string; d: string; dashed: boolean; warn: boolean }[] = []
-    for (const row of rows) {
-      const startEl = anchorRefs.current.get(`start:${row.startId}`)
-      if (!startEl) continue
-      const s = rel(startEl)
-      for (const r of row.rels) {
-        const endEl = anchorRefs.current.get(`end:${r.id}`)
-        if (!endEl) continue
-        const e = rel(endEl)
-        const x2 = e.left - 1
-        const mx = (s.right + x2) / 2
-        next.push({
-          key: r.id,
-          d: `M ${s.right} ${s.y} C ${mx} ${s.y}, ${mx} ${e.y}, ${x2} ${e.y}`,
-          // 未確認のものは点線、スキーマに無い組み合わせは黄色
-          dashed: deriveConfirmationStatus(r.confirmations).state === "unconfirmed",
-          warn: !matchesSchema(r),
-        })
+    const curve = (x1: number, y1: number, x2: number, y2: number) => {
+      const mx = (x1 + x2) / 2
+      return `M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`
+    }
+    const next: ({ key: string; d: string; arrow: boolean } & Look)[] = []
+    for (const bd of bundles) {
+      const typeEl = anchorRefs.current.get(`type:${bd.key}`)
+      if (!typeEl) continue
+      const t = rel(typeEl)
+      const look = { dashed: bd.dashed, warn: bd.warn }
+      for (const id of bd.startIds) {
+        const el = anchorRefs.current.get(`start:${bd.key}:${id}`)
+        if (!el) continue
+        const s = rel(el)
+        // 始点 → タイプ
+        next.push({ key: `s:${bd.key}:${id}`, d: curve(s.right, s.y, t.left, t.y), arrow: false, ...look })
+      }
+      for (const id of bd.endIds) {
+        const el = anchorRefs.current.get(`end:${bd.key}:${id}`)
+        if (!el) continue
+        const e = rel(el)
+        // タイプ → 終点（矢印は終点に向く）
+        next.push({ key: `e:${bd.key}:${id}`, d: curve(t.right, t.y, e.left - 1, e.y), arrow: true, ...look })
       }
     }
     setPaths(next)
     setBoardSize({ w: b.width, h: b.height })
-  }, [rows, matchesSchema])
+  }, [bundles])
 
   useLayoutEffect(() => { measure() }, [measure, active])
 
@@ -365,6 +427,7 @@ export function GraphDataViewScreen({ active }: { active?: boolean }) {
                           <line x1="0" y1="3" x2="20" y2="3" stroke="currentColor" strokeWidth="1.5" strokeDasharray="4 3" />
                         </svg>未確認
                       </span>
+                      <span>束ねているのは、左右のノードがすべての組み合わせで繋がっているものだけです</span>
                     </span>
                   )}
                 </div>
@@ -375,10 +438,10 @@ export function GraphDataViewScreen({ active }: { active?: boolean }) {
                   <p className="m-auto p-4 text-center text-sm text-muted-foreground">
                     このタイプのリレーションシップはまだありません。
                   </p>
-                ) : rows.length === 0 ? (
+                ) : bundles.length === 0 ? (
                   <p className="m-auto p-4 text-center text-sm text-muted-foreground">該当するノードがありません</p>
                 ) : (
-                  <div ref={boardRef} className="relative mx-auto grid h-fit grid-cols-[auto_auto] items-center gap-x-24 gap-y-6">
+                  <div ref={boardRef} className="relative mx-auto grid h-fit grid-cols-[auto_auto_auto] items-center gap-x-16 gap-y-8">
                     {/* 引き出し線 */}
                     <svg className="pointer-events-none absolute inset-0 overflow-visible"
                       width={boardSize.w} height={boardSize.h} aria-hidden>
@@ -396,24 +459,35 @@ export function GraphDataViewScreen({ active }: { active?: boolean }) {
                         <path key={p.key} d={p.d} fill="none" stroke="currentColor" strokeWidth="1.25"
                           className={p.warn ? "text-amber-500" : "text-muted-foreground/60"}
                           strokeDasharray={p.dashed ? "4 3" : undefined}
-                          markerEnd={p.warn ? "url(#data-arrow-warn)" : "url(#data-arrow)"} />
+                          markerEnd={!p.arrow ? undefined : p.warn ? "url(#data-arrow-warn)" : "url(#data-arrow)"} />
                       ))}
                     </svg>
 
-                    {rows.map((row) => (
-                      <div key={row.startId} className="contents">
+                    {bundles.map((bd) => (
+                      <div key={bd.key} className="contents">
                         {/* 始点ノード */}
-                        <div className="flex justify-end">
-                          <span ref={setAnchor(`start:${row.startId}`)}>
-                            <NodeBox name={row.startName} labelIds={row.startLabelIds} />
+                        <div className="flex flex-col items-end gap-1.5">
+                          {bd.startIds.map((id) => (
+                            <span key={id} ref={setAnchor(`start:${bd.key}:${id}`)}>
+                              <NodeBox name={nodeName(id)} labelIds={nodeLabelIds(id)} warn={bd.warn} />
+                            </span>
+                          ))}
+                        </div>
+                        {/* 中央：タイプ */}
+                        <div className="flex justify-center">
+                          <span ref={setAnchor(`type:${bd.key}`)}
+                            className={cn(
+                              "relative z-10 shrink-0 rounded-md border bg-background px-2 py-0.5 text-xs text-foreground",
+                              bd.warn ? "border-amber-400 dark:border-amber-600" : "border-border",
+                            )}>
+                            {selectedType.name}
                           </span>
                         </div>
                         {/* 終点ノード */}
                         <div className="flex flex-col items-start gap-1.5">
-                          {row.rels.map((r) => (
-                            <span key={r.id} ref={setAnchor(`end:${r.id}`)}>
-                              <NodeBox name={nodeById.get(r.endNodeId)?.name ?? r.endNodeName}
-                                labelIds={labelsOf(r.endNodeId, r.endNodeLabelIds)} warn={!matchesSchema(r)} />
+                          {bd.endIds.map((id) => (
+                            <span key={id} ref={setAnchor(`end:${bd.key}:${id}`)}>
+                              <NodeBox name={nodeName(id)} labelIds={nodeLabelIds(id)} warn={bd.warn} />
                             </span>
                           ))}
                         </div>
