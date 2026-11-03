@@ -8,6 +8,7 @@ import { NodesScreen } from "@/components/nodes-screen"
 import { RelationshipsScreen } from "@/components/relationships-screen"
 import { LabelSynonymsScreen } from "@/components/label-synonyms-screen"
 import { SchemaViewScreen } from "@/components/schema-view-screen"
+import { GraphDataViewScreen } from "@/components/graph-data-view-screen"
 import { ExportScreen } from "@/components/export-screen"
 import { LlmAnalysisScreen } from "@/components/llm-analysis-screen"
 import { ProjectWelcomeScreen } from "@/components/project-welcome-screen"
@@ -64,6 +65,7 @@ function AppContent() {
             {slot("schema-view", <SchemaViewScreen active={screen === "schema-view"} />)}
             {slot("nodes", <NodesScreen initialSelectedLabelId={initialSelectId} active={screen === "nodes"} />)}
             {slot("relationships", <RelationshipsScreen active={screen === "relationships"} />)}
+            {slot("graph-view", <GraphDataViewScreen active={screen === "graph-view"} />)}
             {slot("export", <ExportScreen active={screen === "export"} />)}
           </>
         )}

@@ -8,13 +8,11 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
 import { TopBar } from "@/components/top-bar"
+import { CheckCard, toggleKey } from "@/components/check-card"
 import { cn } from "@/lib/utils"
 import { buildCypher, downloadText, runChecks, type CheckResult, type GraphData } from "@/lib/graph-cypher"
-import {
-  AlertTriangle, Check, ChevronDown, ChevronRight, Copy, Download, Info, Loader2, RefreshCw,
-} from "lucide-react"
+import { Check, Copy, Download, Loader2, RefreshCw } from "lucide-react"
 import { useProject } from "@/app/project-context"
 
 const EMPTY: GraphData = { labels: [], relTypes: [], nodes: [], relationships: [], propertyDefs: [] }
@@ -64,63 +62,9 @@ export function ExportScreen({ active }: { active?: boolean }) {
   const checks = useMemo<CheckResult[]>(() => runChecks(data), [data])
   const cypher = useMemo(() => buildCypher(data), [data])
   const blockingCount = checks.filter((c) => c.blocking).reduce((n, c) => n + c.items.length, 0)
+  // 使われていない定義（category: schema）はグラフデータ確認で見せる。出力には影響しないため
   const exportChecks = checks.filter((c) => c.category === "export")
-  const schemaChecks = checks.filter((c) => c.category === "schema")
 
-  // チェック1件分。参考情報（info）は警告の印を出さない。
-  const renderCheck = (c: CheckResult, info: boolean) => {
-    const open = openKeys.has(c.key)
-    const clean = c.items.length === 0
-    return (
-      <div key={c.key} className="rounded-lg border border-border">
-        <button type="button"
-          className="flex w-full items-center gap-2 px-3 py-2.5 text-left"
-          onClick={() => setOpenKeys((prev) => {
-            const next = new Set(prev)
-            next.has(c.key) ? next.delete(c.key) : next.add(c.key)
-            return next
-          })}
-          disabled={clean}>
-          {clean ? (
-            <Check className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-500" />
-          ) : info ? (
-            <Info className="h-4 w-4 shrink-0 text-muted-foreground" />
-          ) : c.blocking ? (
-            <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-500" />
-          ) : (
-            <AlertTriangle className="h-4 w-4 shrink-0 text-muted-foreground" />
-          )}
-          <span className="min-w-0 flex-1">
-            <span className="block text-sm font-medium text-foreground">{c.title}</span>
-            <span className="block text-xs text-muted-foreground">{c.description}</span>
-          </span>
-          <Badge
-            variant={clean || info ? "secondary" : c.blocking ? "default" : "outline"}
-            className="shrink-0 font-normal">
-            {clean ? "なし" : `${c.items.length}件`}
-          </Badge>
-          {!clean && (open
-            ? <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
-            : <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />)}
-        </button>
-        {open && !clean && (
-          <div className="max-h-64 overflow-y-auto border-t border-border">
-            {c.items.map((item) => (
-              <div key={item.id}
-                className="flex items-baseline gap-2 border-b border-border/60 px-3 py-1.5 last:border-b-0">
-                <span className="min-w-0 flex-1 truncate text-sm text-foreground" title={item.name}>
-                  {item.name}
-                </span>
-                {item.detail && (
-                  <span className="shrink-0 text-xs text-muted-foreground">{item.detail}</span>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    )
-  }
   const liveNodeCount = data.nodes.filter((n) => n.status !== "merged").length
 
   const handleCopy = async () => {
@@ -173,25 +117,12 @@ export function ExportScreen({ active }: { active?: boolean }) {
                 </p>
               </div>
               <div className="space-y-2">
-                {exportChecks.map((c) => renderCheck(c, false))}
+                {exportChecks.map((c) => (
+                  <CheckCard key={c.key} check={c} info={false} open={openKeys.has(c.key)}
+                    onToggle={() => setOpenKeys((prev) => toggleKey(prev, c.key))} />
+                ))}
               </div>
             </section>
-
-            {/* エクスポートには影響しない参考情報 */}
-            {schemaChecks.length > 0 && (
-              <section className="space-y-3">
-                <div className="space-y-1">
-                  <h2 className="text-base font-semibold text-foreground">参考：使われていない定義</h2>
-                  <p className="text-xs text-muted-foreground">
-                    定義したもののまだ使っていないラベル・リレーションシップタイプです。
-                    出力には現れないので、エクスポートには影響しません。
-                  </p>
-                </div>
-                <div className="space-y-2">
-                  {schemaChecks.map((c) => renderCheck(c, true))}
-                </div>
-              </section>
-            )}
 
             {/* Cypher */}
             <section className="space-y-3">
