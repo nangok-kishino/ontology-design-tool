@@ -39,42 +39,56 @@ const UNUSED = "__unused__"
 type Bundle = { key: string; startIds: string[]; endIds: string[]; dashed: boolean; warn: boolean }
 type Look = { dashed: boolean; warn: boolean }
 
-// 束を作る（束の中のノード、束どうしの並びは compareNodes の順）。始点ごとに「繋がる終点の集まり」が同じ始点同士をまとめるか、
+// 束を作る。始点ごとに「繋がる終点の集まり」が同じ始点同士をまとめるか、
 // 終点ごとに「繋がる始点の集まり」が同じ終点同士をまとめるか、束が少なく済むほうを使う。
 // どちらも束の中は全組み合わせが繋がっているので、始点と終点の対応は失われない。
-function buildBundles(
-  rels: Relationship[],
-  lookOf: (r: Relationship) => Look,
-  compareNodes: (a: string, b: string) => number,
-): Bundle[] {
-  const group = (side: "start" | "end"): Bundle[] => {
+//
+// 並びはリレーションシップ管理の一覧と同じにする（rels はその順で渡す）。
+// 束どうしは、束の中でいちばん前にあるリレーションシップの順。
+// 束の中のノードは、始点・終点それぞれで一覧に最初に出てくる順。
+function buildBundles(rels: Relationship[], lookOf: (r: Relationship) => Look): Bundle[] {
+  const firstIndex = (side: "start" | "end") => {
+    const m = new Map<string, number>()
+    rels.forEach((r, i) => {
+      const id = side === "start" ? r.startNodeId : r.endNodeId
+      if (!m.has(id)) m.set(id, i)
+    })
+    return m
+  }
+  const rank = { start: firstIndex("start"), end: firstIndex("end") }
+
+  const group = (side: "start" | "end"): (Bundle & { first: number })[] => {
+    const otherSide = side === "start" ? "end" : "start"
     // 見た目ごと・片側のノードごとに、反対側のノードを集める
-    const sets = new Map<string, { own: string; look: Look; others: Set<string> }>()
-    for (const r of rels) {
+    const sets = new Map<string, { own: string; look: Look; others: Set<string>; first: number }>()
+    rels.forEach((r, i) => {
       const look = lookOf(r)
       const own = side === "start" ? r.startNodeId : r.endNodeId
       const other = side === "start" ? r.endNodeId : r.startNodeId
       const k = `${look.dashed}|${look.warn}|${own}`
-      const e = sets.get(k) ?? { own, look, others: new Set<string>() }
+      const e = sets.get(k) ?? { own, look, others: new Set<string>(), first: i }
       e.others.add(other)
       sets.set(k, e)
-    }
+    })
     // 反対側の集まり（と見た目）が同じもの同士をまとめる
-    const bundles = new Map<string, { look: Look; owns: string[]; others: string[] }>()
+    const bundles = new Map<string, { look: Look; owns: string[]; others: string[]; first: number }>()
     for (const e of sets.values()) {
       const others = [...e.others].sort()
       const k = `${e.look.dashed}|${e.look.warn}|${others.join(",")}`
-      const b = bundles.get(k) ?? { look: e.look, owns: [], others }
+      const b = bundles.get(k) ?? { look: e.look, owns: [], others, first: e.first }
       b.owns.push(e.own)
+      b.first = Math.min(b.first, e.first)
       bundles.set(k, b)
     }
+    const by = (m: Map<string, number>) => (a: string, b: string) => (m.get(a) ?? 0) - (m.get(b) ?? 0)
     return [...bundles.entries()].map(([k, b]) => {
-      const owns = [...b.owns].sort(compareNodes)
-      const others = [...b.others].sort(compareNodes)
+      const owns = [...b.owns].sort(by(rank[side]))
+      const others = [...b.others].sort(by(rank[otherSide]))
       return {
         key: `${side}|${k}`,
         startIds: side === "start" ? owns : others,
         endIds: side === "start" ? others : owns,
+        first: b.first,
         ...b.look,
       }
     })
@@ -82,7 +96,7 @@ function buildBundles(
   const byStart = group("start")
   const byEnd = group("end")
   const picked = byEnd.length < byStart.length ? byEnd : byStart
-  return picked.sort((a, b) => compareNodes(a.startIds[0], b.startIds[0]) || compareNodes(a.endIds[0], b.endIds[0]))
+  return picked.sort((a, b) => a.first - b.first)
 }
 
 export function GraphDataViewScreen({ active }: { active?: boolean }) {
@@ -190,16 +204,9 @@ export function GraphDataViewScreen({ active }: { active?: boolean }) {
     return labelsOf(id, r?.startNodeId === id ? r.startNodeLabelIds : r?.endNodeLabelIds)
   }, [typeRels, labelsOf])
 
-  // ノードの並びはノード管理の一覧と同じ（手で並べた順）。消えたノードは最後に名前順で。
-  const nodeRank = useMemo(() => new Map(sortByOrder(nodes).map((n, i) => [n.id, i])), [nodes])
-  const compareNodes = useCallback((a: string, b: string) =>
-    (nodeRank.get(a) ?? Infinity) - (nodeRank.get(b) ?? Infinity) ||
-    nodeName(a).localeCompare(nodeName(b), "ja"),
-  [nodeRank, nodeName])
-
   const bundles = useMemo<Bundle[]>(() => {
     const q = normalizeName(nodeQuery)
-    const shown = typeRels.filter((r) =>
+    const shown = sortByOrder(typeRels).filter((r) =>
       !q || normalizeName(r.startNodeName).includes(q) || normalizeName(r.endNodeName).includes(q))
     return buildBundles(
       shown,
@@ -208,9 +215,8 @@ export function GraphDataViewScreen({ active }: { active?: boolean }) {
         dashed: deriveConfirmationStatus(r.confirmations).state === "unconfirmed",
         warn: !matchesSchema(r),
       }),
-      compareNodes,
     )
-  }, [typeRels, nodeQuery, matchesSchema, compareNodes])
+  }, [typeRels, nodeQuery, matchesSchema])
 
   const mismatchCount = useMemo(() => typeRels.filter((r) => !matchesSchema(r)).length, [typeRels, matchesSchema])
   const endCount = useMemo(() => new Set(typeRels.map((r) => r.endNodeId)).size, [typeRels])
