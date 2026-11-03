@@ -12,16 +12,18 @@
 // 一部しか繋がっていないものを束ねると、どの始点がどの終点に繋がるのかが図から読めなくなるため。
 // さらに確認状態・スキーマ整合が同じものだけを束ね、線の見た目（点線・黄色）が1本1本の実際と食い違わないようにする。
 //
-// 図の中央のタイプを押すと、リレーションシップ管理でそのリレーションシップを開く（直すのはあちら）。
-// 束ねていて複数あるときは、どれを開くかを選んでもらう。
+// 図の中央のタイプを押すと、右ペインにそのリレーションシップの詳細を出し、そこで編集できる
+// （詳細パネルはリレーションシップ管理と共用）。束ねていて複数あるときは、右ペインで1件ずつ選んで見る。
+// 同じタイプをもう一度押すと右ペインを閉じる。右ペインを出している間は、選んだものを図の中で目立たせる。
 // ここからリレーションシップを追加することもできる（追加ダイアログはリレーションシップ管理と共用）。
 //
 // 定義したがまだ使っていないラベル・タイプ（エクスポートには影響しない参考情報）もここで見せる。
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
-import { AlertTriangle, Info, Loader2, Plus, Search } from "lucide-react"
+import { AlertTriangle, Info, Loader2, Plus, Search, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { RelationshipAddDialog } from "@/components/relationship-add-dialog"
+import { RelationshipDetailPanel } from "@/components/relationship-detail-panel"
 import { TopBar } from "@/components/top-bar"
 import { Input } from "@/components/ui/input"
 import { LabelChip, LabelChips } from "@/components/label-chip"
@@ -105,11 +107,7 @@ function buildBundles(rels: Relationship[], lookOf: (r: Relationship) => Look): 
   return picked.sort((a, b) => a.first - b.first)
 }
 
-export function GraphDataViewScreen({ active, onOpenRelationship }: {
-  active?: boolean
-  // リレーションシップ管理でそのリレーションシップを開く
-  onOpenRelationship: (id: string) => void
-}) {
+export function GraphDataViewScreen({ active }: { active?: boolean }) {
   const { currentProject, loading: projectLoading } = useProject()
   const projectId = currentProject?.id
 
@@ -120,8 +118,9 @@ export function GraphDataViewScreen({ active, onOpenRelationship }: {
   const [nodeQuery, setNodeQuery] = useState("")
   const [openKeys, setOpenKeys] = useState<Set<string>>(new Set())
   const [showAdd, setShowAdd] = useState(false)
-  // 束のタイプを押したときに出す、開くリレーションシップを選ぶ一覧（束の key）
-  const [menuKey, setMenuKey] = useState<string | null>(null)
+  // 右ペインに出しているリレーションシップ。束の key は編集で見た目が変わると付け直されるので、
+  // リレーションシップの id で持ち、束はそこから引く
+  const [activeRelId, setActiveRelId] = useState<string | null>(null)
 
   const fetchAll = useCallback(async () => {
     if (!projectId) return
@@ -238,10 +237,25 @@ export function GraphDataViewScreen({ active, onOpenRelationship }: {
   const relsOf = (bd: Bundle) => bd.startIds.flatMap((s) =>
     bd.endIds.flatMap((e) => relByEnds.get(`${s}|${e}`) ?? []))
 
+  const activeRel = activeRelId ? relationships.find((r) => r.id === activeRelId) ?? null : null
+  const activeBundle = activeRel
+    ? bundles.find((bd) => bd.startIds.includes(activeRel.startNodeId) && bd.endIds.includes(activeRel.endNodeId)) ?? null
+    : null
+
+  // 同じ束のタイプをもう一度押したら閉じる。別の束なら、その束の先頭のリレーションシップを出す
   const handleTypeClick = (bd: Bundle) => {
-    const rels = relsOf(bd)
-    if (rels.length === 1) onOpenRelationship(rels[0].id)
-    else setMenuKey(bd.key)
+    if (activeBundle?.key === bd.key) { setActiveRelId(null); return }
+    setActiveRelId(relsOf(bd)[0]?.id ?? null)
+  }
+
+  // 図の中での目立たせ方。何か選んでいる間は、選んだ束以外を薄くする
+  type Tone = "normal" | "active" | "dim"
+  const toneOf = (bd: Bundle, nodeId?: string, side?: "start" | "end"): Tone => {
+    if (!activeBundle) return "normal"
+    if (bd.key !== activeBundle.key) return "dim"
+    if (!nodeId || !activeRel) return "active"
+    const hit = side === "start" ? activeRel.startNodeId === nodeId : activeRel.endNodeId === nodeId
+    return hit ? "active" : "normal"
   }
 
   const mismatchCount = useMemo(() => typeRels.filter((r) => !matchesSchema(r)).length, [typeRels, matchesSchema])
@@ -251,7 +265,8 @@ export function GraphDataViewScreen({ active, onOpenRelationship }: {
   // 引き出し線。各ノードと中央のタイプの位置を測り、その間を曲線で結ぶ（スキーマ確認と同じ描き方）。
   const boardRef = useRef<HTMLDivElement>(null)
   const anchorRefs = useRef(new Map<string, HTMLElement>())
-  const [paths, setPaths] = useState<({ key: string; d: string } & Look)[]>([])
+  type PathLine = { key: string; d: string; bundle: Bundle; nodeId: string; side: "start" | "end" } & Look
+  const [paths, setPaths] = useState<PathLine[]>([])
   const [boardSize, setBoardSize] = useState({ w: 0, h: 0 })
 
   const measure = useCallback(() => {
@@ -266,7 +281,7 @@ export function GraphDataViewScreen({ active, onOpenRelationship }: {
       const mx = (x1 + x2) / 2
       return `M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`
     }
-    const next: ({ key: string; d: string } & Look)[] = []
+    const next: PathLine[] = []
     for (const bd of bundles) {
       const typeEl = anchorRefs.current.get(`type:${bd.key}`)
       if (!typeEl) continue
@@ -277,14 +292,14 @@ export function GraphDataViewScreen({ active, onOpenRelationship }: {
         if (!el) continue
         const s = rel(el)
         // 始点 → タイプ（矢印はタイプに向く）
-        next.push({ key: `s:${bd.key}:${id}`, d: curve(s.right, s.y, t.left - 1, t.y), ...look })
+        next.push({ key: `s:${bd.key}:${id}`, d: curve(s.right, s.y, t.left - 1, t.y), bundle: bd, nodeId: id, side: "start", ...look })
       }
       for (const id of bd.endIds) {
         const el = anchorRefs.current.get(`end:${bd.key}:${id}`)
         if (!el) continue
         const e = rel(el)
         // タイプ → 終点（矢印は終点に向く）
-        next.push({ key: `e:${bd.key}:${id}`, d: curve(t.right, t.y, e.left - 1, e.y), ...look })
+        next.push({ key: `e:${bd.key}:${id}`, d: curve(t.right, t.y, e.left - 1, e.y), bundle: bd, nodeId: id, side: "end", ...look })
       }
     }
     setPaths(next)
@@ -307,10 +322,14 @@ export function GraphDataViewScreen({ active, onOpenRelationship }: {
   }
 
   // ノード1つ分の箱（上段にラベル、下段にノード名）
-  const NodeBox = ({ name, labelIds, warn }: { name: string; labelIds: string[]; warn?: boolean }) => (
+  const NodeBox = ({ name, labelIds, warn, tone = "normal" }: {
+    name: string; labelIds: string[]; warn?: boolean; tone?: Tone
+  }) => (
     <span className={cn(
-      "relative z-10 block max-w-64 space-y-1 rounded-md border bg-background px-2 py-1",
-      warn ? "border-amber-400 dark:border-amber-600" : "border-border",
+      "relative z-10 block max-w-64 space-y-1 rounded-md border bg-background px-2 py-1 transition-opacity",
+      tone === "active" ? "border-indigo-500 ring-2 ring-indigo-300 dark:ring-indigo-700"
+        : warn ? "border-amber-400 dark:border-amber-600" : "border-border",
+      tone === "dim" && "opacity-35",
     )}>
       <LabelChips names={labelIds.map(labelName)} />
       <span className="flex items-center gap-1 text-sm text-foreground">
@@ -371,7 +390,7 @@ export function GraphDataViewScreen({ active, onOpenRelationship }: {
                           : "hover:bg-muted",
                         n === 0 && selectedId !== t.id && "text-muted-foreground",
                       )}
-                      onClick={() => { setSelectedId(t.id); setNodeQuery("") }}>
+                      onClick={() => { setSelectedId(t.id); setNodeQuery(""); setActiveRelId(null) }}>
                       <span className="truncate">{t.name}</span>
                       <span className="ml-2 shrink-0 text-xs text-muted-foreground">{n}</span>
                     </button>
@@ -388,7 +407,7 @@ export function GraphDataViewScreen({ active, onOpenRelationship }: {
                   ? "bg-indigo-100 text-indigo-900 dark:bg-indigo-950/60 dark:text-indigo-100"
                   : "text-muted-foreground hover:bg-muted",
               )}
-              onClick={() => setSelectedId(UNUSED)}>
+              onClick={() => { setSelectedId(UNUSED); setActiveRelId(null) }}>
               <Info className="h-3.5 w-3.5 shrink-0" />
               <span className="flex-1 truncate">使われていない定義</span>
               <span className="ml-2 shrink-0 text-xs text-muted-foreground">{unusedCount}</span>
@@ -492,20 +511,31 @@ export function GraphDataViewScreen({ active, onOpenRelationship }: {
                       width={boardSize.w} height={boardSize.h} aria-hidden>
                       <defs>
                         {/* 矢印は線と同じ色にする（黄色の線には黄色の矢印） */}
-                        {(["data-arrow", "data-arrow-warn"] as const).map((id) => (
+                        {(["data-arrow", "data-arrow-warn", "data-arrow-active"] as const).map((id) => (
                           <marker key={id} id={id} viewBox="0 0 10 10" refX="9" refY="5"
                             markerWidth="7" markerHeight="7" orient="auto-start-reverse"
-                            className={id === "data-arrow" ? "text-muted-foreground/60" : "text-amber-500"}>
+                            className={id === "data-arrow" ? "text-muted-foreground/60"
+                              : id === "data-arrow-warn" ? "text-amber-500" : "text-indigo-500"}>
                             <path d="M 0 1 L 9 5 L 0 9" fill="none" stroke="currentColor" strokeWidth="1.5" />
                           </marker>
                         ))}
                       </defs>
-                      {paths.map((p) => (
-                        <path key={p.key} d={p.d} fill="none" stroke="currentColor" strokeWidth="1.25"
-                          className={p.warn ? "text-amber-500" : "text-muted-foreground/60"}
-                          strokeDasharray={p.dashed ? "4 3" : undefined}
-                          markerEnd={p.warn ? "url(#data-arrow-warn)" : "url(#data-arrow)"} />
-                      ))}
+                      {paths.map((p) => {
+                        const tone = toneOf(p.bundle, p.nodeId, p.side)
+                        // 選んだリレーションシップの線（始点 → タイプ → 終点）を太く・色付きにする
+                        const hit = tone === "active" && !!activeRel &&
+                          (p.side === "start" ? activeRel.startNodeId === p.nodeId : activeRel.endNodeId === p.nodeId)
+                        return (
+                          <path key={p.key} d={p.d} fill="none" stroke="currentColor"
+                            strokeWidth={hit ? 2.25 : 1.25}
+                            className={cn(
+                              hit ? "text-indigo-500" : p.warn ? "text-amber-500" : "text-muted-foreground/60",
+                              tone === "dim" && "opacity-30",
+                            )}
+                            strokeDasharray={p.dashed ? "4 3" : undefined}
+                            markerEnd={hit ? "url(#data-arrow-active)" : p.warn ? "url(#data-arrow-warn)" : "url(#data-arrow)"} />
+                        )
+                      })}
                     </svg>
 
                     {bundles.map((bd) => (
@@ -514,43 +544,32 @@ export function GraphDataViewScreen({ active, onOpenRelationship }: {
                         <div className="flex flex-col items-end gap-1.5">
                           {bd.startIds.map((id) => (
                             <span key={id} ref={setAnchor(`start:${bd.key}:${id}`)}>
-                              <NodeBox name={nodeName(id)} labelIds={nodeLabelIds(id)} warn={bd.warn} />
+                              <NodeBox name={nodeName(id)} labelIds={nodeLabelIds(id)} warn={bd.warn}
+                                tone={toneOf(bd, id, "start")} />
                             </span>
                           ))}
                         </div>
                         {/* 中央：タイプ */}
-                        <div className="relative flex justify-center">
+                        <div className="flex justify-center">
                           <button type="button" ref={setAnchor(`type:${bd.key}`)}
-                            title="リレーションシップ管理で開く"
+                            title={activeBundle?.key === bd.key ? "詳細を閉じる" : "詳細を見る・編集する"}
                             className={cn(
                               "relative z-10 shrink-0 rounded-md border bg-background px-2 py-0.5 text-xs text-foreground transition-colors hover:bg-muted",
-                              bd.warn ? "border-amber-400 dark:border-amber-600" : "border-border",
+                              toneOf(bd) === "active"
+                                ? "border-indigo-500 bg-indigo-50 font-medium text-indigo-900 ring-2 ring-indigo-300 hover:bg-indigo-100 dark:bg-indigo-950 dark:text-indigo-100 dark:ring-indigo-700"
+                                : bd.warn ? "border-amber-400 dark:border-amber-600" : "border-border",
+                              toneOf(bd) === "dim" && "opacity-35",
                             )}
                             onClick={() => handleTypeClick(bd)}>
                             {selectedType.name}
                           </button>
-                          {menuKey === bd.key && (
-                            <>
-                              {/* 外側を押したら閉じる */}
-                              <div className="fixed inset-0 z-20" onClick={() => setMenuKey(null)} />
-                              <div className="absolute left-1/2 top-full z-30 mt-1 w-max max-w-96 -translate-x-1/2 rounded-lg border border-border bg-popover py-1 shadow-md">
-                                <p className="px-3 pb-1 pt-0.5 text-xs text-muted-foreground">リレーションシップ管理で開く</p>
-                                {relsOf(bd).map((r) => (
-                                  <button key={r.id} type="button"
-                                    className="block w-full truncate px-3 py-1.5 text-left text-sm text-foreground transition-colors hover:bg-muted"
-                                    onClick={() => { setMenuKey(null); onOpenRelationship(r.id) }}>
-                                    {nodeName(r.startNodeId)} → {nodeName(r.endNodeId)}
-                                  </button>
-                                ))}
-                              </div>
-                            </>
-                          )}
                         </div>
                         {/* 終点ノード */}
                         <div className="flex flex-col items-start gap-1.5">
                           {bd.endIds.map((id) => (
                             <span key={id} ref={setAnchor(`end:${bd.key}:${id}`)}>
-                              <NodeBox name={nodeName(id)} labelIds={nodeLabelIds(id)} warn={bd.warn} />
+                              <NodeBox name={nodeName(id)} labelIds={nodeLabelIds(id)} warn={bd.warn}
+                                tone={toneOf(bd, id, "end")} />
                             </span>
                           ))}
                         </div>
@@ -562,6 +581,55 @@ export function GraphDataViewScreen({ active, onOpenRelationship }: {
             </>
           )}
         </div>
+
+        {/* 右ペイン：選んだリレーションシップの詳細（リレーションシップ管理と共用のパネル） */}
+        {activeRel && (
+          <RelationshipDetailPanel key={activeRel.id} className="border-l border-border"
+            relationship={activeRel} relationships={relationships}
+            nodes={nodes} relTypes={relTypes} propertyDefs={data.propertyDefs} labelName={labelName}
+            onUpdated={(updated) => setData((prev) => ({
+              ...prev,
+              relationships: prev.relationships.map((r) => (r.id === updated.id ? updated : r)),
+            }))}
+            onDeleted={(id) => {
+              setData((prev) => ({ ...prev, relationships: prev.relationships.filter((r) => r.id !== id) }))
+              setActiveRelId(null)
+            }}
+            header={(
+              <div className="space-y-2 border-b border-border px-4 py-3">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="truncate text-sm font-semibold text-foreground">{activeRel.relTypeName}</span>
+                  <button type="button" aria-label="詳細を閉じる"
+                    className="shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-muted"
+                    onClick={() => setActiveRelId(null)}>
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+                {/* 束ねているときは、束の中から見るものを選ぶ */}
+                {activeBundle && relsOf(activeBundle).length > 1 && (
+                  <div className="space-y-1">
+                    <p className="text-xs text-muted-foreground">
+                      この束のリレーションシップ（{relsOf(activeBundle).length}件）
+                    </p>
+                    <div className="max-h-40 overflow-y-auto rounded-lg border border-border">
+                      {relsOf(activeBundle).map((r) => (
+                        <button key={r.id} type="button"
+                          className={cn(
+                            "block w-full truncate px-2.5 py-1.5 text-left text-xs transition-colors",
+                            r.id === activeRel.id
+                              ? "bg-indigo-100 text-indigo-900 dark:bg-indigo-950/60 dark:text-indigo-100"
+                              : "text-foreground hover:bg-muted",
+                          )}
+                          onClick={() => setActiveRelId(r.id)}>
+                          {nodeName(r.startNodeId)} → {nodeName(r.endNodeId)}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )} />
+        )}
       </div>
 
       <RelationshipAddDialog open={showAdd} onOpenChange={setShowAdd}
