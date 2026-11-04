@@ -120,7 +120,7 @@ const newId = () => crypto.randomUUID()
 
 // グラフにする知見と、しない知見の線引き（知見の切り分け基準）。スキーマ抽出・グラフデータ抽出の両方に渡す。
 // これがないと、トラブルの経緯やノウハウの文章まで何でもノードや関係にしてしまう。
-// 基準そのものは lib/knowledge-scope.ts にあり、画面「知見の切り分け基準」と同じものを使う。
+// 基準そのものは lib/knowledge-scope.ts にあり、画面「知見の分類について」と同じものを使う。
 const GRAPH_SCOPE_GUIDE = knowledgeScopePrompt()
 
 const SCHEMA_SYSTEM = [

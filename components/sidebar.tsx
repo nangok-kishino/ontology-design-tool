@@ -176,7 +176,7 @@ export function Sidebar({
         </>
       )}
 
-      {/* 知見の切り分け基準・オントロジーについて（常時表示・下部固定） */}
+      {/* 知見の分類について・オントロジーについて（常時表示・下部固定） */}
       <div className={cn("mx-3 border-t border-white/[0.06]", !currentProject && "mt-auto")} />
       <div className="space-y-0.5 px-3 py-3">
         <button
@@ -194,7 +194,7 @@ export function Sidebar({
               active === "knowledge-scope" ? "text-indigo-400" : "text-zinc-400",
             )}
           />
-          <span>知見の切り分け基準</span>
+          <span>知見の分類について</span>
         </button>
         <button
           onClick={() => onNavigate("ontology-info")}
