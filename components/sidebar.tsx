@@ -4,7 +4,7 @@ import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { cn } from "@/lib/utils"
 import {
-  Boxes, FolderOpen, BookOpen, Scale, LogOut, Lock, Settings, Sparkles, Tag, Waypoints,
+  Boxes, FolderOpen, BookOpen, Search, LogOut, Lock, Settings, Sparkles, Tag, Waypoints,
 } from "lucide-react"
 import { useProject } from "@/app/project-context"
 import { ProjectSettingsDialog } from "@/components/project-settings-dialog"
@@ -176,7 +176,7 @@ export function Sidebar({
         </>
       )}
 
-      {/* 知見の分類について・オントロジーについて（常時表示・下部固定） */}
+      {/* 知見の検索について・オントロジーについて（常時表示・下部固定） */}
       <div className={cn("mx-3 border-t border-white/[0.06]", !currentProject && "mt-auto")} />
       <div className="space-y-0.5 px-3 py-3">
         <button
@@ -188,13 +188,13 @@ export function Sidebar({
               : "text-zinc-300 hover:bg-white/5 hover:text-white",
           )}
         >
-          <Scale
+          <Search
             className={cn(
               "h-4 w-4 shrink-0",
               active === "knowledge-scope" ? "text-indigo-400" : "text-zinc-400",
             )}
           />
-          <span>知見の分類について</span>
+          <span>知見の検索について</span>
         </button>
         <button
           onClick={() => onNavigate("ontology-info")}
