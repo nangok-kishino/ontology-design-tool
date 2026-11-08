@@ -12,11 +12,11 @@
 // 一部しか繋がっていないものを束ねると、どの始点がどの終点に繋がるのかが図から読めなくなるため。
 // さらに確認状態・スキーマ整合が同じものだけを束ね、線の見た目（点線・黄色）が1本1本の実際と食い違わないようにする。
 //
-// 図の中央のタイプを押すと、右ペインにそのリレーションシップの詳細を出し、そこで編集できる
-// （詳細パネルはリレーションシップ管理と共用）。束ねていて複数あるときは、右ペインで1件ずつ選んで見る。
-// 同じタイプをもう一度押すと右ペインを閉じる。図の白紙部分を押しても閉じる。
-// 右ペインを出している間は、選んだものを図の中で目立たせる。タイプを押したときは束全体を目立たせ、
-// 右ペインの一覧で1件を選んだときは、その1件だけを目立たせる。
+// 図のノード・タイプを押すと、押したものに関わるセット（始点 → タイプ → 終点）を束の中からすべて選び、
+// 図の中で目立たせる。ノードなら、そのノードを端に持つセット（多い側なら1件、1つしかない側なら束の全件）、
+// タイプなら束の全件。同じものをもう一度押すか、図の白紙部分を押すと解除する。
+// 1件だけ選んだときは右ペインに詳細を出し、そこで編集できる（詳細パネルはリレーションシップ管理と共用）。
+// 複数選んだときは、全件で共通の根拠・成立条件・プロパティだけを読み取り専用で出す（一括編集はしない）。
 // ここからリレーションシップを追加することもできる（追加ダイアログはリレーションシップ管理と共用）。
 //
 // 定義したがまだ使っていないラベル・タイプ（エクスポートには影響しない参考情報）もここで見せる。
@@ -26,6 +26,7 @@ import { AlertTriangle, Info, Loader2, Plus, Search, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { RelationshipAddDialog } from "@/components/relationship-add-dialog"
 import { RelationshipDetailPanel } from "@/components/relationship-detail-panel"
+import { RelationshipGroupPanel } from "@/components/relationship-group-panel"
 import { TopBar } from "@/components/top-bar"
 import { Input } from "@/components/ui/input"
 import { LabelChip, LabelChips } from "@/components/label-chip"
@@ -120,11 +121,10 @@ export function GraphDataViewScreen({ active }: { active?: boolean }) {
   const [nodeQuery, setNodeQuery] = useState("")
   const [openKeys, setOpenKeys] = useState<Set<string>>(new Set())
   const [showAdd, setShowAdd] = useState(false)
-  // 右ペインに出しているリレーションシップ。束の key は編集で見た目が変わると付け直されるので、
-  // リレーションシップの id で持ち、束はそこから引く
-  const [activeRelId, setActiveRelId] = useState<string | null>(null)
-  // true：右ペインの一覧で1件を選んだ（その1件だけ目立たせる）。false：タイプを押して束ごと選んだ
-  const [focusOne, setFocusOne] = useState(false)
+  // 選んでいるリレーションシップ（始点 → タイプ → 終点のセット）。束の key は編集で見た目が変わると
+  // 付け直されるので、リレーションシップの id で持つ。1件なら詳細パネル、複数なら共通の内容を出す
+  const [selIds, setSelIds] = useState<string[]>([])
+  const clearSel = () => setSelIds([])
 
   const fetchAll = useCallback(async () => {
     if (!projectId) return
@@ -241,27 +241,32 @@ export function GraphDataViewScreen({ active }: { active?: boolean }) {
   const relsOf = (bd: Bundle) => bd.startIds.flatMap((s) =>
     bd.endIds.flatMap((e) => relByEnds.get(`${s}|${e}`) ?? []))
 
-  const activeRel = activeRelId ? relationships.find((r) => r.id === activeRelId) ?? null : null
-  const activeBundle = activeRel
-    ? bundles.find((bd) => bd.startIds.includes(activeRel.startNodeId) && bd.endIds.includes(activeRel.endNodeId)) ?? null
-    : null
+  const selSet = new Set(selIds)
+  const selRels = selIds.flatMap((id) => relationships.find((r) => r.id === id) ?? [])
+  const activeRel = selRels.length === 1 ? selRels[0] : null
 
-  // 同じ束のタイプをもう一度押したら閉じる。別の束なら、その束の先頭のリレーションシップを出す
-  const handleTypeClick = (bd: Bundle) => {
-    setFocusOne(false)
-    if (activeBundle?.key === bd.key) { setActiveRelId(null); return }
-    setActiveRelId(relsOf(bd)[0]?.id ?? null)
+  // 押したものに関わるセットを、その束の中からすべて選ぶ。
+  //   ノード：そのノードを始点（終点）に持つセット。多い側のノードなら1件、1つしかない側なら束の全件になる。
+  //   タイプ：束の全件。
+  // 今の選択とまったく同じものを押したら解除する。
+  const select = (rels: Relationship[]) => {
+    const ids = rels.map((r) => r.id)
+    const same = ids.length === selIds.length && ids.every((id) => selSet.has(id))
+    setSelIds(same ? [] : ids)
   }
+  const handleTypeClick = (bd: Bundle) => select(relsOf(bd))
+  const handleNodeClick = (bd: Bundle, nodeId: string, side: "start" | "end") =>
+    select(relsOf(bd).filter((r) => (side === "start" ? r.startNodeId : r.endNodeId) === nodeId))
 
-  // 図の中での目立たせ方。何か選んでいる間は、選んだ束以外を薄くする。
-  // 束ごと選んだときは束の中をすべて目立たせ、1件を選んだときはその1件の始点・終点だけを目立たせる
+  // 図の中での目立たせ方。何か選んでいる間は、選んだセットのノード・タイプ・線を目立たせ、
+  // 選んだセットを含まない束は薄くする
   type Tone = "normal" | "active" | "dim"
   const toneOf = (bd: Bundle, nodeId?: string, side?: "start" | "end"): Tone => {
-    if (!activeBundle) return "normal"
-    if (bd.key !== activeBundle.key) return "dim"
-    if (!nodeId || !activeRel || !focusOne) return "active"
-    const hit = side === "start" ? activeRel.startNodeId === nodeId : activeRel.endNodeId === nodeId
-    return hit ? "active" : "normal"
+    if (selSet.size === 0) return "normal"
+    const picked = relsOf(bd).filter((r) => selSet.has(r.id))
+    if (picked.length === 0) return "dim"
+    if (!nodeId) return "active"
+    return picked.some((r) => (side === "start" ? r.startNodeId : r.endNodeId) === nodeId) ? "active" : "normal"
   }
 
   const mismatchCount = useMemo(() => typeRels.filter((r) => !matchesSchema(r)).length, [typeRels, matchesSchema])
@@ -328,13 +333,15 @@ export function GraphDataViewScreen({ active }: { active?: boolean }) {
   }
 
   // ノード1つ分の箱（上段にラベル、下段にノード名）
-  const NodeBox = ({ name, labelIds, warn, tone = "normal" }: {
-    name: string; labelIds: string[]; warn?: boolean; tone?: Tone
+  // 押すと、このノードに関わるセットを選ぶ。選んでいるセットに入るものは枠の中も色を変える
+  const NodeBox = ({ name, labelIds, warn, tone = "normal", onClick }: {
+    name: string; labelIds: string[]; warn?: boolean; tone?: Tone; onClick: () => void
   }) => (
-    <span data-graph-item className={cn(
-      "relative z-10 block max-w-64 space-y-1 rounded-md border bg-background px-2 py-1 transition-opacity",
-      tone === "active" ? "border-indigo-500 ring-2 ring-indigo-300 dark:ring-indigo-700"
-        : warn ? "border-amber-400 dark:border-amber-600" : "border-border",
+    <button type="button" data-graph-item onClick={onClick} className={cn(
+      "relative z-10 block max-w-64 space-y-1 rounded-md border px-2 py-1 text-left transition-colors",
+      tone === "active"
+        ? "border-indigo-500 bg-indigo-50 ring-2 ring-indigo-300 dark:bg-indigo-950 dark:ring-indigo-700"
+        : cn("bg-background hover:bg-muted", warn ? "border-amber-400 dark:border-amber-600" : "border-border"),
       tone === "dim" && "opacity-35",
     )}>
       <LabelChips names={labelIds.map(labelName)} />
@@ -342,7 +349,7 @@ export function GraphDataViewScreen({ active }: { active?: boolean }) {
         {warn && <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-500" />}
         <span className="truncate" title={name}>{name}</span>
       </span>
-    </span>
+    </button>
   )
 
   return (
@@ -396,7 +403,7 @@ export function GraphDataViewScreen({ active }: { active?: boolean }) {
                           : "hover:bg-muted",
                         n === 0 && selectedId !== t.id && "text-muted-foreground",
                       )}
-                      onClick={() => { setSelectedId(t.id); setNodeQuery(""); setActiveRelId(null) }}>
+                      onClick={() => { setSelectedId(t.id); setNodeQuery(""); clearSel() }}>
                       <span className="truncate">{t.name}</span>
                       <span className="ml-2 shrink-0 text-xs text-muted-foreground">{n}</span>
                     </button>
@@ -413,7 +420,7 @@ export function GraphDataViewScreen({ active }: { active?: boolean }) {
                   ? "bg-indigo-100 text-indigo-900 dark:bg-indigo-950/60 dark:text-indigo-100"
                   : "text-muted-foreground hover:bg-muted",
               )}
-              onClick={() => { setSelectedId(UNUSED); setActiveRelId(null) }}>
+              onClick={() => { setSelectedId(UNUSED); clearSel() }}>
               <Info className="h-3.5 w-3.5 shrink-0" />
               <span className="flex-1 truncate">使われていない定義</span>
               <span className="ml-2 shrink-0 text-xs text-muted-foreground">{unusedCount}</span>
@@ -506,7 +513,7 @@ export function GraphDataViewScreen({ active }: { active?: boolean }) {
               {/* 図の白紙部分（ノード・タイプ以外）を押したら選択を解除する */}
               <div className="flex flex-1 overflow-auto px-8 py-6"
                 onClick={(e) => {
-                  if (!(e.target as HTMLElement).closest("[data-graph-item]")) { setActiveRelId(null); setFocusOne(false) }
+                  if (!(e.target as HTMLElement).closest("[data-graph-item]")) clearSel()
                 }}>
                 {typeRels.length === 0 ? (
                   <p className="m-auto p-4 text-center text-sm text-muted-foreground">
@@ -554,14 +561,14 @@ export function GraphDataViewScreen({ active }: { active?: boolean }) {
                           {bd.startIds.map((id) => (
                             <span key={id} ref={setAnchor(`start:${bd.key}:${id}`)}>
                               <NodeBox name={nodeName(id)} labelIds={nodeLabelIds(id)} warn={bd.warn}
-                                tone={toneOf(bd, id, "start")} />
+                                tone={toneOf(bd, id, "start")} onClick={() => handleNodeClick(bd, id, "start")} />
                             </span>
                           ))}
                         </div>
                         {/* 中央：タイプ */}
                         <div className="flex justify-center">
                           <button type="button" data-graph-item ref={setAnchor(`type:${bd.key}`)}
-                            title={activeBundle?.key === bd.key ? "詳細を閉じる" : "詳細を見る・編集する"}
+                            title="この束のリレーションシップをすべて選ぶ"
                             className={cn(
                               "relative z-10 shrink-0 rounded-md border bg-background px-2 py-0.5 text-xs text-foreground transition-colors hover:bg-muted",
                               toneOf(bd) === "active"
@@ -578,7 +585,7 @@ export function GraphDataViewScreen({ active }: { active?: boolean }) {
                           {bd.endIds.map((id) => (
                             <span key={id} ref={setAnchor(`end:${bd.key}:${id}`)}>
                               <NodeBox name={nodeName(id)} labelIds={nodeLabelIds(id)} warn={bd.warn}
-                                tone={toneOf(bd, id, "end")} />
+                                tone={toneOf(bd, id, "end")} onClick={() => handleNodeClick(bd, id, "end")} />
                             </span>
                           ))}
                         </div>
@@ -602,42 +609,25 @@ export function GraphDataViewScreen({ active }: { active?: boolean }) {
             }))}
             onDeleted={(id) => {
               setData((prev) => ({ ...prev, relationships: prev.relationships.filter((r) => r.id !== id) }))
-              setActiveRelId(null)
+              clearSel()
             }}
             header={(
-              <div className="space-y-2 border-b border-border px-4 py-3">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="truncate text-sm font-semibold text-foreground">{activeRel.relTypeName}</span>
-                  <button type="button" aria-label="詳細を閉じる"
-                    className="shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-muted"
-                    onClick={() => { setActiveRelId(null); setFocusOne(false) }}>
-                    <X className="h-4 w-4" />
-                  </button>
-                </div>
-                {/* 束ねているときは、束の中から見るものを選ぶ */}
-                {activeBundle && relsOf(activeBundle).length > 1 && (
-                  <div className="space-y-1">
-                    <p className="text-xs text-muted-foreground">
-                      この束のリレーションシップ（{relsOf(activeBundle).length}件）
-                    </p>
-                    <div className="max-h-40 overflow-y-auto rounded-lg border border-border">
-                      {relsOf(activeBundle).map((r) => (
-                        <button key={r.id} type="button"
-                          className={cn(
-                            "block w-full truncate px-2.5 py-1.5 text-left text-xs transition-colors",
-                            r.id === activeRel.id
-                              ? "bg-indigo-100 text-indigo-900 dark:bg-indigo-950/60 dark:text-indigo-100"
-                              : "text-foreground hover:bg-muted",
-                          )}
-                          onClick={() => { setActiveRelId(r.id); setFocusOne(true) }}>
-                          {nodeName(r.startNodeId)} → {nodeName(r.endNodeId)}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
+              <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-3">
+                <span className="truncate text-sm font-semibold text-foreground">{activeRel.relTypeName}</span>
+                <button type="button" aria-label="詳細を閉じる"
+                  className="shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-muted"
+                  onClick={clearSel}>
+                  <X className="h-4 w-4" />
+                </button>
               </div>
             )} />
+        )}
+        {/* 複数選んだとき：共通の内容だけを読み取り専用で出す */}
+        {selRels.length > 1 && (
+          <RelationshipGroupPanel className="border-l border-border"
+            relationships={selRels} relType={typeById.get(selRels[0].relTypeId) ?? null}
+            propertyDefs={data.propertyDefs} nodeName={nodeName}
+            onPick={(id) => setSelIds([id])} onClose={clearSel} />
         )}
       </div>
 
