@@ -14,7 +14,9 @@
 //
 // 図の中央のタイプを押すと、右ペインにそのリレーションシップの詳細を出し、そこで編集できる
 // （詳細パネルはリレーションシップ管理と共用）。束ねていて複数あるときは、右ペインで1件ずつ選んで見る。
-// 同じタイプをもう一度押すと右ペインを閉じる。右ペインを出している間は、選んだものを図の中で目立たせる。
+// 同じタイプをもう一度押すと右ペインを閉じる。図の白紙部分を押しても閉じる。
+// 右ペインを出している間は、選んだものを図の中で目立たせる。タイプを押したときは束全体を目立たせ、
+// 右ペインの一覧で1件を選んだときは、その1件だけを目立たせる。
 // ここからリレーションシップを追加することもできる（追加ダイアログはリレーションシップ管理と共用）。
 //
 // 定義したがまだ使っていないラベル・タイプ（エクスポートには影響しない参考情報）もここで見せる。
@@ -121,6 +123,8 @@ export function GraphDataViewScreen({ active }: { active?: boolean }) {
   // 右ペインに出しているリレーションシップ。束の key は編集で見た目が変わると付け直されるので、
   // リレーションシップの id で持ち、束はそこから引く
   const [activeRelId, setActiveRelId] = useState<string | null>(null)
+  // true：右ペインの一覧で1件を選んだ（その1件だけ目立たせる）。false：タイプを押して束ごと選んだ
+  const [focusOne, setFocusOne] = useState(false)
 
   const fetchAll = useCallback(async () => {
     if (!projectId) return
@@ -244,16 +248,18 @@ export function GraphDataViewScreen({ active }: { active?: boolean }) {
 
   // 同じ束のタイプをもう一度押したら閉じる。別の束なら、その束の先頭のリレーションシップを出す
   const handleTypeClick = (bd: Bundle) => {
+    setFocusOne(false)
     if (activeBundle?.key === bd.key) { setActiveRelId(null); return }
     setActiveRelId(relsOf(bd)[0]?.id ?? null)
   }
 
-  // 図の中での目立たせ方。何か選んでいる間は、選んだ束以外を薄くする
+  // 図の中での目立たせ方。何か選んでいる間は、選んだ束以外を薄くする。
+  // 束ごと選んだときは束の中をすべて目立たせ、1件を選んだときはその1件の始点・終点だけを目立たせる
   type Tone = "normal" | "active" | "dim"
   const toneOf = (bd: Bundle, nodeId?: string, side?: "start" | "end"): Tone => {
     if (!activeBundle) return "normal"
     if (bd.key !== activeBundle.key) return "dim"
-    if (!nodeId || !activeRel) return "active"
+    if (!nodeId || !activeRel || !focusOne) return "active"
     const hit = side === "start" ? activeRel.startNodeId === nodeId : activeRel.endNodeId === nodeId
     return hit ? "active" : "normal"
   }
@@ -325,7 +331,7 @@ export function GraphDataViewScreen({ active }: { active?: boolean }) {
   const NodeBox = ({ name, labelIds, warn, tone = "normal" }: {
     name: string; labelIds: string[]; warn?: boolean; tone?: Tone
   }) => (
-    <span className={cn(
+    <span data-graph-item className={cn(
       "relative z-10 block max-w-64 space-y-1 rounded-md border bg-background px-2 py-1 transition-opacity",
       tone === "active" ? "border-indigo-500 ring-2 ring-indigo-300 dark:ring-indigo-700"
         : warn ? "border-amber-400 dark:border-amber-600" : "border-border",
@@ -497,7 +503,11 @@ export function GraphDataViewScreen({ active }: { active?: boolean }) {
                 </div>
               </div>
 
-              <div className="flex flex-1 overflow-auto px-8 py-6">
+              {/* 図の白紙部分（ノード・タイプ以外）を押したら選択を解除する */}
+              <div className="flex flex-1 overflow-auto px-8 py-6"
+                onClick={(e) => {
+                  if (!(e.target as HTMLElement).closest("[data-graph-item]")) { setActiveRelId(null); setFocusOne(false) }
+                }}>
                 {typeRels.length === 0 ? (
                   <p className="m-auto p-4 text-center text-sm text-muted-foreground">
                     このタイプのリレーションシップはまだありません。
@@ -523,8 +533,7 @@ export function GraphDataViewScreen({ active }: { active?: boolean }) {
                       {paths.map((p) => {
                         const tone = toneOf(p.bundle, p.nodeId, p.side)
                         // 選んだリレーションシップの線（始点 → タイプ → 終点）を太く・色付きにする
-                        const hit = tone === "active" && !!activeRel &&
-                          (p.side === "start" ? activeRel.startNodeId === p.nodeId : activeRel.endNodeId === p.nodeId)
+                        const hit = tone === "active"
                         return (
                           <path key={p.key} d={p.d} fill="none" stroke="currentColor"
                             strokeWidth={hit ? 2.25 : 1.25}
@@ -551,7 +560,7 @@ export function GraphDataViewScreen({ active }: { active?: boolean }) {
                         </div>
                         {/* 中央：タイプ */}
                         <div className="flex justify-center">
-                          <button type="button" ref={setAnchor(`type:${bd.key}`)}
+                          <button type="button" data-graph-item ref={setAnchor(`type:${bd.key}`)}
                             title={activeBundle?.key === bd.key ? "詳細を閉じる" : "詳細を見る・編集する"}
                             className={cn(
                               "relative z-10 shrink-0 rounded-md border bg-background px-2 py-0.5 text-xs text-foreground transition-colors hover:bg-muted",
@@ -601,7 +610,7 @@ export function GraphDataViewScreen({ active }: { active?: boolean }) {
                   <span className="truncate text-sm font-semibold text-foreground">{activeRel.relTypeName}</span>
                   <button type="button" aria-label="詳細を閉じる"
                     className="shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-muted"
-                    onClick={() => setActiveRelId(null)}>
+                    onClick={() => { setActiveRelId(null); setFocusOne(false) }}>
                     <X className="h-4 w-4" />
                   </button>
                 </div>
@@ -620,7 +629,7 @@ export function GraphDataViewScreen({ active }: { active?: boolean }) {
                               ? "bg-indigo-100 text-indigo-900 dark:bg-indigo-950/60 dark:text-indigo-100"
                               : "text-foreground hover:bg-muted",
                           )}
-                          onClick={() => setActiveRelId(r.id)}>
+                          onClick={() => { setActiveRelId(r.id); setFocusOne(true) }}>
                           {nodeName(r.startNodeId)} → {nodeName(r.endNodeId)}
                         </button>
                       ))}
